@@ -72,6 +72,8 @@ export default function AdminMenuPage() {
     return normalizeLanguageList([...languages, ...discovered]);
   }, [courses, languages]);
 
+  const isDefaultLanguage = language === defaultLanguage;
+
   useEffect(() => {
     const loadMenu = async () => {
       try {
@@ -386,25 +388,35 @@ export default function AdminMenuPage() {
                 ))}
               </div>
 
-              <div className="mt-5 grid gap-4 md:grid-cols-2">
-                <label className="text-sm font-medium text-[#413a35]">
-                  Image URL
-                  <input value={readImageValue(course)} onChange={(event) => updateCourse(course.id, "imageUrl", event.target.value)} className="mt-2 w-full rounded-2xl border border-[#d5c4ad] bg-[#fffdfb] px-4 py-3 outline-none" />
-                </label>
-                <label className="text-sm font-medium text-[#413a35]">
-                  Upload image
-                  <input type="file" accept="image/*" onChange={(event) => handleImageUpload("course", course.id, undefined, event.target.files?.[0])} className="mt-2 block w-full rounded-2xl border border-[#d5c4ad] bg-[#fffdfb] px-4 py-3 outline-none" />
-                </label>
-              </div>
+              {isDefaultLanguage ? (
+                <>
+                  <div className="mt-5 grid gap-4 md:grid-cols-2">
+                    <label className="text-sm font-medium text-[#413a35]">
+                      Image URL
+                      <input value={readImageValue(course)} onChange={(event) => updateCourse(course.id, "imageUrl", event.target.value)} className="mt-2 w-full rounded-2xl border border-[#d5c4ad] bg-[#fffdfb] px-4 py-3 outline-none" />
+                    </label>
+                    <label className="text-sm font-medium text-[#413a35]">
+                      Upload image
+                      <input type="file" accept="image/*" onChange={(event) => handleImageUpload("course", course.id, undefined, event.target.files?.[0])} className="mt-2 block w-full rounded-2xl border border-[#d5c4ad] bg-[#fffdfb] px-4 py-3 outline-none" />
+                    </label>
+                  </div>
 
-              <div className="mt-4 flex items-center justify-center overflow-hidden rounded-2xl border border-[#e7d8c6] bg-[#f9f3ec]">
-                <img src={course.imageUrl || previewImage} alt={course.name} className="h-32 w-full object-cover" />
-              </div>
+                  <div className="mt-4 flex items-center justify-center overflow-hidden rounded-2xl border border-[#e7d8c6] bg-[#f9f3ec]">
+                    <img src={course.imageUrl || previewImage} alt={course.name} className="h-32 w-full object-cover" />
+                  </div>
+                </>
+              ) : (
+                <div className="mt-5 rounded-2xl border border-dashed border-[#d5c4ad] bg-[#f9f3ec] px-4 py-3 text-sm text-[#5f5148]">
+                  English controls the image and item structure. Switch back to English to update the course image or option list.
+                </div>
+              )}
 
               <div className="mt-5">
                 <div className="mb-3 flex items-center justify-between">
                   <h2 className="text-lg font-semibold">Options</h2>
-                  <button type="button" onClick={() => addOption(course.id)} className="rounded-xl border border-[#d7c8b6] bg-white px-3 py-2 text-sm font-medium">Add option</button>
+                  {isDefaultLanguage ? (
+                    <button type="button" onClick={() => addOption(course.id)} className="rounded-xl border border-[#d7c8b6] bg-white px-3 py-2 text-sm font-medium">Add option</button>
+                  ) : null}
                 </div>
 
                 <div className="space-y-4">
@@ -436,31 +448,35 @@ export default function AdminMenuPage() {
                         ))}
                       </div>
 
-                      <div className="mt-4 grid gap-4 md:grid-cols-2">
-                        <label className="text-sm font-medium text-[#413a35]">
-                          Image URL
-                          <input value={readImageValue(option) ?? ""} onChange={(event) => updateOption(course.id, option.id, "imageUrl", event.target.value)} className="mt-2 w-full rounded-2xl border border-[#d5c4ad] bg-[#fffdfb] px-4 py-3 outline-none" />
-                        </label>
-                        <label className="text-sm font-medium text-[#413a35]">
-                          Upload image
-                          <input type="file" accept="image/*" onChange={(event) => handleImageUpload("option", course.id, option.id, event.target.files?.[0])} className="mt-2 block w-full rounded-2xl border border-[#d5c4ad] bg-[#fffdfb] px-4 py-3 outline-none" />
-                        </label>
-                        <label className="text-sm font-medium text-[#413a35] md:col-span-2">
-                          Allergens
-                          <input value={(option.allergens ?? []).join(", ")} onChange={(event) => updateOption(course.id, option.id, "allergens", event.target.value.split(",").map((item) => item.trim()).filter(Boolean))} className="mt-2 w-full rounded-2xl border border-[#d5c4ad] bg-[#fffdfb] px-4 py-3 outline-none" />
-                        </label>
-                      </div>
+                      {isDefaultLanguage ? (
+                        <>
+                          <div className="mt-4 grid gap-4 md:grid-cols-2">
+                            <label className="text-sm font-medium text-[#413a35]">
+                              Image URL
+                              <input value={readImageValue(option) ?? ""} onChange={(event) => updateOption(course.id, option.id, "imageUrl", event.target.value)} className="mt-2 w-full rounded-2xl border border-[#d5c4ad] bg-[#fffdfb] px-4 py-3 outline-none" />
+                            </label>
+                            <label className="text-sm font-medium text-[#413a35]">
+                              Upload image
+                              <input type="file" accept="image/*" onChange={(event) => handleImageUpload("option", course.id, option.id, event.target.files?.[0])} className="mt-2 block w-full rounded-2xl border border-[#d5c4ad] bg-[#fffdfb] px-4 py-3 outline-none" />
+                            </label>
+                            <label className="text-sm font-medium text-[#413a35] md:col-span-2">
+                              Allergens
+                              <input value={(option.allergens ?? []).join(", ")} onChange={(event) => updateOption(course.id, option.id, "allergens", event.target.value.split(",").map((item) => item.trim()).filter(Boolean))} className="mt-2 w-full rounded-2xl border border-[#d5c4ad] bg-[#fffdfb] px-4 py-3 outline-none" />
+                            </label>
+                          </div>
 
-                      <div className="mt-3 flex items-center gap-4">
-                        <label className="flex items-center gap-2 text-sm font-medium text-[#413a35]">
-                          <input type="checkbox" checked={Boolean(option.active)} onChange={(event) => updateOption(course.id, option.id, "active", event.target.checked)} />
-                          Active
-                        </label>
-                      </div>
+                          <div className="mt-3 flex items-center gap-4">
+                            <label className="flex items-center gap-2 text-sm font-medium text-[#413a35]">
+                              <input type="checkbox" checked={Boolean(option.active)} onChange={(event) => updateOption(course.id, option.id, "active", event.target.checked)} />
+                              Active
+                            </label>
+                          </div>
 
-                      <div className="mt-4 flex items-center justify-center overflow-hidden rounded-2xl border border-[#e7d8c6] bg-[#f9f3ec]">
-                        <img src={option.imageUrl || previewImage} alt={option.name} className="h-24 w-full object-cover" />
-                      </div>
+                          <div className="mt-4 flex items-center justify-center overflow-hidden rounded-2xl border border-[#e7d8c6] bg-[#f9f3ec]">
+                            <img src={option.imageUrl || previewImage} alt={option.name} className="h-24 w-full object-cover" />
+                          </div>
+                        </>
+                      ) : null}
                     </div>
                   ))}
                 </div>

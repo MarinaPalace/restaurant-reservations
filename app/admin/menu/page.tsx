@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 const defaultLanguage = "en";
+const supportedLanguages = ["en", "fr", "bg", "de", "ru", "pl", "ro"];
 
 const normalizeLanguageList = (items: string[]) => {
   const cleaned = items
@@ -10,14 +11,12 @@ const normalizeLanguageList = (items: string[]) => {
     .filter(Boolean)
     .filter((lang, index, arr) => arr.indexOf(lang) === index);
 
-  const unique = cleaned.filter((lang) => lang !== defaultLanguage);
-  if (!cleaned.includes(defaultLanguage)) {
-    unique.unshift(defaultLanguage);
-  } else {
+  const ordered = [...supportedLanguages, ...cleaned.filter((lang) => !supportedLanguages.includes(lang))];
+  const unique = ordered.filter((lang, index, arr) => arr.indexOf(lang) === index);
+  if (!unique.includes(defaultLanguage)) {
     unique.unshift(defaultLanguage);
   }
-
-  return Array.from(new Set(unique));
+  return unique;
 };
 
 const ensureLanguageMap = (item: any, fallbackName = "", fallbackDescription = "") => {
@@ -57,7 +56,7 @@ const readImageValue = (item: any) => item?.imageUrl ?? "";
 export default function AdminMenuPage() {
   const [language, setLanguage] = useState(defaultLanguage);
   const [courses, setCourses] = useState<any[]>([]);
-  const [languages, setLanguages] = useState<string[]>([defaultLanguage, "fr"]);
+  const [languages, setLanguages] = useState<string[]>(supportedLanguages);
   const [newLanguage, setNewLanguage] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -85,8 +84,7 @@ export default function AdminMenuPage() {
         setCourses(nextCourses);
         setLanguages(
           normalizeLanguageList([
-            defaultLanguage,
-            "fr",
+            ...supportedLanguages,
             ...nextCourses.flatMap((course) => [
               ...Object.keys(course?.translations ?? {}),
               ...(course?.options ?? []).flatMap((option: any) => Object.keys(option?.translations ?? {})),
@@ -322,9 +320,10 @@ export default function AdminMenuPage() {
             <div className="flex items-center gap-2 rounded-xl border border-[#d5c4ad] bg-white px-3 py-2">
               <label className="text-sm font-medium text-[#5f5148]">Language</label>
               <select value={language} onChange={(event) => setLanguage(event.target.value)} className="bg-transparent outline-none">
-                <option value="en">English</option>
-                <option value="fr">Français</option>
-                {availableLanguages.filter((lang) => !["en", "fr"].includes(lang)).map((lang) => (
+                {supportedLanguages.map((lang) => (
+                  <option key={lang} value={lang}>{lang === "en" ? "English" : lang === "fr" ? "Français" : lang === "bg" ? "Български" : lang === "de" ? "Deutsch" : lang === "ru" ? "Русский" : lang === "pl" ? "Polski" : lang === "ro" ? "Română" : lang.toUpperCase()}</option>
+                ))}
+                {availableLanguages.filter((lang) => !supportedLanguages.includes(lang)).map((lang) => (
                   <option key={lang} value={lang}>{lang.toUpperCase()}</option>
                 ))}
               </select>

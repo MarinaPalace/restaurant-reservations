@@ -25,6 +25,7 @@ function normalizeSelections(value: unknown): ReservationSelection[] {
 }
 
 const defaultLanguage = "en";
+const supportedLanguages = ["en", "fr", "bg", "de", "ru", "pl", "ro"];
 
 export default function MenuPage() {
   const router = useRouter();
@@ -37,7 +38,7 @@ export default function MenuPage() {
   const previewImage = "https://hips.hearstapps.com/hmg-prod/images/c33b2259-8c6b-4308-bc6f-5373d8a6600d.jpeg";
 
   const availableLanguages = useMemo(() => {
-    const discovered = new Set<string>([defaultLanguage]);
+    const discovered = new Set<string>(supportedLanguages);
     for (const course of courses) {
       Object.keys(course.translations ?? {}).forEach((lang) => discovered.add(lang.toLowerCase()));
       course.options.forEach((option) => Object.keys(option.translations ?? {}).forEach((lang) => discovered.add(lang.toLowerCase())));
@@ -160,7 +161,7 @@ export default function MenuPage() {
               <span>Language</span>
               <select value={language} onChange={(event) => setLanguage(event.target.value)} className="bg-transparent font-medium outline-none">
                 {availableLanguages.map((lang) => (
-                  <option key={lang} value={lang}>{lang.toUpperCase()}</option>
+                  <option key={lang} value={lang}>{lang === "en" ? "English" : lang === "fr" ? "Français" : lang === "bg" ? "Български" : lang === "de" ? "Deutsch" : lang === "ru" ? "Русский" : lang === "pl" ? "Polski" : lang === "ro" ? "Română" : lang.toUpperCase()}</option>
                 ))}
               </select>
             </div>

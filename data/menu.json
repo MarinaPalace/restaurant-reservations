@@ -7,17 +7,28 @@
     "required": true,
     "active": true,
     "imageUrl": "https://example.com/test.jpg",
+    "translations": {
+      "en": {
+        "name": "Test Course",
+        "description": "Preview image test"
+      }
+    },
     "options": [
       {
         "id": "test-option",
-        "courseId": "test-course",
         "name": "Test Option",
         "description": "Works",
         "allergens": [
           "Dairy"
         ],
         "active": true,
-        "imageUrl": "https://example.com/test-option.jpg"
+        "imageUrl": "https://example.com/test-option.jpg",
+        "translations": {
+          "en": {
+            "name": "Test Option",
+            "description": "Works"
+          }
+        }
       }
     ]
   }

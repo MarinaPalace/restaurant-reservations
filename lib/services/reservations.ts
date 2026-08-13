@@ -104,7 +104,7 @@ export async function createReservationEntry(input: {
   return result;
 }
 
-export async function getReservationByNumber(reservationNumber: string) {
+export async function getReservationByNumber(reservationNumber: string): Promise<ReservationRecord | null> {
   if (!isMongoConfigured()) {
     return getMockReservation(reservationNumber);
   }
@@ -122,7 +122,7 @@ export async function getReservationByNumber(reservationNumber: string) {
     guestCount: Number(reservation.guestCount),
     date: String(reservation.date),
     selections: Array.isArray(reservation.selections) ? reservation.selections : [],
-    status: String(reservation.status),
+    status: reservation.status === "cancelled" ? "cancelled" : "confirmed",
     createdAt: reservation.createdAt ? new Date(reservation.createdAt).toISOString() : undefined,
     updatedAt: reservation.updatedAt ? new Date(reservation.updatedAt).toISOString() : undefined,
   };
@@ -152,21 +152,21 @@ export async function cancelReservation(reservationNumber: string) {
   };
 }
 
-export async function getReservationsList() {
+export async function getReservationsList(): Promise<ReservationRecord[]> {
   if (!isMongoConfigured()) {
     return getMockReservationList();
   }
 
   await connectToDatabase();
   const reservations = await ReservationModel.find().sort({ createdAt: -1 }).lean();
-  return reservations.map((reservation) => ({
+  return reservations.map((reservation): ReservationRecord => ({
     _id: String(reservation._id),
     reservationNumber: String(reservation.reservationNumber),
     roomNumber: Number(reservation.roomNumber),
     guestCount: Number(reservation.guestCount),
     date: String(reservation.date),
     selections: Array.isArray(reservation.selections) ? reservation.selections : [],
-    status: String(reservation.status),
+    status: reservation.status === "cancelled" ? "cancelled" : "confirmed",
     createdAt: reservation.createdAt ? new Date(reservation.createdAt).toISOString() : undefined,
     updatedAt: reservation.updatedAt ? new Date(reservation.updatedAt).toISOString() : undefined,
   }));

@@ -72,6 +72,11 @@ export default function AdminMenuPage() {
     return normalizeLanguageList([...languages, ...discovered]);
   }, [courses, languages]);
 
+  const displayLanguages = useMemo(
+    () => Array.from(new Set(availableLanguages)).filter((lang) => Boolean(lang)),
+    [availableLanguages],
+  );
+
   const isDefaultLanguage = language === defaultLanguage;
 
   useEffect(() => {
@@ -322,11 +327,8 @@ export default function AdminMenuPage() {
             <div className="flex items-center gap-2 rounded-xl border border-[#d5c4ad] bg-white px-3 py-2">
               <label className="text-sm font-medium text-[#5f5148]">Language</label>
               <select value={language} onChange={(event) => setLanguage(event.target.value)} className="bg-transparent outline-none">
-                {supportedLanguages.map((lang) => (
+                {displayLanguages.map((lang) => (
                   <option key={lang} value={lang}>{lang === "en" ? "English" : lang === "fr" ? "Français" : lang === "bg" ? "Български" : lang === "de" ? "Deutsch" : lang === "ru" ? "Русский" : lang === "pl" ? "Polski" : lang === "ro" ? "Română" : lang.toUpperCase()}</option>
-                ))}
-                {availableLanguages.filter((lang) => !supportedLanguages.includes(lang)).map((lang) => (
-                  <option key={lang} value={lang}>{lang.toUpperCase()}</option>
                 ))}
               </select>
             </div>
@@ -362,30 +364,41 @@ export default function AdminMenuPage() {
                 </div>
               </div>
 
-              <div className="mt-5 space-y-4">
-                {availableLanguages.map((lang) => (
-                  <div key={`${course.id}-${lang}`} className="rounded-2xl border border-[#f0e6db] bg-[#fffdfb] p-4">
-                    <div className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-[#8e6b49]">{lang}</div>
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <label className="text-sm font-medium text-[#413a35]">
-                        {lang.toUpperCase()} name
-                        <input
-                          value={readLanguageValue(course, lang, "name")}
-                          onChange={(event) => updateCourseTranslation(course.id, lang, "name", event.target.value)}
-                          className="mt-2 w-full rounded-2xl border border-[#d5c4ad] bg-[#fffdfb] px-4 py-3 outline-none"
-                        />
-                      </label>
-                      <label className="text-sm font-medium text-[#413a35]">
-                        {lang.toUpperCase()} description
-                        <textarea
-                          value={readLanguageValue(course, lang, "description")}
-                          onChange={(event) => updateCourseTranslation(course.id, lang, "description", event.target.value)}
-                          className="mt-2 min-h-20 w-full rounded-2xl border border-[#d5c4ad] bg-[#fffdfb] px-4 py-3 outline-none"
-                        />
-                      </label>
-                    </div>
+              <div className="mt-5">
+                <div className="mb-3 flex flex-wrap gap-2">
+                  {displayLanguages.map((lang) => (
+                    <button
+                      key={`${course.id}-tab-${lang}`}
+                      type="button"
+                      onClick={() => setLanguage(lang)}
+                      className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] ${language === lang ? "border-[#a57b4f] bg-[#f3e6d6] text-[#553f2d]" : "border-[#d5c4ad] bg-white text-[#5f5148]"}`}
+                    >
+                      {lang}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="rounded-2xl border border-[#f0e6db] bg-[#fffdfb] p-4">
+                  <div className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-[#8e6b49]">{language}</div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <label className="text-sm font-medium text-[#413a35]">
+                      {language.toUpperCase()} name
+                      <input
+                        value={readLanguageValue(course, language, "name")}
+                        onChange={(event) => updateCourseTranslation(course.id, language, "name", event.target.value)}
+                        className="mt-2 w-full rounded-2xl border border-[#d5c4ad] bg-[#fffdfb] px-4 py-3 outline-none"
+                      />
+                    </label>
+                    <label className="text-sm font-medium text-[#413a35]">
+                      {language.toUpperCase()} description
+                      <textarea
+                        value={readLanguageValue(course, language, "description")}
+                        onChange={(event) => updateCourseTranslation(course.id, language, "description", event.target.value)}
+                        className="mt-2 min-h-20 w-full rounded-2xl border border-[#d5c4ad] bg-[#fffdfb] px-4 py-3 outline-none"
+                      />
+                    </label>
                   </div>
-                ))}
+                </div>
               </div>
 
               {isDefaultLanguage ? (
@@ -422,30 +435,41 @@ export default function AdminMenuPage() {
                 <div className="space-y-4">
                   {(course.options ?? []).map((option: any) => (
                     <div key={option.id} className="rounded-2xl border border-[#f0e6db] bg-[#fffdfb] p-4">
-                      <div className="space-y-4">
-                        {availableLanguages.map((lang) => (
-                          <div key={`${course.id}-${option.id}-${lang}`} className="rounded-xl border border-[#f4eadf] bg-white p-3">
-                            <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-[#8e6b49]">{lang}</div>
-                            <div className="grid gap-4 md:grid-cols-2">
-                              <label className="text-sm font-medium text-[#413a35]">
-                                {lang.toUpperCase()} name
-                                <input
-                                  value={readLanguageValue(option, lang, "name")}
-                                  onChange={(event) => updateOptionTranslation(course.id, option.id, lang, "name", event.target.value)}
-                                  className="mt-2 w-full rounded-2xl border border-[#d5c4ad] bg-[#fffdfb] px-4 py-3 outline-none"
-                                />
-                              </label>
-                              <label className="text-sm font-medium text-[#413a35]">
-                                {lang.toUpperCase()} description
-                                <textarea
-                                  value={readLanguageValue(option, lang, "description")}
-                                  onChange={(event) => updateOptionTranslation(course.id, option.id, lang, "description", event.target.value)}
-                                  className="mt-2 min-h-20 w-full rounded-2xl border border-[#d5c4ad] bg-[#fffdfb] px-4 py-3 outline-none"
-                                />
-                              </label>
-                            </div>
+                      <div className="space-y-3">
+                        <div className="flex flex-wrap gap-2">
+                          {displayLanguages.map((lang) => (
+                            <button
+                              key={`${course.id}-${option.id}-tab-${lang}`}
+                              type="button"
+                              onClick={() => setLanguage(lang)}
+                              className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${language === lang ? "border-[#a57b4f] bg-[#f3e6d6] text-[#553f2d]" : "border-[#d5c4ad] bg-white text-[#5f5148]"}`}
+                            >
+                              {lang}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="rounded-xl border border-[#f4eadf] bg-white p-3">
+                          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-[#8e6b49]">{language}</div>
+                          <div className="grid gap-4 md:grid-cols-2">
+                            <label className="text-sm font-medium text-[#413a35]">
+                              {language.toUpperCase()} name
+                              <input
+                                value={readLanguageValue(option, language, "name")}
+                                onChange={(event) => updateOptionTranslation(course.id, option.id, language, "name", event.target.value)}
+                                className="mt-2 w-full rounded-2xl border border-[#d5c4ad] bg-[#fffdfb] px-4 py-3 outline-none"
+                              />
+                            </label>
+                            <label className="text-sm font-medium text-[#413a35]">
+                              {language.toUpperCase()} description
+                              <textarea
+                                value={readLanguageValue(option, language, "description")}
+                                onChange={(event) => updateOptionTranslation(course.id, option.id, language, "description", event.target.value)}
+                                className="mt-2 min-h-20 w-full rounded-2xl border border-[#d5c4ad] bg-[#fffdfb] px-4 py-3 outline-none"
+                              />
+                            </label>
                           </div>
-                        ))}
+                        </div>
                       </div>
 
                       {isDefaultLanguage ? (

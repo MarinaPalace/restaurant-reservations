@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getReservationsList } from "@/lib/services/reservations";
 import { getRestaurantDates } from "@/lib/services/restaurant";
+import { AdminDateManager } from "@/app/admin/date-manager";
 
 export default async function AdminPage() {
   const cookieStore = await cookies();
@@ -37,7 +38,7 @@ export default async function AdminPage() {
               return (
                 <div key={date.date} className="rounded-2xl border border-[#e7d8c6] bg-[#fffdfb] p-4">
                   <div className="text-lg font-semibold">{new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long" }).format(new Date(`${date.date}T12:00:00`))}</div>
-                  <div className="mt-2 text-sm text-[#695d53]">{date.capacity} / {date.capacity} seats</div>
+                  <div className="mt-2 text-sm text-[#695d53]">{date.capacity} seats</div>
                   <div className="mt-1 text-sm text-[#695d53]">{remaining} remaining</div>
                   <div className="mt-3 inline-flex rounded-full bg-[#edf6ee] px-3 py-1 text-sm font-medium text-[#2f7d51]">
                     {date.isOpen ? "OPEN" : "CLOSED"}
@@ -46,6 +47,8 @@ export default async function AdminPage() {
               );
             })}
           </div>
+
+          <AdminDateManager initialDates={restaurantDates} initialReservations={reservations} />
 
           <div className="mt-8 overflow-hidden rounded-2xl border border-[#e7d8c6]">
             <div className="overflow-x-auto">

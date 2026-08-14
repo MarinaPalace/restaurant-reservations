@@ -1,29 +1,38 @@
 import bcrypt from "bcryptjs";
 import { timingSafeEqual } from "crypto";
 import { AdminConfigError } from "@/lib/auth/session";
+import { describePasswordHashProblem, readEnv } from "@/lib/auth/config";
 
 const DEVELOPMENT_PASSWORD = "admin123";
 
 let developmentHash: string | null = null;
 
 function getAdminUsername() {
-  return process.env.ADMIN_USERNAME ?? "admin";
+  return readEnv("ADMIN_USERNAME") || "admin";
 }
 
 function getAdminPasswordHash() {
-  const configured = process.env.ADMIN_PASSWORD_HASH;
-  if (configured) {
-    return configured;
+  const configured = readEnv("ADMIN_PASSWORD_HASH");
+  const problem = describePasswordHashProblem(configured);
+
+  if (!problem) {
+    return configured as string;
   }
 
   if (process.env.NODE_ENV === "production") {
-    throw new AdminConfigError("ADMIN_PASSWORD_HASH must be set in production.");
+    // Names the actual fault so it is visible in the server logs rather than
+    // presenting as an ordinary wrong password.
+    throw new AdminConfigError(`ADMIN_PASSWORD_HASH ${problem}.`);
+  }
+
+  if (configured) {
+    console.warn(`[admin] Ignoring ADMIN_PASSWORD_HASH: it ${problem}.`);
   }
 
   if (!developmentHash) {
     developmentHash = bcrypt.hashSync(DEVELOPMENT_PASSWORD, 10);
     console.warn(
-      `[admin] ADMIN_PASSWORD_HASH is not set. Falling back to the development password "${DEVELOPMENT_PASSWORD}". ` +
+      `[admin] Using the development password "${DEVELOPMENT_PASSWORD}". ` +
         "Set ADMIN_PASSWORD_HASH before deploying.",
     );
   }
@@ -47,8 +56,12 @@ function safeEquals(a: string, b: string) {
  */
 export async function verifyAdminCredentials(username: string, password: string) {
   const expectedHash = getAdminPasswordHash();
-  const usernameMatches = Boolean(username) && safeEquals(username, getAdminUsername());
+  const usernameMatches = Boolean(username) && safeEquals(username.trim(), getAdminUsername());
   const passwordMatches = await bcrypt.compare(password ?? "", expectedHash);
+
+  if (!usernameMatches && passwordMatches) {
+    console.warn(`[admin] Password correct but username "${username}" does not match ADMIN_USERNAME.`);
+  }
 
   return usernameMatches && passwordMatches;
 }

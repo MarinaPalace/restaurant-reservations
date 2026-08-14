@@ -19,8 +19,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   } catch (error) {
     if (error instanceof AdminConfigError) {
-      console.error("[admin] misconfigured deployment", error);
-      return NextResponse.json({ error: "Admin access is not configured on this server." }, { status: 503 });
+      console.error("[admin] misconfigured deployment:", error.message);
+      // The specific variable is named so staff can fix the deployment. No
+      // secret material is exposed, and a 503 already reveals that the admin
+      // area is unconfigured.
+      return NextResponse.json(
+        { error: `Admin access is not configured on this server. ${error.message}` },
+        { status: 503 },
+      );
     }
 
     console.error("[admin] login failed", error);

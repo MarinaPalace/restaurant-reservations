@@ -139,7 +139,7 @@ export async function saveMenuCatalog(courses: MenuCourse[]): Promise<MenuCourse
 
     const isExisting = Boolean(course.id) && /^[a-f\d]{24}$/i.test(course.id);
     const savedCourse = isExisting
-      ? await MenuCourseModel.findByIdAndUpdate(course.id, courseFields, { new: true })
+      ? await MenuCourseModel.findByIdAndUpdate(course.id, courseFields, { returnDocument: "after" })
       : await MenuCourseModel.create(courseFields);
 
     if (!savedCourse) {
@@ -162,7 +162,7 @@ export async function saveMenuCatalog(courses: MenuCourse[]): Promise<MenuCourse
 
       const isExistingOption = Boolean(option.id) && /^[a-f\d]{24}$/i.test(option.id);
       const savedOption = isExistingOption
-        ? await MenuOptionModel.findByIdAndUpdate(option.id, optionFields, { new: true })
+        ? await MenuOptionModel.findByIdAndUpdate(option.id, optionFields, { returnDocument: "after" })
         : await MenuOptionModel.create(optionFields);
 
       if (savedOption) {

@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
+import { describeSessionSecretProblem, readEnv } from "@/lib/auth/config";
 
 export const ADMIN_SESSION_COOKIE = "admin_session";
 
@@ -24,13 +25,15 @@ export class AdminConfigError extends Error {
 let developmentSecret: string | null = null;
 
 function getSessionSecret() {
-  const configured = process.env.ADMIN_SESSION_SECRET;
-  if (configured && configured.length >= 16) {
-    return configured;
+  const configured = readEnv("ADMIN_SESSION_SECRET");
+  const problem = describeSessionSecretProblem(configured);
+
+  if (!problem) {
+    return configured as string;
   }
 
   if (process.env.NODE_ENV === "production") {
-    throw new AdminConfigError("ADMIN_SESSION_SECRET must be set to at least 16 characters in production.");
+    throw new AdminConfigError(`ADMIN_SESSION_SECRET ${problem}.`);
   }
 
   if (!developmentSecret) {

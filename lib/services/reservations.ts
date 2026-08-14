@@ -98,7 +98,7 @@ export async function createReservationEntry(input: {
       $expr: { $gte: [{ $subtract: ["$capacity", "$reservedSeats"] }, input.guestCount] },
     },
     { $inc: { reservedSeats: input.guestCount } },
-    { new: true },
+    { returnDocument: "after" },
   ).lean();
 
   if (!claimedDate) {
@@ -149,7 +149,7 @@ export async function cancelReservation(reservationNumber: string): Promise<Rese
   const cancelled = await ReservationModel.findOneAndUpdate(
     { reservationNumber, status: "confirmed" },
     { status: "cancelled" },
-    { new: true },
+    { returnDocument: "after" },
   ).lean();
 
   if (!cancelled) {
@@ -183,7 +183,7 @@ export async function updateRestaurantDate(input: { date: string; isOpen: boolea
   const updated = await RestaurantDateModel.findOneAndUpdate(
     { date: input.date },
     { $set: { isOpen: input.isOpen, capacity: input.capacity }, $setOnInsert: { reservedSeats: 0 } },
-    { new: true, upsert: true },
+    { returnDocument: "after", upsert: true },
   ).lean();
 
   return withRemainingSeats({

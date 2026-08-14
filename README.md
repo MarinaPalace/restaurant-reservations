@@ -34,12 +34,41 @@ node -e "console.log(require('bcryptjs').hashSync(process.argv[1], 10))" 'your-p
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
+### If admin sign-in fails
+
+```bash
+npm run check:admin -- 'the-password-you-are-typing'
+```
+
+It reports which variable is at fault. For a deployed environment, pull the
+real values first with `vercel env pull .env.local`.
+
+Three things account for almost every failure:
+
+- **Environment variables need a redeploy.** Adding them to an existing Vercel
+  deployment has no effect until it is rebuilt.
+- **A shell ate the `$` in the hash.** `$2b$10$…` gets expanded to a fragment
+  unless it is single-quoted. Pasting into the Vercel dashboard is safest.
+- **The username does not match.** `ADMIN_USERNAME` defaults to `admin`.
+
+A misconfigured deployment returns **503** with the offending variable named;
+a genuinely wrong username or password returns **401**.
+
 ## Running against MongoDB
 
 ```bash
 export MONGODB_URI="mongodb://localhost:27017/hotel-restaurant"
 npm run seed
 npm run dev
+```
+
+**A new database starts empty**, and the self-seeding JSON store only runs when
+`MONGODB_URI` is unset — so guests would see "no dinner dates are open" and
+"the menu is not published yet". Seed a hosted database by pointing the same
+script at it from your machine:
+
+```bash
+MONGODB_URI="<your Atlas connection string>" npm run seed
 ```
 
 Seats are claimed with a single conditional update rather than a transaction, so a standalone `mongod` works — no replica set required.
@@ -54,8 +83,10 @@ Seats are claimed with a single conditional update rather than a transaction, so
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run lint` | ESLint |
 | `npm run seed` | Seed MongoDB (no-op without `MONGODB_URI`) |
+| `npm run check:admin` | Diagnose admin sign-in configuration |
 
-Tests write to a temporary directory via `LOCAL_STORE_DIR` and never touch `data/`.
+Tests write to a temporary directory via `LOCAL_STORE_DIR` and never touch `data/`. The
+MongoDB suite runs against an in-memory `mongod`, downloaded on first run.
 
 ## Project layout
 

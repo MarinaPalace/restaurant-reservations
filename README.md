@@ -25,6 +25,18 @@ bookings), and used for the calendar reminder — which also asks the guest to a
 early and carries a short-notice alarm to that effect. `NEXT_PUBLIC_DINNER_TIME` is only the
 fallback for dates with no time set.
 
+**Room labels.** Rooms are text, not numbers — `402`, `L10`, `HA3`, `A43` all work. They are stored
+upper-cased so a guest typing `l10` still finds their booking, and sorted naturally on the kitchen
+sheet so `2` comes before `10` and the A rooms group together. Bookings saved by earlier versions
+with a numeric room read back unchanged.
+
+**Staff reservations.** Reception can take a booking at the desk (*New reservation* on the
+dashboard) and edit any part of an existing one (*Edit reservation* on its page): courses, date,
+party size, room, table, comment and contact. Moving a booking to another evening or resizing the
+party moves the seats with it — the new evening is claimed before the old one is released, so a
+concurrent booking cannot slip into the gap, and a refused move leaves both evenings untouched.
+Contact details are optional for staff, since a phone booking may not have them.
+
 **Changing a booking.** Guests reach `/booking/manage` from the confirmation or the first booking
 step, identify themselves with their reservation number *and* room number, and can then swap
 courses or cancel. Self-service closes **12 hours before the sitting**, after which they are asked

@@ -1,4 +1,5 @@
 import { isNoneSelection, NONE_OPTION_ID } from "@/lib/menu-selection";
+import { compareRoomNumbers } from "@/lib/room";
 import type { MenuCourse, ReservationRecord } from "@/types/booking";
 
 /**
@@ -23,7 +24,7 @@ export type GuestRow = {
   key: string;
   reservationNumber: string;
   table: string;
-  room: number;
+  room: string;
   guests: string;
   choices: Record<string, string>;
   comment: string;
@@ -35,7 +36,7 @@ export type RoomRow = {
   key: string;
   reservationNumber: string;
   table: string;
-  room: number;
+  room: string;
   guests: number;
   /** Option id -> how many of it this room needs. Zero means nothing to plate. */
   counts: Record<string, number>;
@@ -61,7 +62,7 @@ function sortReservations(reservations: ReservationRecord[]) {
       return groupA.localeCompare(groupB);
     }
 
-    return a.roomNumber - b.roomNumber;
+    return compareRoomNumbers(a.roomNumber, b.roomNumber);
   });
 }
 
@@ -254,7 +255,7 @@ export function buildGuestCsv(columns: CourseColumn[], rows: GuestRow[]) {
     header,
     ...rows.map((row) => [
       row.table,
-      String(row.room),
+      row.room,
       row.guests,
       ...columns.map((column) => row.choices[column.id] ?? ""),
       row.comment,
@@ -271,7 +272,7 @@ export function buildRoomCsv(columns: OptionColumn[], rows: RoomRow[], totals: R
 
   const body = rows.map((row) => [
     row.table,
-    String(row.room),
+    row.room,
     String(row.guests),
     // Blank rather than 0, so the counts that matter stand out.
     ...columns.map((column) => (row.counts[column.id] ? String(row.counts[column.id]) : "")),

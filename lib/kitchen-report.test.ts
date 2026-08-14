@@ -50,7 +50,7 @@ function pick(guestIndex: number, courseId: string, courseName: string, optionId
 
 const roomWithTwo: ReservationRecord = {
   reservationNumber: "ALC-AAA111",
-  roomNumber: 402,
+  roomNumber: "402",
   guestCount: 2,
   date: "2026-08-18",
   status: "confirmed",
@@ -67,7 +67,7 @@ const roomWithTwo: ReservationRecord = {
 
 const roomSharingTable: ReservationRecord = {
   reservationNumber: "ALC-BBB222",
-  roomNumber: 118,
+  roomNumber: "118",
   guestCount: 1,
   date: "2026-08-18",
   status: "confirmed",
@@ -79,7 +79,7 @@ const roomSharingTable: ReservationRecord = {
 /** A guest who wants a main but no starter. */
 const roomDecliningACourse: ReservationRecord = {
   reservationNumber: "ALC-CCC333",
-  roomNumber: 210,
+  roomNumber: "210",
   guestCount: 1,
   date: "2026-08-18",
   status: "confirmed",
@@ -165,7 +165,7 @@ describe("per-room counts", () => {
   });
 
   it("counts how many of each dish a room needs", () => {
-    const room402 = rows.find((row) => row.room === 402)!;
+    const room402 = rows.find((row) => row.room === "402")!;
 
     expect(room402.counts.o1).toBe(1); // one Salmon
     expect(room402.counts.o2).toBe(1); // one Velouté
@@ -174,7 +174,7 @@ describe("per-room counts", () => {
   });
 
   it("counts nothing for a declined course", () => {
-    const room210 = rows.find((row) => row.room === 210)!;
+    const room210 = rows.find((row) => row.room === "210")!;
 
     expect(room210.counts.o1).toBe(0);
     expect(room210.counts.o2).toBe(0);
@@ -206,7 +206,7 @@ describe("shared tables", () => {
     const reservations = [roomDecliningACourse, roomSharingTable, roomWithTwo];
     const rows = buildRoomRows(reservations, buildOptionColumns(reservations, menu));
 
-    expect(rows.map((row) => row.room)).toEqual([118, 402, 210]);
+    expect(rows.map((row) => row.room)).toEqual(["118", "402", "210"]);
     expect(rows.map((row) => row.table)).toEqual(["4", "4", "7"]);
   });
 

@@ -46,6 +46,9 @@ export default async function AdminPage() {
           title="Staff dashboard"
           actions={
             <div className="flex flex-wrap items-center gap-3" data-print="hide">
+              <ButtonLink href="/admin/reservation/new" variant="primary">
+                New reservation
+              </ButtonLink>
               <ButtonLink href="/admin/menu">Menu editor</ButtonLink>
               <form action="/api/admin/logout" method="POST">
                 <button

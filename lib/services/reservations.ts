@@ -10,6 +10,7 @@ import {
   reservationNumberExists,
   deleteLocalReservation,
   setLocalReservationGroup,
+  updateLocalReservationDetails,
   setLocalReservationTable,
   updateLocalReservationSelections,
   upsertLocalDate,
@@ -68,7 +69,7 @@ function toReservationRecord(document: MongoReservationDocument): ReservationRec
   return {
     _id: String(document._id),
     reservationNumber: String(document.reservationNumber),
-    roomNumber: Number(document.roomNumber),
+    roomNumber: String(document.roomNumber),
     guestCount: Number(document.guestCount),
     date: String(document.date),
     selections: Array.isArray(document.selections) ? (document.selections as ReservationSelection[]) : [],
@@ -156,12 +157,13 @@ export async function assignTableNumber(reservationNumber: string, tableNumber: 
 }
 
 export async function createReservationEntry(input: {
-  roomNumber: number;
+  roomNumber: string;
   guestCount: number;
   date: string;
   selections: ReservationSelection[];
   contact?: ReservationContact;
   notes?: string;
+  tableNumber?: string;
   /** Reservation number of a party this booking should share a table with. */
   joinReservationNumber?: string;
 }): Promise<ReservationRecord> {
@@ -219,6 +221,7 @@ export async function createReservationEntry(input: {
       time: bookedDate?.serviceTime,
       endTime: bookedDate?.serviceEndTime,
       notes: input.notes,
+      tableNumber: input.tableNumber,
       tableGroupId,
       status: "confirmed",
     });
@@ -268,6 +271,133 @@ export async function cancelReservation(reservationNumber: string): Promise<Rese
   await RestaurantDateModel.updateOne({ date: record.date }, { $inc: { reservedSeats: -record.guestCount } });
 
   return record;
+}
+
+export type StaffReservationPatch = {
+  roomNumber?: string;
+  guestCount?: number;
+  date?: string;
+  selections?: ReservationSelection[];
+  notes?: string;
+  contact?: ReservationContact;
+  tableNumber?: string;
+};
+
+/**
+ * Staff edit of a booking: any field, including moving it to another evening
+ * or changing the party size.
+ *
+ * Seat accounting is the delicate part. On Mongo the new date is claimed with
+ * a single conditional update before the old one is released, so a concurrent
+ * booking cannot take the seats in between; if anything downstream fails the
+ * claim is handed back.
+ */
+export async function updateReservationDetails(
+  reservationNumber: string,
+  patch: StaffReservationPatch,
+): Promise<ReservationRecord | null> {
+  if (!isMongoConfigured()) {
+    const result = await updateLocalReservationDetails(reservationNumber, patch);
+
+    if (!result.ok) {
+      if (result.reason === "NOT_FOUND") {
+        return null;
+      }
+      throw new BookingError(result.reason);
+    }
+
+    return result.reservation;
+  }
+
+  await connectToDatabase();
+
+  const existingDocument = await ReservationModel.findOne({ reservationNumber }).lean();
+  if (!existingDocument) {
+    return null;
+  }
+
+  const existing = toReservationRecord(existingDocument as MongoReservationDocument);
+  const nextDate = patch.date ?? existing.date;
+  const nextGuestCount = patch.guestCount ?? existing.guestCount;
+
+  const holdsSeats = existing.status === "confirmed";
+  const dateChanged = nextDate !== existing.date;
+  const countChanged = nextGuestCount !== existing.guestCount;
+  const seatsMoved = holdsSeats && (dateChanged || countChanged);
+
+  if (seatsMoved) {
+    // Seats already held on the target date do not count against the booking,
+    // otherwise growing a party by one would need room for the whole table.
+    const seatsAlreadyHeld = dateChanged ? 0 : existing.guestCount;
+    const seatsNeeded = nextGuestCount - seatsAlreadyHeld;
+
+    const claimed = await RestaurantDateModel.findOneAndUpdate(
+      {
+        date: nextDate,
+        isOpen: true,
+        $expr: { $gte: [{ $subtract: ["$capacity", "$reservedSeats"] }, seatsNeeded] },
+      },
+      { $inc: { reservedSeats: seatsNeeded } },
+      { returnDocument: "after" },
+    ).lean();
+
+    if (!claimed) {
+      const target = await RestaurantDateModel.findOne({ date: nextDate }).lean();
+      throw new BookingError(!target || !target.isOpen ? "DATE_CLOSED" : "DATE_FULL");
+    }
+
+    if (dateChanged) {
+      await RestaurantDateModel.updateOne(
+        { date: existing.date },
+        { $inc: { reservedSeats: -existing.guestCount } },
+      );
+    }
+  }
+
+  const targetDate = dateChanged ? await RestaurantDateModel.findOne({ date: nextDate }).lean() : null;
+
+  const update: Record<string, unknown> = {
+    roomNumber: patch.roomNumber ?? existing.roomNumber,
+    guestCount: nextGuestCount,
+    date: nextDate,
+  };
+
+  if (patch.selections !== undefined) update.selections = patch.selections;
+  if (patch.notes !== undefined) update.notes = patch.notes;
+  if (patch.contact !== undefined) update.contact = patch.contact;
+  if (patch.tableNumber !== undefined) update.tableNumber = patch.tableNumber;
+
+  if (dateChanged) {
+    // Moving evenings adopts that evening's sitting times.
+    update.time = targetDate?.serviceTime ?? null;
+    update.endTime = targetDate?.serviceEndTime ?? null;
+  }
+
+  try {
+    const saved = await ReservationModel.findOneAndUpdate(
+      { reservationNumber },
+      { $set: update },
+      { returnDocument: "after" },
+    ).lean();
+
+    return saved ? toReservationRecord(saved as MongoReservationDocument) : null;
+  } catch (error) {
+    if (seatsMoved) {
+      // Hand the claimed seats back rather than leaving them stranded.
+      const seatsAlreadyHeld = dateChanged ? 0 : existing.guestCount;
+      await RestaurantDateModel.updateOne(
+        { date: nextDate },
+        { $inc: { reservedSeats: -(nextGuestCount - seatsAlreadyHeld) } },
+      );
+      if (dateChanged) {
+        await RestaurantDateModel.updateOne(
+          { date: existing.date },
+          { $inc: { reservedSeats: existing.guestCount } },
+        );
+      }
+    }
+    throw error;
+  }
 }
 
 /** Replaces the menu choices on a booking. Seats are unaffected. */

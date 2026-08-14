@@ -41,8 +41,11 @@ export default async function ReservationDetailPage({
           eyebrow="Reservation"
           title={reservation.reservationNumber}
           actions={
-            <div data-print="hide">
+            <div className="flex flex-wrap gap-3" data-print="hide">
               <ButtonLink href="/admin">Back to dashboard</ButtonLink>
+              <ButtonLink href={`/admin/reservation/${reservation.reservationNumber}/edit`} variant="primary">
+                Edit reservation
+              </ButtonLink>
             </div>
           }
         />
@@ -69,12 +72,36 @@ export default async function ReservationDetailPage({
             </dd>
           </div>
           <div>
+            <dt className="text-sm text-ink-subtle">Arrival</dt>
+            <dd className="mt-1 text-lg font-semibold text-ink">
+              {reservation.time ? `${reservation.time}${reservation.endTime ? `–${reservation.endTime}` : ""}` : "—"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-sm text-ink-subtle">Table</dt>
+            <dd className="mt-1 text-lg font-semibold text-ink">{reservation.tableNumber || "—"}</dd>
+          </div>
+          <div>
             <dt className="text-sm text-ink-subtle">Status</dt>
             <dd className="mt-1">
               <Badge tone={reservation.status === "confirmed" ? "success" : "info"}>{reservation.status}</Badge>
             </dd>
           </div>
         </dl>
+
+        {reservation.notes ? (
+          <div className="mt-6 rounded-control border border-danger/30 bg-danger-soft p-4">
+            <p className="eyebrow">Comment</p>
+            <p className="mt-1 font-medium text-danger">{reservation.notes}</p>
+          </div>
+        ) : null}
+
+        {reservation.tableGroupId ? (
+          <p className="mt-4 text-sm text-ink-muted">
+            Sharing a table with the other rooms in booking{" "}
+            <span className="font-semibold text-ink">{reservation.tableGroupId}</span>.
+          </p>
+        ) : null}
 
         <div className="mt-6 space-y-3">
           {guestGroups.map(({ guestIndex, entries }) => (

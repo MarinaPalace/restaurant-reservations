@@ -155,12 +155,13 @@ export type LocalBookingResult =
  */
 export async function createLocalReservation(input: {
   reservationNumber: string;
-  roomNumber: number;
+  roomNumber: string;
   guestCount: number;
   date: string;
   selections: ReservationRecord["selections"];
   contact?: ReservationRecord["contact"];
   notes?: string;
+  tableNumber?: string;
   tableGroupId?: string;
 }): Promise<LocalBookingResult> {
   return withStoreLock(async () => {
@@ -190,6 +191,7 @@ export async function createLocalReservation(input: {
       time: dateEntry.serviceTime,
       endTime: dateEntry.serviceEndTime,
       notes: input.notes,
+      tableNumber: input.tableNumber,
       tableGroupId: input.tableGroupId,
       status: "confirmed",
       createdAt: timestamp,
@@ -337,6 +339,109 @@ export async function deleteLocalReservation(reservationNumber: string) {
 
     await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
     return removed;
+  });
+}
+
+export type LocalReservationPatch = {
+  roomNumber?: string;
+  guestCount?: number;
+  date?: string;
+  selections?: ReservationRecord["selections"];
+  notes?: string;
+  contact?: ReservationRecord["contact"];
+  tableNumber?: string;
+};
+
+export type LocalUpdateResult =
+  | { ok: true; reservation: ReservationRecord }
+  | { ok: false; reason: "NOT_FOUND" | "DATE_CLOSED" | "DATE_FULL"; remainingSeats?: number };
+
+/**
+ * Staff edit of a booking, including moving it to another evening or changing
+ * the party size.
+ *
+ * Seats are the delicate part: the old date has to give its seats back and the
+ * new one has to have room, and both must happen in the same locked section or
+ * a concurrent booking could slip into a seat this one is still holding.
+ */
+export async function updateLocalReservationDetails(
+  reservationNumber: string,
+  patch: LocalReservationPatch,
+): Promise<LocalUpdateResult> {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    const index = reservations.findIndex((entry) => entry.reservationNumber === reservationNumber);
+    if (index === -1) {
+      return { ok: false, reason: "NOT_FOUND" };
+    }
+
+    const existing = reservations[index];
+    const nextDate = patch.date ?? existing.date;
+    const nextGuestCount = patch.guestCount ?? existing.guestCount;
+    const dates = await readDates();
+
+    // A cancelled booking holds no seats, so there is nothing to move.
+    const holdsSeats = existing.status === "confirmed";
+    const dateChanged = nextDate !== existing.date;
+    const countChanged = nextGuestCount !== existing.guestCount;
+
+    if (holdsSeats && (dateChanged || countChanged)) {
+      const targetIndex = dates.findIndex((entry) => entry.date === nextDate);
+      const target = targetIndex === -1 ? null : dates[targetIndex];
+
+      if (!target || !target.isOpen) {
+        return { ok: false, reason: "DATE_CLOSED" };
+      }
+
+      // Seats this booking already holds on the target date do not count
+      // against it, otherwise growing a party by one would need room for all.
+      const seatsAlreadyHeld = dateChanged ? 0 : existing.guestCount;
+      const available = Math.max(target.capacity - target.reservedSeats, 0) + seatsAlreadyHeld;
+
+      if (available < nextGuestCount) {
+        return { ok: false, reason: "DATE_FULL", remainingSeats: available };
+      }
+
+      if (dateChanged) {
+        const sourceIndex = dates.findIndex((entry) => entry.date === existing.date);
+        if (sourceIndex !== -1) {
+          dates[sourceIndex] = {
+            ...dates[sourceIndex],
+            reservedSeats: Math.max(dates[sourceIndex].reservedSeats - existing.guestCount, 0),
+          };
+        }
+        dates[targetIndex] = { ...dates[targetIndex], reservedSeats: dates[targetIndex].reservedSeats + nextGuestCount };
+      } else {
+        dates[targetIndex] = {
+          ...dates[targetIndex],
+          reservedSeats: Math.max(dates[targetIndex].reservedSeats - existing.guestCount, 0) + nextGuestCount,
+        };
+      }
+
+      await writeJsonFile(getDataFilePath(DATES_FILE), dates);
+    }
+
+    const targetDate = dates.find((entry) => entry.date === nextDate);
+
+    const updated: ReservationRecord = {
+      ...existing,
+      roomNumber: patch.roomNumber ?? existing.roomNumber,
+      guestCount: nextGuestCount,
+      date: nextDate,
+      selections: patch.selections ?? existing.selections,
+      notes: patch.notes ?? existing.notes,
+      contact: patch.contact ?? existing.contact,
+      tableNumber: patch.tableNumber ?? existing.tableNumber,
+      // Moving evenings adopts that evening's sitting times.
+      time: dateChanged ? targetDate?.serviceTime : existing.time,
+      endTime: dateChanged ? targetDate?.serviceEndTime : existing.endTime,
+      updatedAt: new Date().toISOString(),
+    };
+
+    reservations[index] = updated;
+    await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+
+    return { ok: true, reservation: updated };
   });
 }
 

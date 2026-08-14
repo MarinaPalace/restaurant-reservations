@@ -68,7 +68,8 @@ export type ReservationContact = {
 export type ReservationRecord = {
   _id?: string;
   reservationNumber: string;
-  roomNumber: number;
+  /** A label, not a number: the hotel has rooms like L10 and HA3. */
+  roomNumber: string;
   guestCount: number;
   date: string;
   selections: ReservationSelection[];

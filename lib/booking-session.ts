@@ -1,4 +1,5 @@
 import { isValidDateKey } from "@/lib/date";
+import { isValidRoomNumber, normalizeRoomNumber } from "@/lib/room";
 import { MAX_GUESTS_PER_RESERVATION } from "@/lib/validation/booking";
 import type { ReservationRecord, ReservationSelection } from "@/types/booking";
 
@@ -28,9 +29,7 @@ export const EMPTY_BOOKING_SESSION: BookingSession = {
   language: "en",
 };
 
-export function isValidRoomNumber(value: string) {
-  return /^\d{1,6}$/.test(value.trim());
-}
+export { isValidRoomNumber } from "@/lib/room";
 
 export function parseGuestCount(raw: string | null | undefined): number {
   const value = Number(raw);
@@ -84,7 +83,7 @@ export function readBookingSession(storage: Storage | null | undefined): Booking
   const date = storage.getItem(BOOKING_STORAGE_KEYS.date) ?? "";
 
   return {
-    roomNumber: isValidRoomNumber(roomNumber) ? roomNumber.trim() : "",
+    roomNumber: isValidRoomNumber(roomNumber) ? normalizeRoomNumber(roomNumber) : "",
     guestCount: parseGuestCount(storage.getItem(BOOKING_STORAGE_KEYS.guestCount)),
     date: isValidDateKey(date) ? date : "",
     selections: normalizeSelections(parseJson(storage.getItem(BOOKING_STORAGE_KEYS.selections))),
@@ -115,7 +114,7 @@ export function readStoredConfirmation(storage: Storage | null | undefined): Res
   return {
     ...record,
     reservationNumber: String(record.reservationNumber),
-    roomNumber: Number(record.roomNumber ?? 0),
+    roomNumber: String(record.roomNumber ?? ""),
     guestCount: Number(record.guestCount ?? 1),
     date: String(record.date ?? ""),
     selections: normalizeSelections(record.selections),

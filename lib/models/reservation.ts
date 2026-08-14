@@ -27,7 +27,9 @@ const contactSchema = new Schema(
 const reservationSchema = new Schema(
   {
     reservationNumber: { type: String, required: true, unique: true, index: true },
-    roomNumber: { type: Number, required: true },
+    // A string: rooms are labelled L10, HA3, A43 as well as 402. Values
+    // stored as numbers by earlier versions are cast on read.
+    roomNumber: { type: String, required: true },
     guestCount: { type: Number, required: true },
     date: { type: String, required: true, index: true },
     selections: [selectionSchema],

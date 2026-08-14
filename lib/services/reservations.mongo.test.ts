@@ -89,7 +89,7 @@ describe("reservations against MongoDB", () => {
     await openDate("2026-09-10", 40);
 
     const created = await reservations.createReservationEntry({
-      roomNumber: 402,
+      roomNumber: "402",
       guestCount: 2,
       date: "2026-09-10",
       selections: SELECTIONS,
@@ -104,7 +104,7 @@ describe("reservations against MongoDB", () => {
     await openDate("2026-09-11", 10);
 
     const created = await reservations.createReservationEntry({
-      roomNumber: 402,
+      roomNumber: "402",
       guestCount: 4,
       date: "2026-09-11",
       selections: SELECTIONS,
@@ -121,7 +121,7 @@ describe("reservations against MongoDB", () => {
     await openDate("2026-09-12", 10);
 
     const created = await reservations.createReservationEntry({
-      roomNumber: 402,
+      roomNumber: "402",
       guestCount: 3,
       date: "2026-09-12",
       selections: SELECTIONS,
@@ -138,7 +138,7 @@ describe("reservations against MongoDB", () => {
     await openDate("2026-09-13", 4);
 
     await reservations.createReservationEntry({
-      roomNumber: 401,
+      roomNumber: "401",
       guestCount: 3,
       date: "2026-09-13",
       selections: SELECTIONS,
@@ -146,7 +146,7 @@ describe("reservations against MongoDB", () => {
 
     await expect(
       reservations.createReservationEntry({
-        roomNumber: 402,
+        roomNumber: "402",
         guestCount: 2,
         date: "2026-09-13",
         selections: SELECTIONS,
@@ -161,13 +161,13 @@ describe("reservations against MongoDB", () => {
 
     const results = await Promise.allSettled([
       reservations.createReservationEntry({
-        roomNumber: 401,
+        roomNumber: "401",
         guestCount: 2,
         date: "2026-09-14",
         selections: SELECTIONS,
       }),
       reservations.createReservationEntry({
-        roomNumber: 402,
+        roomNumber: "402",
         guestCount: 2,
         date: "2026-09-14",
         selections: SELECTIONS,
@@ -184,7 +184,7 @@ describe("reservations against MongoDB", () => {
 
     await expect(
       reservations.createReservationEntry({
-        roomNumber: 402,
+        roomNumber: "402",
         guestCount: 2,
         date: "2026-09-15",
         selections: SELECTIONS,
@@ -290,7 +290,7 @@ describe("arrival times", () => {
     await openDate("2026-09-21", 40, "18:30");
 
     const created = await reservations.createReservationEntry({
-      roomNumber: 402,
+      roomNumber: "402",
       guestCount: 1,
       date: "2026-09-21",
       selections: SELECTIONS,
@@ -304,7 +304,7 @@ describe("arrival times", () => {
 });
 
 describe("shared tables", () => {
-  async function bookRoom(date: string, roomNumber: number, joinReservationNumber?: string) {
+  async function bookRoom(date: string, roomNumber: string, joinReservationNumber?: string) {
     const { reservations } = await loadServices();
     return reservations.createReservationEntry({
       roomNumber,
@@ -317,8 +317,8 @@ describe("shared tables", () => {
 
   it("puts two rooms in the same group, anchored on the first booking", async () => {
     await openDate("2026-09-22", 40);
-    const first = await bookRoom("2026-09-22", 401);
-    const second = await bookRoom("2026-09-22", 402, first.reservationNumber);
+    const first = await bookRoom("2026-09-22", "401");
+    const second = await bookRoom("2026-09-22", "402", first.reservationNumber);
 
     const { reservations } = await loadServices();
     const anchor = await reservations.getReservationByNumber(first.reservationNumber);
@@ -329,9 +329,9 @@ describe("shared tables", () => {
 
   it("lets a third room join the same table", async () => {
     await openDate("2026-09-23", 40);
-    const first = await bookRoom("2026-09-23", 401);
-    const second = await bookRoom("2026-09-23", 402, first.reservationNumber);
-    const third = await bookRoom("2026-09-23", 403, second.reservationNumber);
+    const first = await bookRoom("2026-09-23", "401");
+    const second = await bookRoom("2026-09-23", "402", first.reservationNumber);
+    const third = await bookRoom("2026-09-23", "403", second.reservationNumber);
 
     expect(third.tableGroupId).toBe(first.reservationNumber);
   });
@@ -339,30 +339,30 @@ describe("shared tables", () => {
   it("refuses to join a reservation on another evening", async () => {
     await openDate("2026-09-24", 40);
     await openDate("2026-09-25", 40);
-    const first = await bookRoom("2026-09-24", 401);
+    const first = await bookRoom("2026-09-24", "401");
 
-    await expect(bookRoom("2026-09-25", 402, first.reservationNumber)).rejects.toThrow("different evening");
+    await expect(bookRoom("2026-09-25", "402", first.reservationNumber)).rejects.toThrow("different evening");
   });
 
   it("refuses to join a cancelled reservation", async () => {
     const { reservations } = await loadServices();
     await openDate("2026-09-26", 40);
-    const first = await bookRoom("2026-09-26", 401);
+    const first = await bookRoom("2026-09-26", "401");
     await reservations.cancelReservation(first.reservationNumber);
 
-    await expect(bookRoom("2026-09-26", 402, first.reservationNumber)).rejects.toThrow("cancelled");
+    await expect(bookRoom("2026-09-26", "402", first.reservationNumber)).rejects.toThrow("cancelled");
   });
 
   it("refuses an unknown reservation number", async () => {
     await openDate("2026-09-27", 40);
-    await expect(bookRoom("2026-09-27", 402, "ALC-NOPE00")).rejects.toThrow("could not find");
+    await expect(bookRoom("2026-09-27", "402", "ALC-NOPE00")).rejects.toThrow("could not find");
   });
 
   it("assigns a table number across everyone sharing it", async () => {
     const { reservations } = await loadServices();
     await openDate("2026-09-28", 40);
-    const first = await bookRoom("2026-09-28", 401);
-    const second = await bookRoom("2026-09-28", 402, first.reservationNumber);
+    const first = await bookRoom("2026-09-28", "401");
+    const second = await bookRoom("2026-09-28", "402", first.reservationNumber);
 
     // Setting it from the second booking must move the whole table.
     await reservations.assignTableNumber(second.reservationNumber, "12");
@@ -374,8 +374,8 @@ describe("shared tables", () => {
   it("assigns a table to a lone booking without touching others", async () => {
     const { reservations } = await loadServices();
     await openDate("2026-09-29", 40);
-    const alone = await bookRoom("2026-09-29", 401);
-    const other = await bookRoom("2026-09-29", 402);
+    const alone = await bookRoom("2026-09-29", "401");
+    const other = await bookRoom("2026-09-29", "402");
 
     await reservations.assignTableNumber(alone.reservationNumber, "3");
 
@@ -390,7 +390,7 @@ describe("guest notes", () => {
     await openDate("2026-09-30", 40);
 
     const created = await reservations.createReservationEntry({
-      roomNumber: 402,
+      roomNumber: "402",
       guestCount: 1,
       date: "2026-09-30",
       selections: [SELECTIONS[0]],
@@ -398,5 +398,161 @@ describe("guest notes", () => {
     });
 
     expect((await reservations.getReservationByNumber(created.reservationNumber))?.notes).toBe("Severe nut allergy");
+  });
+});
+
+describe("staff edits", () => {
+  async function book(date: string, roomNumber: string, guestCount: number) {
+    const { reservations } = await loadServices();
+    return reservations.createReservationEntry({
+      roomNumber,
+      guestCount,
+      date,
+      selections: SELECTIONS.slice(0, guestCount),
+    });
+  }
+
+  it("moves the seats when a booking changes evening", async () => {
+    const { reservations, restaurant } = await loadServices();
+    await openDate("2026-10-01", 20, "19:30");
+    await openDate("2026-10-02", 20, "18:00");
+
+    const created = await book("2026-10-01", "402", 2);
+    await reservations.updateReservationDetails(created.reservationNumber, { date: "2026-10-02" });
+
+    expect((await restaurant.getRestaurantDate("2026-10-01"))?.reservedSeats).toBe(0);
+    expect((await restaurant.getRestaurantDate("2026-10-02"))?.reservedSeats).toBe(2);
+  });
+
+  it("adopts the new evening's sitting time", async () => {
+    const { reservations } = await loadServices();
+    await openDate("2026-10-03", 20, "19:30");
+    await openDate("2026-10-04", 20, "18:00");
+
+    const created = await book("2026-10-03", "402", 1);
+    expect(created.time).toBe("19:30");
+
+    const moved = await reservations.updateReservationDetails(created.reservationNumber, { date: "2026-10-04" });
+    expect(moved?.time).toBe("18:00");
+  });
+
+  it("adjusts seats when the party grows", async () => {
+    const { reservations, restaurant } = await loadServices();
+    await openDate("2026-10-05", 10);
+
+    const created = await book("2026-10-05", "402", 2);
+    await reservations.updateReservationDetails(created.reservationNumber, { guestCount: 5 });
+
+    expect((await restaurant.getRestaurantDate("2026-10-05"))?.reservedSeats).toBe(5);
+  });
+
+  it("adjusts seats when the party shrinks", async () => {
+    const { reservations, restaurant } = await loadServices();
+    await openDate("2026-10-06", 10);
+
+    const created = await book("2026-10-06", "402", 4);
+    await reservations.updateReservationDetails(created.reservationNumber, { guestCount: 1 });
+
+    expect((await restaurant.getRestaurantDate("2026-10-06"))?.reservedSeats).toBe(1);
+  });
+
+  /**
+   * Growing a party must only need room for the extra guests: the seats the
+   * booking already holds are its own.
+   */
+  it("counts only the extra guests against a nearly full evening", async () => {
+    const { reservations, restaurant } = await loadServices();
+    await openDate("2026-10-07", 4);
+
+    const created = await book("2026-10-07", "402", 3);
+    await reservations.updateReservationDetails(created.reservationNumber, { guestCount: 4 });
+
+    expect((await restaurant.getRestaurantDate("2026-10-07"))?.reservedSeats).toBe(4);
+  });
+
+  it("refuses a move that would oversell the new evening", async () => {
+    const { reservations, restaurant } = await loadServices();
+    await openDate("2026-10-08", 20);
+    await openDate("2026-10-09", 2);
+
+    const created = await book("2026-10-08", "402", 3);
+
+    await expect(
+      reservations.updateReservationDetails(created.reservationNumber, { date: "2026-10-09" }),
+    ).rejects.toThrow("DATE_FULL");
+
+    // The original evening keeps its seats when the move is refused.
+    expect((await restaurant.getRestaurantDate("2026-10-08"))?.reservedSeats).toBe(3);
+    expect((await restaurant.getRestaurantDate("2026-10-09"))?.reservedSeats).toBe(0);
+  });
+
+  it("refuses a move to a closed evening", async () => {
+    const { reservations } = await loadServices();
+    await openDate("2026-10-10", 20);
+    await reservations.updateRestaurantDate({ date: "2026-10-11", isOpen: false, capacity: 20 });
+
+    const created = await book("2026-10-10", "402", 1);
+
+    await expect(
+      reservations.updateReservationDetails(created.reservationNumber, { date: "2026-10-11" }),
+    ).rejects.toThrow("DATE_CLOSED");
+  });
+
+  it("saves the other fields without touching seats", async () => {
+    const { reservations, restaurant } = await loadServices();
+    await openDate("2026-10-12", 20);
+
+    const created = await book("2026-10-12", "402", 2);
+    const updated = await reservations.updateReservationDetails(created.reservationNumber, {
+      roomNumber: "118",
+      notes: "Nut allergy",
+      tableNumber: "9",
+      contact: { method: "phone", phone: "+359881234567", messagingApp: "viber" },
+    });
+
+    expect(updated?.roomNumber).toBe("118");
+    expect(updated?.notes).toBe("Nut allergy");
+    expect(updated?.tableNumber).toBe("9");
+    expect(updated?.contact?.messagingApp).toBe("viber");
+    expect((await restaurant.getRestaurantDate("2026-10-12"))?.reservedSeats).toBe(2);
+  });
+
+  it("does not move seats for a cancelled booking", async () => {
+    const { reservations, restaurant } = await loadServices();
+    await openDate("2026-10-13", 20);
+    await openDate("2026-10-14", 20);
+
+    const created = await book("2026-10-13", "402", 2);
+    await reservations.cancelReservation(created.reservationNumber);
+    await reservations.updateReservationDetails(created.reservationNumber, { date: "2026-10-14" });
+
+    // Cancelling already released the seats; the move must not claim more.
+    expect((await restaurant.getRestaurantDate("2026-10-13"))?.reservedSeats).toBe(0);
+    expect((await restaurant.getRestaurantDate("2026-10-14"))?.reservedSeats).toBe(0);
+  });
+
+  /** Regression: the table typed on the staff form was dropped on create. */
+  it("keeps the table number given when the booking is taken", async () => {
+    const { reservations } = await loadServices();
+    await openDate("2026-10-15", 20);
+
+    const created = await reservations.createReservationEntry({
+      roomNumber: "L10",
+      guestCount: 1,
+      date: "2026-10-15",
+      selections: [SELECTIONS[0]],
+      tableNumber: "5",
+      notes: "Window table please",
+    });
+
+    const loaded = await reservations.getReservationByNumber(created.reservationNumber);
+    expect(loaded?.tableNumber).toBe("5");
+    expect(loaded?.notes).toBe("Window table please");
+    expect(loaded?.roomNumber).toBe("L10");
+  });
+
+  it("returns null for a reservation that does not exist", async () => {
+    const { reservations } = await loadServices();
+    expect(await reservations.updateReservationDetails("ALC-NOPE00", { guestCount: 2 })).toBeNull();
   });
 });

@@ -57,7 +57,7 @@ export default function SummaryPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          roomNumber: Number(session.roomNumber),
+          roomNumber: session.roomNumber,
           guestCount,
           date: session.date,
           selections: session.selections,

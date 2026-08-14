@@ -8,6 +8,7 @@ import { Alert, Badge, EmptyState } from "@/components/ui/feedback";
 import { Field, Input } from "@/components/ui/field";
 import { KitchenReport } from "@/app/admin/kitchen-report";
 import { formatLongDate, isValidDateKey, startOfMonth, todayKey } from "@/lib/date";
+import { compareRoomNumbers } from "@/lib/room";
 import {
   withRemainingSeats,
   type MenuCourse,
@@ -40,7 +41,7 @@ export function AdminDateManager({
     () =>
       reservations
         .filter((reservation) => reservation.date === selectedDate)
-        .sort((a, b) => a.roomNumber - b.roomNumber),
+        .sort((a, b) => compareRoomNumbers(a.roomNumber, b.roomNumber)),
     [reservations, selectedDate],
   );
 

@@ -51,7 +51,7 @@ function availability(overrides: Partial<RestaurantDateAvailability> = {}): Rest
 
 function validate(overrides: Partial<Parameters<typeof validateReservationRequest>[0]> = {}) {
   return validateReservationRequest({
-    roomNumber: 402,
+    roomNumber: "402",
     guestCount: 2,
     date: DINNER_DATE,
     selections: validSelections,
@@ -68,8 +68,16 @@ describe("reservation validation", () => {
   });
 
   it("rejects an invalid room number", () => {
-    expect(validate({ roomNumber: 0 }).error).toContain("valid room number");
-    expect(validate({ roomNumber: -3 }).error).toContain("valid room number");
+    expect(validate({ roomNumber: "" }).error).toContain("valid room number");
+    expect(validate({ roomNumber: "  " }).error).toContain("valid room number");
+    // Rooms are labels, but not free text.
+    expect(validate({ roomNumber: "402; DROP" }).error).toContain("valid room number");
+  });
+
+  it("accepts the hotel's lettered rooms", () => {
+    for (const room of ["402", "L10", "HA3", "A43", "l10"]) {
+      expect(validate({ roomNumber: room }).ok).toBe(true);
+    }
   });
 
   it("rejects a party larger than the restaurant accepts", () => {

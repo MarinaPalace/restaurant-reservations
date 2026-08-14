@@ -145,7 +145,7 @@ describe("stored confirmation", () => {
       fakeStorage({
         [BOOKING_STORAGE_KEYS.confirmation]: JSON.stringify({
           reservationNumber: "ALC-ABC123",
-          roomNumber: 402,
+          roomNumber: "402",
           guestCount: 2,
           date: "2026-08-18",
           selections: [],
@@ -155,6 +155,6 @@ describe("stored confirmation", () => {
     );
 
     expect(confirmation?.reservationNumber).toBe("ALC-ABC123");
-    expect(confirmation?.roomNumber).toBe(402);
+    expect(confirmation?.roomNumber).toBe("402");
   });
 });

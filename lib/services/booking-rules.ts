@@ -1,10 +1,11 @@
 import { isPastDateKey } from "@/lib/date";
 import { isNoneSelection } from "@/lib/menu-selection";
+import { isValidRoomNumber } from "@/lib/room";
 import { MAX_GUESTS_PER_RESERVATION } from "@/lib/validation/booking";
 import type { MenuCourse, RestaurantDateAvailability, ReservationSelection } from "@/types/booking";
 
 export type ReservationValidationInput = {
-  roomNumber: number;
+  roomNumber: string;
   guestCount: number;
   date: string;
   selections: ReservationSelection[];
@@ -18,7 +19,7 @@ export type ReservationValidationResult =
   | { ok: false; error: string; selections: null };
 
 export const BOOKING_MESSAGES = {
-  invalidRoom: "Please enter a valid room number.",
+  invalidRoom: "Please enter a valid room number, for example 402 or L10.",
   invalidGuestCount: "Please select a valid guest count.",
   invalidDate: "Please choose a valid dinner date.",
   pastDate: "That evening has already passed. Please choose an upcoming date.",
@@ -44,7 +45,7 @@ function invalid(error: string): ReservationValidationResult {
  * that run in production.
  */
 export function validateReservationRequest(input: ReservationValidationInput): ReservationValidationResult {
-  if (!Number.isInteger(input.roomNumber) || input.roomNumber <= 0) {
+  if (!isValidRoomNumber(input.roomNumber)) {
     return invalid(BOOKING_MESSAGES.invalidRoom);
   }
 

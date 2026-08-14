@@ -25,7 +25,7 @@ export default function BookingPage() {
     const trimmed = value.trim();
 
     if (!isValidRoomNumber(trimmed)) {
-      setError("Please enter your room number using digits only.");
+      setError("Please enter your room number, for example 402 or L10.");
       return;
     }
 
@@ -52,14 +52,13 @@ export default function BookingPage() {
               <Input
                 {...fieldProps}
                 name="roomNumber"
-                inputMode="numeric"
                 autoComplete="off"
                 autoFocus
-                maxLength={6}
-                placeholder="e.g. 402"
+                maxLength={10}
+                placeholder="e.g. 402 or L10"
                 value={value}
                 onChange={(event) => {
-                  setRoomNumber(event.target.value.replace(/\D+/g, ""));
+                  setRoomNumber(event.target.value.replace(/[^A-Za-z0-9-]/g, "").toUpperCase());
                   setError("");
                 }}
                 className="text-xl"

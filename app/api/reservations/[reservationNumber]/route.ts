@@ -8,6 +8,7 @@ import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
 import { validateReservationRequest } from "@/lib/services/booking-rules";
 import { isAdminAuthenticated } from "@/lib/auth/session";
 import { canGuestModify } from "@/lib/reservation-policy";
+import { roomNumbersMatch } from "@/lib/room";
 import { updateSelectionsSchema } from "@/lib/validation/booking";
 import type { ReservationRecord } from "@/types/booking";
 
@@ -28,8 +29,7 @@ async function authorize(reservation: ReservationRecord | null, providedRoomNumb
     return { ok: true as const, isAdmin: true };
   }
 
-  const matches = providedRoomNumber !== null && Number(providedRoomNumber) === reservation.roomNumber;
-  return { ok: matches, isAdmin: false };
+  return { ok: roomNumbersMatch(providedRoomNumber, reservation.roomNumber), isAdmin: false };
 }
 
 function roomNumberFrom(request: Request) {
@@ -74,7 +74,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ re
     }
 
     const reservation = await getReservationByNumber(reservationNumber.trim().toUpperCase());
-    const access = await authorize(reservation, String(parsed.data.roomNumber));
+    const access = await authorize(reservation, parsed.data.roomNumber);
 
     if (!access.ok || !reservation) {
       return NextResponse.json(NOT_FOUND, { status: 404 });

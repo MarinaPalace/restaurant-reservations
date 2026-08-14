@@ -96,7 +96,7 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
       const response = await fetch(`/api/reservations/${encodeURIComponent(loaded.reservation.reservationNumber)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ roomNumber: Number(roomNumber), selections: draft }),
+        body: JSON.stringify({ roomNumber, selections: draft }),
       });
 
       const data = await response.json().catch(() => ({}));
@@ -184,11 +184,10 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
             {(fieldProps) => (
               <Input
                 {...fieldProps}
-                inputMode="numeric"
-                maxLength={6}
-                placeholder="402"
+                maxLength={10}
+                placeholder="402 or L10"
                 value={roomNumber}
-                onChange={(event) => setRoomNumber(event.target.value.replace(/\D+/g, ""))}
+                onChange={(event) => setRoomNumber(event.target.value.replace(/[^A-Za-z0-9-]/g, "").toUpperCase())}
               />
             )}
           </Field>

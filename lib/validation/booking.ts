@@ -1,7 +1,17 @@
 import { z } from "zod";
 import { isValidDateKey } from "@/lib/date";
+import { isValidRoomNumber, normalizeRoomNumber } from "@/lib/room";
 
 export const MAX_GUESTS_PER_RESERVATION = 6;
+
+/**
+ * Rooms are labels such as L10, HA3 or 402. Stored upper-cased so lookups do
+ * not depend on how the guest typed it.
+ */
+export const roomNumberSchema = z
+  .string()
+  .transform(normalizeRoomNumber)
+  .refine(isValidRoomNumber, "Please enter a valid room number, for example 402 or L10.");
 
 const dateKeySchema = z.string().refine(isValidDateKey, "Please choose a valid dinner date.");
 
@@ -21,7 +31,7 @@ export const reservationContactSchema = z.object({
 });
 
 export const createReservationSchema = z.object({
-  roomNumber: z.coerce.number().int().positive(),
+  roomNumber: roomNumberSchema,
   guestCount: z.number().int().min(1).max(MAX_GUESTS_PER_RESERVATION),
   date: dateKeySchema,
   selections: z.array(reservationSelectionSchema).min(1),
@@ -48,9 +58,26 @@ export const restaurantDateSchema = z.object({
 });
 
 export const updateSelectionsSchema = z.object({
-  roomNumber: z.coerce.number().int().positive(),
+  roomNumber: roomNumberSchema,
   selections: z.array(reservationSelectionSchema).min(1),
 });
+
+/**
+ * Staff booking form. Contact details are optional here: a reservation taken
+ * over the phone may not have them, whereas a guest booking online always does.
+ */
+export const staffReservationSchema = z.object({
+  roomNumber: roomNumberSchema,
+  guestCount: z.number().int().min(1).max(MAX_GUESTS_PER_RESERVATION),
+  date: dateKeySchema,
+  selections: z.array(reservationSelectionSchema),
+  contact: reservationContactSchema.optional(),
+  notes: z.string().trim().max(500).optional(),
+  tableNumber: z.string().trim().max(20).optional(),
+});
+
+/** Every field is optional: staff may change only what they need to. */
+export const staffReservationPatchSchema = staffReservationSchema.partial();
 
 export const tableAssignmentSchema = z.object({
   tableNumber: z.string().trim().max(20),

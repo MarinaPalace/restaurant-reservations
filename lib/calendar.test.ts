@@ -16,7 +16,7 @@ function stampToDate(stamp: string) {
 
 const reservation: ReservationRecord = {
   reservationNumber: "ALC-ABC123",
-  roomNumber: 402,
+  roomNumber: "402",
   guestCount: 2,
   date: "2026-08-18",
   status: "confirmed",

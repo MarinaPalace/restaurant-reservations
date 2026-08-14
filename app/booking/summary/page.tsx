@@ -174,13 +174,13 @@ export default function SummaryPage() {
               <div className="mt-3">
                 <Field
                   label="Their reservation number"
-                  hint="Ask them for the number on their confirmation, e.g. ALC-3E94B8."
+                  hint="Ask them for the number on their confirmation, e.g. VDM-3E94B8."
                 >
                   {(fieldProps) => (
                     <Input
                       {...fieldProps}
                       value={joinNumber}
-                      placeholder="ALC-______"
+                      placeholder="e.g. VDM-3E94B8"
                       autoCapitalize="characters"
                       onChange={(event) => setJoinNumber(event.target.value.toUpperCase())}
                     />

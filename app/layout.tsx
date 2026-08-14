@@ -23,10 +23,10 @@ const displaySerif = Cormorant_Garamond({
 
 export const metadata: Metadata = {
   title: {
-    default: "À la carte restaurant reservations",
-    template: "%s · À la carte restaurant",
+    default: "Vista Del Mar · Reservations",
+    template: "%s · Vista Del Mar",
   },
-  description: "Reserve your table and choose your menu for the hotel's à la carte restaurant.",
+  description: "Reserve your table and choose your menu at Vista Del Mar, the hotel's à la carte restaurant.",
   robots: { index: false, follow: false },
 };
 

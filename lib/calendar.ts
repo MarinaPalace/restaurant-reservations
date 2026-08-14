@@ -1,4 +1,5 @@
 import { fromDateKey, formatLongDate } from "@/lib/date";
+import { RESTAURANT_NAME } from "@/lib/brand";
 import type { ReservationRecord } from "@/types/booking";
 
 /**
@@ -90,10 +91,10 @@ function buildDescription(reservation: ReservationRecord) {
 }
 
 export function buildEventTitle(reservation: ReservationRecord) {
-  return `Dinner reservation · ${reservation.reservationNumber}`;
+  return `${RESTAURANT_NAME} · ${reservation.reservationNumber}`;
 }
 
-export function buildGoogleCalendarUrl(reservation: ReservationRecord, locationName = "À la carte restaurant") {
+export function buildGoogleCalendarUrl(reservation: ReservationRecord, locationName = RESTAURANT_NAME) {
   const { start, end } = getReservationWindow(reservation.date, reservation.time, reservation.endTime);
 
   const params = new URLSearchParams({
@@ -113,13 +114,13 @@ function escapeIcsText(value: string) {
 }
 
 /** An .ics file, for Apple Calendar, Outlook and everything that is not Google. */
-export function buildIcsFile(reservation: ReservationRecord, locationName = "À la carte restaurant") {
+export function buildIcsFile(reservation: ReservationRecord, locationName = RESTAURANT_NAME) {
   const { start, end } = getReservationWindow(reservation.date, reservation.time, reservation.endTime);
 
   return [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
-    "PRODID:-//A la carte restaurant//Reservations//EN",
+    `PRODID:-//${RESTAURANT_NAME}//Reservations//EN`,
     "CALSCALE:GREGORIAN",
     "METHOD:PUBLISH",
     "BEGIN:VEVENT",

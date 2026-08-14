@@ -1,5 +1,6 @@
 "use client";
 
+import { BrandMark } from "@/components/brand";
 import { PageShell } from "@/components/page-shell";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Button, ButtonLink } from "@/components/ui/button";
@@ -58,7 +59,9 @@ export default function ConfirmationPage() {
   return (
     <PageShell width="sm">
       <Card className="p-6 sm:p-8">
-        <div className="text-center">
+        <BrandMark className="mx-auto size-12 text-accent" />
+
+        <div className="mt-5 text-center">
           <div
             aria-hidden="true"
             className="mx-auto mb-4 flex size-14 items-center justify-center rounded-full bg-success-soft text-3xl text-success"

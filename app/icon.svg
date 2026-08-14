@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- Favicon form of the house mark: solid ground so it reads on any tab
+       colour, with the arch and sea view drawn in brass. -->
+  <rect width="48" height="48" rx="10" fill="#17130F" />
+  <g fill="none" stroke="#C9A96A" stroke-linecap="round">
+    <path d="M11 39V22a13 13 0 0 1 26 0v17" stroke-width="2" />
+    <path d="M19 26.5a5 5 0 0 1 10 0" stroke-width="2" />
+    <path d="M13.5 26.5h21" stroke-width="1.7" opacity="0.85" />
+    <path d="M14 32c2.2 0 2.2 2 4.4 2s2.2-2 4.4-2 2.2 2 4.4 2 2.2-2 4.4-2" stroke-width="1.9" />
+    <path d="M8 39h32" stroke-width="2" />
+  </g>
+</svg>

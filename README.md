@@ -1,6 +1,10 @@
-# À La Carte Restaurant Reservation System
+# Vista Del Mar — Restaurant Reservations
 
-A hotel guest reservation app for an à la carte restaurant, built with Next.js 16, TypeScript, Tailwind CSS v4 and MongoDB/Mongoose.
+A hotel guest reservation app for Vista Del Mar, the à la carte restaurant, built with Next.js 16,
+TypeScript, Tailwind CSS v4 and MongoDB/Mongoose.
+
+The house name, tagline and reservation-number prefix live in `lib/brand.ts`; the mark itself is
+`components/brand.tsx`, with a favicon version at `app/icon.svg`.
 
 Guests book from their room number in a five-step flow (room → guests → date → menu → confirm),
 leave a contact detail, and can add the booking to their calendar. Staff manage availability,

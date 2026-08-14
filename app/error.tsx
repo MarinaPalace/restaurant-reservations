@@ -21,7 +21,7 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
         <CardHeader
           as="h1"
           align="center"
-          eyebrow="À la carte restaurant"
+          eyebrow="Vista Del Mar"
           title="Something went wrong"
           description="We could not load this page just now. Please try again in a moment, or contact guest services if it keeps happening."
         />

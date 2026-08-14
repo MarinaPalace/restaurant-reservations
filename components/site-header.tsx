@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Brand } from "@/components/brand";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cx } from "@/components/ui/utils";
 
@@ -13,20 +14,8 @@ export function SiteHeader({ href = "/booking", className }: { href?: string; cl
       data-print="hide"
       className={cx("mx-auto flex w-full items-center justify-between gap-4 px-4 pt-5 sm:pt-6", className)}
     >
-      <Link href={href} className="group inline-flex items-center gap-3">
-        <span
-          aria-hidden="true"
-          className="flex size-9 items-center justify-center rounded-full border border-gold/50 text-[13px] font-medium text-accent"
-          style={{ fontFamily: "var(--font-display)" }}
-        >
-          ALC
-        </span>
-        <span className="leading-tight">
-          <span className="block text-[13px] font-medium tracking-[0.18em] text-ink transition-colors group-hover:text-accent">
-            À LA CARTE
-          </span>
-          <span className="block text-[10px] uppercase tracking-[0.22em] text-ink-subtle">Restaurant</span>
-        </span>
+      <Link href={href} className="group rounded-control">
+        <Brand className="transition-opacity group-hover:opacity-80" />
       </Link>
 
       <ThemeToggle />

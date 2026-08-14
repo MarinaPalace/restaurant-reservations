@@ -42,7 +42,7 @@ export default async function AdminPage() {
       <Card className="p-5 sm:p-6">
         <CardHeader
           as="h1"
-          eyebrow="À la carte restaurant"
+          eyebrow="Vista Del Mar"
           title="Staff dashboard"
           actions={
             <div className="flex flex-wrap items-center gap-3" data-print="hide">

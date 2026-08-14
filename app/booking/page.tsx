@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { PageShell } from "@/components/page-shell";
 import { BookingSteps } from "@/components/booking-steps";
+import { Brand } from "@/components/brand";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
@@ -37,6 +38,8 @@ export default function BookingPage() {
     <PageShell width="sm">
       <BookingSteps current="room" />
       <Card className="p-6 sm:p-8">
+        <Brand stacked className="mb-6" />
+
         <CardHeader
           as="h1"
           align="center"

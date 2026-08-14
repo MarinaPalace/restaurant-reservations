@@ -173,7 +173,7 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
               <Input
                 {...fieldProps}
                 autoFocus
-                placeholder="ALC-______"
+                placeholder="e.g. VDM-3E94B8"
                 autoCapitalize="characters"
                 value={reservationNumber}
                 onChange={(event) => setReservationNumber(event.target.value.toUpperCase())}

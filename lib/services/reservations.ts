@@ -1,4 +1,5 @@
 import { randomBytes } from "crypto";
+import { RESERVATION_PREFIX } from "@/lib/brand";
 import { isMongoConfigured, connectToDatabase } from "@/lib/db/connect";
 import { ReservationModel } from "@/lib/models/reservation";
 import { RestaurantDateModel } from "@/lib/models/restaurant-date";
@@ -31,7 +32,7 @@ export class BookingError extends Error {
 }
 
 export function generateReservationNumber() {
-  return `ALC-${randomBytes(3).toString("hex").toUpperCase()}`;
+  return `${RESERVATION_PREFIX}-${randomBytes(3).toString("hex").toUpperCase()}`;
 }
 
 /** Retries on the (rare) chance of generating a number that is already taken. */
@@ -44,7 +45,7 @@ async function allocateReservationNumber(isTaken: (candidate: string) => Promise
   }
 
   // Fall back to a longer number rather than failing the guest's booking.
-  return `ALC-${randomBytes(5).toString("hex").toUpperCase()}`;
+  return `${RESERVATION_PREFIX}-${randomBytes(5).toString("hex").toUpperCase()}`;
 }
 
 type MongoReservationDocument = {

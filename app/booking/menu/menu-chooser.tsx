@@ -81,6 +81,7 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
       <Card className="p-4 sm:p-6">
         <CardHeader
           as="h1"
+          flourish
           eyebrow="Menu"
           title="Choose your menu"
           description="Each guest picks one option per course."
@@ -166,7 +167,7 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
                   <DishImage src={course.imageUrl} alt="" width={160} height={112} className="h-28 w-full sm:w-40" />
                   <div className="min-w-0 flex-1">
                     <p className="eyebrow">Course {course.order}</p>
-                    <h3 className="mt-1 text-xl font-semibold text-ink">{course.name}</h3>
+                    <h3 className="display mt-1 text-2xl text-ink">{course.name}</h3>
                     {course.description ? (
                       <p className="mt-1 text-sm text-pretty text-ink-muted">{course.description}</p>
                     ) : null}

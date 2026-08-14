@@ -40,7 +40,7 @@ export default async function ReservationDetailPage({
   }));
 
   return (
-    <PageShell width="md">
+    <PageShell width="md" headerHref="/admin">
       <Card className="p-5 sm:p-6">
         <CardHeader
           as="h1"

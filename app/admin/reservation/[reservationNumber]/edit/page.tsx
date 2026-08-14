@@ -35,7 +35,7 @@ export default async function EditReservationPage({
    * one, and removing it from the options would silently move the guest.
    */
   return (
-    <PageShell width="lg">
+    <PageShell width="lg" headerHref="/admin">
       <ReservationForm menu={menu} dates={dates} reservation={reservation} />
     </PageShell>
   );

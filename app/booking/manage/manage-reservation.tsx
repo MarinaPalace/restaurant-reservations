@@ -161,7 +161,8 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
         <CardHeader
           as="h1"
           align="center"
-          eyebrow="À la carte restaurant"
+          flourish
+          eyebrow="Your reservation"
           title="Manage your reservation"
           description="Enter the reservation number from your confirmation, along with your room number."
         />

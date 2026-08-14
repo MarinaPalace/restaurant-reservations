@@ -36,11 +36,12 @@ export default function BookingPage() {
   return (
     <PageShell width="sm">
       <BookingSteps current="room" />
-      <Card className="p-6">
+      <Card className="p-6 sm:p-8">
         <CardHeader
           as="h1"
           align="center"
-          eyebrow="À la carte restaurant"
+          flourish
+          eyebrow="Reservations"
           title="Reserve your dinner"
           description="Your table is booked to your room, so we can find your reservation at the door."
         />

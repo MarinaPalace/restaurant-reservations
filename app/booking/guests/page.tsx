@@ -42,10 +42,11 @@ export default function GuestsPage() {
   return (
     <PageShell width="sm">
       <BookingSteps current="guests" />
-      <Card className="p-6">
+      <Card className="p-6 sm:p-8">
         <CardHeader
           as="h1"
           align="center"
+          flourish
           eyebrow={ready && session.roomNumber ? `Room ${session.roomNumber}` : "Room"}
           title="How many guests?"
           description="Every guest chooses their own menu on the next step."

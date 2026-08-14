@@ -17,7 +17,7 @@ export default async function AdminMenuPage() {
   const courses = await getFullMenuCatalog();
 
   return (
-    <PageShell width="xl">
+    <PageShell width="xl" headerHref="/admin">
       <MenuEditor initialCourses={courses} />
     </PageShell>
   );

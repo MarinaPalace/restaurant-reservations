@@ -39,7 +39,7 @@ export default function ConfirmationPage() {
   if (!reservation) {
     return (
       <PageShell width="sm">
-        <Card className="p-6">
+        <Card className="p-6 sm:p-8">
           <EmptyState
             title="No reservation found"
             description="This confirmation is only available in the browser tab where the booking was made."
@@ -57,7 +57,7 @@ export default function ConfirmationPage() {
 
   return (
     <PageShell width="sm">
-      <Card className="p-6">
+      <Card className="p-6 sm:p-8">
         <div className="text-center">
           <div
             aria-hidden="true"
@@ -68,6 +68,7 @@ export default function ConfirmationPage() {
           <CardHeader
             as="h1"
             align="center"
+            flourish
             title="Reservation confirmed"
             description="We look forward to welcoming you. Please arrive a few minutes early."
           />
@@ -75,7 +76,7 @@ export default function ConfirmationPage() {
 
         <div className="mt-6 rounded-control border border-line bg-surface-muted p-4 text-center">
           <p className="eyebrow">Reservation number</p>
-          <p className="mt-1 font-mono text-2xl font-semibold tracking-[0.18em] text-ink">
+          <p className="mt-2 font-mono text-3xl font-semibold tracking-[0.2em] text-ink">
             {reservation.reservationNumber}
           </p>
         </div>

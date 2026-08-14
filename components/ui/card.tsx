@@ -25,6 +25,8 @@ export function CardHeader({
   actions,
   titleId,
   as: Heading = "h2",
+  /** A hairline flourish under the title. Used on guest screens. */
+  flourish = false,
 }: {
   eyebrow?: string;
   title: string;
@@ -33,6 +35,7 @@ export function CardHeader({
   actions?: ReactNode;
   titleId?: string;
   as?: "h1" | "h2" | "h3";
+  flourish?: boolean;
 }) {
   return (
     <div
@@ -46,13 +49,16 @@ export function CardHeader({
         <Heading
           id={titleId}
           className={cx(
-            "mt-2 font-semibold tracking-tight text-balance text-ink",
-            Heading === "h1" ? "text-3xl sm:text-4xl" : "text-2xl sm:text-3xl",
+            "display mt-2 text-balance text-ink",
+            Heading === "h1" ? "text-[2.1rem] sm:text-5xl" : "text-3xl sm:text-4xl",
           )}
         >
           {title}
         </Heading>
-        {description ? <div className="mt-2 text-pretty text-ink-muted">{description}</div> : null}
+        {flourish ? (
+          <hr className={cx("rule-gold mt-4 w-24", align === "center" && "mx-auto")} aria-hidden="true" />
+        ) : null}
+        {description ? <div className="mt-3 text-pretty text-ink-muted">{description}</div> : null}
       </div>
       {actions ? <div className="flex flex-wrap items-center gap-3">{actions}</div> : null}
     </div>

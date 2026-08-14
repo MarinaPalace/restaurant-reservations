@@ -80,6 +80,7 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
     <Card className="p-4 sm:p-6">
       <CardHeader
         as="h1"
+        flourish
         eyebrow="Date"
         title="Select a dinner date"
         description={

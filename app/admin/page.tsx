@@ -38,7 +38,7 @@ export default async function AdminPage() {
   ];
 
   return (
-    <PageShell width="xl">
+    <PageShell width="xl" headerHref="/admin">
       <Card className="p-5 sm:p-6">
         <CardHeader
           as="h1"

@@ -1,29 +1,36 @@
 import type { ReactNode } from "react";
+import { SiteHeader } from "@/components/site-header";
 import { cx } from "@/components/ui/utils";
 
+const WIDTHS = {
+  sm: "max-w-md",
+  md: "max-w-2xl",
+  lg: "max-w-4xl",
+  xl: "max-w-6xl",
+} as const;
+
 /**
- * Standard page frame: centres content, keeps a consistent gutter on small
- * screens, and provides the `#main` landmark the skip link targets.
+ * Standard page frame: the restaurant's header bar, then centred content with
+ * a consistent gutter, and the `#main` landmark the skip link targets.
  */
 export function PageShell({
   children,
   width = "md",
   className,
+  headerHref,
 }: {
   children: ReactNode;
-  width?: "sm" | "md" | "lg" | "xl";
+  width?: keyof typeof WIDTHS;
   className?: string;
+  /** Where the wordmark links to — the admin area points back at itself. */
+  headerHref?: string;
 }) {
-  const widths = {
-    sm: "max-w-md",
-    md: "max-w-2xl",
-    lg: "max-w-4xl",
-    xl: "max-w-6xl",
-  } as const;
-
   return (
-    <main id="main" className="flex flex-1 flex-col px-4 py-6 sm:py-10">
-      <div className={cx("mx-auto w-full", widths[width], className)}>{children}</div>
-    </main>
+    <>
+      <SiteHeader href={headerHref} className={WIDTHS[width]} />
+      <main id="main" className="flex flex-1 flex-col px-4 py-6 sm:py-8">
+        <div className={cx("mx-auto w-full", WIDTHS[width], className)}>{children}</div>
+      </main>
+    </>
   );
 }

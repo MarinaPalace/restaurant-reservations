@@ -190,6 +190,18 @@ lib/
 proxy.ts                Optimistic /admin redirect (pages re-check the session)
 ```
 
+### Theming
+
+`app/globals.css` holds the whole palette as semantic tokens (`surface`, `ink`, `line`, `accent`).
+There are three theme states: a guest who has chosen light or dark gets `data-theme` on the root
+element, and one who has not follows the operating system. Each palette is therefore declared
+twice — once under `prefers-color-scheme`, once under an explicit `[data-theme]` — so the toggle
+wins in both directions. A small script in `<head>` applies the saved choice before the first
+paint, so dark never flashes light on load.
+
+Headings use a display serif (`.display`); everything else uses the UI sans. Both palettes were
+checked against WCAG AA, worst pair 4.98:1.
+
 ### Conventions
 
 - **Dates are local calendar strings.** Use the helpers in `lib/date.ts`; `toISOString()` shifts the day for any timezone east of UTC.

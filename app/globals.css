@@ -7,27 +7,38 @@
  * names (surface, ink, line, accent) rather than raw hex values, so the whole
  * product can be re-themed — and so dark mode is a token swap instead of a
  * per-component rewrite.
+ *
+ * Theming has three states. A guest who has chosen light or dark gets
+ * `data-theme` on the root element; a guest who has not chosen anything gets
+ * neither, and follows the operating system. Each palette is therefore
+ * declared twice — once for `prefers-color-scheme`, once for an explicit
+ * choice — so the toggle wins in both directions.
  */
 :root {
-  --canvas: #f7f3ee;
+  /* Warm ivory rather than plain white: paper, not screen. */
+  --canvas: #faf7f2;
+  --canvas-veil: #f3ece0;
   --surface: #ffffff;
-  --surface-muted: #faf7f3;
-  --surface-sunken: #f3ebe1;
+  --surface-muted: #f7f2ea;
+  --surface-sunken: #efe7db;
 
-  --ink: #1d1b1a;
-  --ink-muted: #5f5148;
-  --ink-subtle: #75604f;
+  --ink: #17130f;
+  --ink-muted: #5a4e44;
+  --ink-subtle: #75655a;
 
-  --line: #e7d8c6;
-  --line-strong: #d5c4ad;
+  --line: #e6dbca;
+  --line-strong: #cdbba3;
 
-  --accent: #8a6743;
-  --accent-ink: #6e4d2e;
-  --accent-soft: #f5ebde;
+  /* Dark enough for body text on any surface. */
+  --accent: #8a6431;
+  --accent-ink: #6b4c22;
+  --accent-soft: #f5ecdd;
+  /* Decorative only — hairlines and badges, never small text. */
+  --gold: #c9a96a;
 
-  --primary: #1d1b1a;
-  --primary-hover: #342c26;
-  --primary-fg: #ffffff;
+  --primary: #1a1512;
+  --primary-hover: #322822;
+  --primary-fg: #fbf8f3;
 
   --success: #276b44;
   --success-soft: #e8f4ec;
@@ -36,42 +47,86 @@
   --warning: #8a5a12;
   --warning-soft: #fbf0dc;
 
-  --focus-ring: #8a6743;
-  --card-shadow: 0 18px 55px rgba(49, 31, 13, 0.08);
+  --focus-ring: #8a6431;
+  --card-shadow: 0 24px 60px -28px rgba(52, 33, 13, 0.28);
+
+  color-scheme: light;
 }
 
+/* Following the system, with no explicit choice made. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --canvas: #14110f;
-    --surface: #1c1917;
-    --surface-muted: #221e1b;
-    --surface-sunken: #2a2521;
+  :root:not([data-theme="light"]) {
+    --canvas: #100e0c;
+    --canvas-veil: #191512;
+    --surface: #181513;
+    --surface-muted: #1f1a17;
+    --surface-sunken: #272119;
 
-    --ink: #f5efe8;
-    --ink-muted: #c9bbac;
-    --ink-subtle: #ab9a88;
+    --ink: #f6efe4;
+    --ink-muted: #c8b9a7;
+    --ink-subtle: #a4917c;
 
-    --line: #362e27;
-    --line-strong: #4a3f35;
+    --line: #2f2823;
+    --line-strong: #473b31;
 
-    --accent: #dcb083;
-    --accent-ink: #f0dcc3;
-    --accent-soft: #2f251c;
+    --accent: #d9b47d;
+    --accent-ink: #ecd3ab;
+    --accent-soft: #2a211a;
+    --gold: #c9a96a;
 
-    --primary: #ecdfd0;
-    --primary-hover: #dccbb6;
-    --primary-fg: #1d1b1a;
+    --primary: #e9dcc8;
+    --primary-hover: #d8c7ad;
+    --primary-fg: #14100e;
 
     --success: #7fd1a0;
-    --success-soft: #17271d;
+    --success-soft: #16261c;
     --danger: #f0a094;
-    --danger-soft: #2d1815;
+    --danger-soft: #2c1714;
     --warning: #e0b165;
-    --warning-soft: #2b2213;
+    --warning-soft: #2a2113;
 
-    --focus-ring: #dcb083;
-    --card-shadow: 0 18px 55px rgba(0, 0, 0, 0.45);
+    --focus-ring: #d9b47d;
+    --card-shadow: 0 24px 60px -28px rgba(0, 0, 0, 0.75);
+
+    color-scheme: dark;
   }
+}
+
+/* An explicit choice of dark, whatever the system says. */
+:root[data-theme="dark"] {
+  --canvas: #100e0c;
+  --canvas-veil: #191512;
+  --surface: #181513;
+  --surface-muted: #1f1a17;
+  --surface-sunken: #272119;
+
+  --ink: #f6efe4;
+  --ink-muted: #c8b9a7;
+  --ink-subtle: #a4917c;
+
+  --line: #2f2823;
+  --line-strong: #473b31;
+
+  --accent: #d9b47d;
+  --accent-ink: #ecd3ab;
+  --accent-soft: #2a211a;
+  --gold: #c9a96a;
+
+  --primary: #e9dcc8;
+  --primary-hover: #d8c7ad;
+  --primary-fg: #14100e;
+
+  --success: #7fd1a0;
+  --success-soft: #16261c;
+  --danger: #f0a094;
+  --danger-soft: #2c1714;
+  --warning: #e0b165;
+  --warning-soft: #2a2113;
+
+  --focus-ring: #d9b47d;
+  --card-shadow: 0 24px 60px -28px rgba(0, 0, 0, 0.75);
+
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -90,6 +145,7 @@
   --color-accent: var(--accent);
   --color-accent-ink: var(--accent-ink);
   --color-accent-soft: var(--accent-soft);
+  --color-gold: var(--gold);
 
   --color-primary: var(--primary);
   --color-primary-hover: var(--primary-hover);
@@ -109,10 +165,16 @@
 
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  /* Headings only. Falls back to a system serif for scripts the display
+     face does not cover, such as Cyrillic. */
+  --font-display: var(--font-display-serif), "Iowan Old Style", Georgia, serif;
 }
 
 body {
-  background: var(--canvas);
+  /* A whisper of warmth towards the foot of the page, so a long form does
+     not read as a flat slab. */
+  background: linear-gradient(180deg, var(--canvas) 0%, var(--canvas) 55%, var(--canvas-veil) 100%);
+  background-attachment: fixed;
   color: var(--ink);
   font-family: var(--font-sans);
 }
@@ -125,13 +187,29 @@ body {
   border-radius: 4px;
 }
 
+/* Page and section titles. */
+.display {
+  font-family: var(--font-display);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+}
+
 /* The eyebrow label repeated above every page title. */
 .eyebrow {
   font-size: 0.6875rem;
   font-weight: 500;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.24em;
   text-transform: uppercase;
   color: var(--accent);
+}
+
+/* A hairline flourish under a title, used sparingly on guest screens. */
+.rule-gold {
+  height: 1px;
+  border: 0;
+  background: linear-gradient(90deg, transparent, var(--gold), transparent);
+  opacity: 0.7;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -182,8 +260,11 @@ body {
     margin: 10mm;
   }
 
-  :root {
+  /* Ink on paper, whatever theme the screen was showing. */
+  :root,
+  :root[data-theme="dark"] {
     --canvas: #ffffff;
+    --canvas-veil: #ffffff;
     --surface: #ffffff;
     --surface-muted: #ffffff;
     --surface-sunken: #ffffff;
@@ -193,6 +274,7 @@ body {
     --line: #999999;
     --line-strong: #666666;
     --card-shadow: none;
+    color-scheme: light;
   }
 
   body {

@@ -9,6 +9,7 @@ import { Alert } from "@/components/ui/feedback";
 import { useBookingGuard, writeBookingSession } from "@/hooks/use-booking-session";
 import { LANGUAGE_NAMES, listLanguages } from "@/lib/languages";
 import { localizeMenuCatalog } from "@/lib/menu-localization";
+import { NONE_OPTION_ID, NONE_OPTION_NAME } from "@/lib/menu-selection";
 import { cx } from "@/components/ui/utils";
 import type { MenuCourse, MenuOption, ReservationSelection } from "@/types/booking";
 
@@ -41,7 +42,7 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
     [requiredCourses, selections],
   );
 
-  const chooseOption = (guestIndex: number, course: MenuCourse, option: MenuOption) => {
+  const chooseOption = (guestIndex: number, course: MenuCourse, option: Pick<MenuOption, "id" | "name">) => {
     const nextSelection: ReservationSelection = {
       guestIndex,
       courseId: course.id,
@@ -227,6 +228,48 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
                         </button>
                       );
                     })}
+
+                    {(() => {
+                      const isSelected = selection?.optionId === NONE_OPTION_ID;
+
+                      return (
+                        <button
+                          type="button"
+                          role="radio"
+                          aria-checked={isSelected}
+                          onClick={() =>
+                            chooseOption(activeGuestIndex, course, {
+                              id: NONE_OPTION_ID,
+                              name: NONE_OPTION_NAME,
+                            })
+                          }
+                          className={cx(
+                            "flex w-full items-center gap-3 rounded-control border border-dashed p-4 text-left transition-colors",
+                            isSelected
+                              ? "border-primary bg-primary text-primary-fg"
+                              : "border-line-strong bg-surface text-ink-muted hover:border-accent",
+                          )}
+                        >
+                          <span className="flex size-20 shrink-0 items-center justify-center rounded-control border border-line text-2xl">
+                            <span aria-hidden="true">—</span>
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-base font-semibold">No thank you</span>
+                            <span
+                              className={cx(
+                                "mt-1 block text-sm",
+                                isSelected ? "text-primary-fg/80" : "text-ink-subtle",
+                              )}
+                            >
+                              Skip this course
+                            </span>
+                          </span>
+                          <span aria-hidden="true" className="text-lg">
+                            {isSelected ? "✓" : ""}
+                          </span>
+                        </button>
+                      );
+                    })()}
                   </div>
                 </fieldset>
               </Card>

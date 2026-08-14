@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { validateReservationRequest } from "@/lib/services/booking-rules";
+import { NONE_OPTION_ID, NONE_OPTION_NAME } from "@/lib/menu-selection";
 import type { MenuCourse, ReservationSelection, RestaurantDateAvailability } from "@/types/booking";
 
 const NOW = new Date(2026, 7, 14, 12);
@@ -155,6 +156,38 @@ describe("reservation validation", () => {
 
     expect(result.ok).toBe(true);
     expect(result.selections?.every((entry) => entry.guestIndex === 0)).toBe(true);
+  });
+
+  /**
+   * A guest may decline any course. "None" is a real selection with a
+   * reserved id, so it satisfies a required course without matching a dish.
+   */
+  it("accepts None for a required course", () => {
+    const declining = [
+      { guestIndex: 0, courseId: "course-1", courseName: "Amuse Bouche", optionId: NONE_OPTION_ID, optionName: NONE_OPTION_NAME },
+      ...selectionsForGuest(0, ["opt-1", "opt-2", "opt-4"]).slice(1),
+      ...selectionsForGuest(1, ["opt-1", "opt-3", "opt-5"]),
+    ];
+
+    expect(validate({ selections: declining }).ok).toBe(true);
+  });
+
+  it("accepts a guest declining every course", () => {
+    const declineAll = menu.map((entry) => ({
+      guestIndex: 0,
+      courseId: entry.id,
+      courseName: entry.name,
+      optionId: NONE_OPTION_ID,
+      optionName: NONE_OPTION_NAME,
+    }));
+
+    expect(validate({ guestCount: 1, selections: declineAll }).ok).toBe(true);
+  });
+
+  it("still rejects a course left out entirely", () => {
+    // Declining must be explicit; a missing course is an incomplete booking.
+    expect(validate({ guestCount: 1, selections: selectionsForGuest(0, ["opt-1", "opt-2", "opt-4"]).slice(1) }).error)
+      .toContain("Please choose an option");
   });
 
   it("ignores courses that are not required", () => {

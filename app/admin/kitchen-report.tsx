@@ -7,10 +7,17 @@ import { Button } from "@/components/ui/button";
 import { Alert, Badge, EmptyState } from "@/components/ui/feedback";
 import { ContactLink } from "@/components/contact-link";
 import {
-  buildKitchenColumns,
-  buildKitchenCsv,
+  buildCourseColumns,
+  buildGuestCsv,
+  buildGuestRows,
   buildKitchenFileName,
-  buildKitchenRows,
+  buildOptionColumns,
+  buildOptionTotals,
+  buildRoomCsv,
+  buildRoomRows,
+  countDeclined,
+  countPlates,
+  groupOptionColumns,
   type KitchenLayout,
 } from "@/lib/kitchen-report";
 import { formatLongDate } from "@/lib/date";
@@ -37,14 +44,30 @@ export function KitchenReport({
   const [layout, setLayout] = useState<KitchenLayout>("guest");
   const [editing, setEditing] = useState<{ reservationNumber: string; value: string } | null>(null);
 
-  const columns = useMemo(() => buildKitchenColumns(reservations, menu), [reservations, menu]);
-  const rows = useMemo(() => buildKitchenRows(reservations, columns, layout), [reservations, columns, layout]);
+  const courseColumns = useMemo(() => buildCourseColumns(reservations, menu), [reservations, menu]);
+  const optionColumns = useMemo(() => buildOptionColumns(reservations, menu), [reservations, menu]);
+  const optionGroups = useMemo(() => groupOptionColumns(optionColumns), [optionColumns]);
+
+  const guestRows = useMemo(() => buildGuestRows(reservations, courseColumns), [reservations, courseColumns]);
+  const roomRows = useMemo(() => buildRoomRows(reservations, optionColumns), [reservations, optionColumns]);
+  const totals = useMemo(() => buildOptionTotals(roomRows, optionColumns), [roomRows, optionColumns]);
+
+  const covers = reservations
+    .filter((reservation) => reservation.status === "confirmed")
+    .reduce((total, reservation) => total + reservation.guestCount, 0);
+  const plates = countPlates(totals);
+  const declined = countDeclined(reservations);
+
+  const reservationByNumber = useMemo(
+    () => new Map(reservations.map((reservation) => [reservation.reservationNumber, reservation])),
+    [reservations],
+  );
 
   const firstRowOfBooking = useMemo(() => {
     const seen = new Set<string>();
     const first = new Set<string>();
 
-    for (const row of rows) {
+    for (const row of guestRows) {
       if (!seen.has(row.reservationNumber)) {
         seen.add(row.reservationNumber);
         first.add(row.key);
@@ -52,16 +75,7 @@ export function KitchenReport({
     }
 
     return first;
-  }, [rows]);
-
-  const covers = reservations
-    .filter((reservation) => reservation.status === "confirmed")
-    .reduce((total, reservation) => total + reservation.guestCount, 0);
-
-  const contactByNumber = useMemo(
-    () => new Map(reservations.map((reservation) => [reservation.reservationNumber, reservation])),
-    [reservations],
-  );
+  }, [guestRows]);
 
   /** Alternating shading so rooms sharing a table read as one block. */
   const groupShade = useMemo(() => {
@@ -69,7 +83,7 @@ export function KitchenReport({
     let toggle = false;
     let previous = "";
 
-    for (const row of rows) {
+    for (const row of layout === "guest" ? guestRows : roomRows) {
       const group = row.tableGroupId ?? row.reservationNumber;
       if (group !== previous) {
         toggle = !toggle;
@@ -79,10 +93,14 @@ export function KitchenReport({
     }
 
     return shades;
-  }, [rows]);
+  }, [layout, guestRows, roomRows]);
+
+  const hasRows = (layout === "guest" ? guestRows : roomRows).length > 0;
 
   const downloadCsv = () => {
-    const csv = buildKitchenCsv(columns, rows, layout);
+    const csv =
+      layout === "guest" ? buildGuestCsv(courseColumns, guestRows) : buildRoomCsv(optionColumns, roomRows, totals);
+
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -104,6 +122,33 @@ export function KitchenReport({
     await onAssignTable(reservationNumber, value.trim());
   };
 
+  const tableCell = (reservationNumber: string, table: string) => {
+    const isEditing = editing?.reservationNumber === reservationNumber;
+
+    return isEditing ? (
+      <input
+        autoFocus
+        aria-label={`Table for reservation ${reservationNumber}`}
+        value={editing.value}
+        onChange={(event) => setEditing({ ...editing, value: event.target.value })}
+        onBlur={submitTable}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") submitTable();
+          if (event.key === "Escape") setEditing(null);
+        }}
+        className="w-16 rounded border border-line-strong bg-surface px-2 py-1 text-ink outline-none focus:border-accent"
+      />
+    ) : (
+      <button
+        type="button"
+        onClick={() => setEditing({ reservationNumber, value: table })}
+        className="min-h-8 min-w-10 rounded border border-dashed border-line-strong px-2 py-1 text-left font-semibold text-ink hover:border-accent"
+      >
+        {table || <span className="text-ink-subtle">set</span>}
+      </button>
+    );
+  };
+
   return (
     <Card className="p-5 sm:p-6" as="section">
       <CardHeader
@@ -111,14 +156,15 @@ export function KitchenReport({
         title={formatLongDate(date)}
         description={
           <>
-            {covers} {covers === 1 ? "cover" : "covers"}
+            {covers} {covers === 1 ? "cover" : "covers"} · {plates} {plates === 1 ? "plate" : "plates"} to prepare
+            {declined > 0 ? ` · ${declined} course${declined === 1 ? "" : "s"} declined` : ""}
             {serviceTime ? ` · arrival ${serviceTime}` : " · no arrival time set"}
           </>
         }
         actions={
           <div className="flex flex-wrap items-center gap-2" data-print="hide">
             <div role="group" aria-label="Sheet layout" className="flex rounded-control border border-line-strong">
-              {(["guest", "booking"] as const).map((option) => (
+              {(["guest", "room"] as const).map((option) => (
                 <button
                   key={option}
                   type="button"
@@ -133,7 +179,7 @@ export function KitchenReport({
                 </button>
               ))}
             </div>
-            <Button variant="secondary" onClick={downloadCsv} disabled={rows.length === 0}>
+            <Button variant="secondary" onClick={downloadCsv} disabled={!hasRows}>
               Export CSV
             </Button>
             <Button variant="secondary" onClick={() => window.print()}>
@@ -144,131 +190,218 @@ export function KitchenReport({
       />
 
       {!serviceTime ? (
-        <Alert tone="warning" className="mt-4" >
+        <Alert tone="warning" className="mt-4">
           No arrival time is set for this evening. Guests were not told when to arrive.
         </Alert>
       ) : null}
 
       <div className="mt-5">
-        {rows.length === 0 ? (
+        {!hasRows ? (
           <EmptyState title="No reservations yet" description="Nothing has been booked for this evening." />
-        ) : (
+        ) : layout === "guest" ? (
           <div className="overflow-x-auto">
             <table className="min-w-full border-collapse text-left text-sm">
               <caption className="sr-only">
-                Kitchen sheet for {formatLongDate(date)}, one row per {layout === "guest" ? "guest" : "room"}
+                Plating list for {formatLongDate(date)}, one row per guest
               </caption>
               <thead className="bg-surface-sunken text-ink-muted">
                 <tr>
-                  <th scope="col" className="whitespace-nowrap px-3 py-2 font-semibold">
-                    Table
-                  </th>
-                  <th scope="col" className="whitespace-nowrap px-3 py-2 font-semibold">
-                    Room
-                  </th>
-                  <th scope="col" className="whitespace-nowrap px-3 py-2 font-semibold">
-                    {layout === "guest" ? "Guest" : "Guests"}
-                  </th>
-                  {columns.map((column) => (
+                  <th scope="col" className="whitespace-nowrap px-3 py-2 font-semibold">Table</th>
+                  <th scope="col" className="whitespace-nowrap px-3 py-2 font-semibold">Room</th>
+                  <th scope="col" className="whitespace-nowrap px-3 py-2 font-semibold">Guest</th>
+                  {courseColumns.map((column) => (
                     <th key={column.id} scope="col" className="whitespace-nowrap px-3 py-2 font-semibold">
                       {column.label}
                     </th>
                   ))}
-                  <th scope="col" className="px-3 py-2 font-semibold">
-                    Comment
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-semibold" data-print="hide">
-                    Contact
-                  </th>
+                  <th scope="col" className="px-3 py-2 font-semibold">Comment</th>
+                  <th scope="col" className="px-3 py-2 font-semibold" data-print="hide">Contact</th>
                   <th scope="col" className="px-3 py-2 font-semibold" data-print="hide">
                     <span className="sr-only">Actions</span>
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => {
-                  const reservation = contactByNumber.get(row.reservationNumber);
-                  const isEditing = editing?.reservationNumber === row.reservationNumber;
-                  const shaded = groupShade.get(row.key);
-
-                  return (
-                    <tr
-                      key={row.key}
+                {guestRows.map((row) => (
+                  <tr
+                    key={row.key}
+                    className={cx(
+                      "border-t border-line align-top",
+                      groupShade.get(row.key) && "bg-surface-muted",
+                      row.cancelled && "opacity-50 line-through",
+                    )}
+                  >
+                    <td className="px-3 py-2">{tableCell(row.reservationNumber, row.table)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 font-medium tabular-nums text-ink">{row.room}</td>
+                    <td className="whitespace-nowrap px-3 py-2 tabular-nums">{row.guests}</td>
+                    {courseColumns.map((column) => (
+                      <td key={column.id} className="px-3 py-2">
+                        {row.choices[column.id] || <span className="text-ink-subtle">—</span>}
+                      </td>
+                    ))}
+                    <td className="px-3 py-2">
+                      {row.comment ? (
+                        <span className="font-medium text-danger">{row.comment}</span>
+                      ) : (
+                        <span className="text-ink-subtle">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2" data-print="hide">
+                      {firstRowOfBooking.has(row.key) ? (
+                        <ContactLink contact={reservationByNumber.get(row.reservationNumber)?.contact} />
+                      ) : null}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2" data-print="hide">
+                      <div className={cx("flex items-center gap-2", !firstRowOfBooking.has(row.key) && "invisible")}>
+                        <Link
+                          href={`/admin/reservation/${row.reservationNumber}`}
+                          className="text-xs underline underline-offset-2 hover:text-accent"
+                        >
+                          {row.reservationNumber}
+                        </Link>
+                        {!row.cancelled ? (
+                          <Button
+                            variant="danger"
+                            onClick={() => onCancel(row.reservationNumber)}
+                            loading={busyReservationNumber === row.reservationNumber}
+                            loadingLabel="…"
+                          >
+                            Cancel
+                          </Button>
+                        ) : (
+                          <Badge tone="info">cancelled</Badge>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full border-collapse text-left text-sm">
+              <caption className="sr-only">
+                Prep counts for {formatLongDate(date)}, one row per room with a column per dish
+              </caption>
+              <thead className="bg-surface-sunken text-ink-muted">
+                {/* Course names span their options, so the sheet reads in
+                    groups rather than as one long run of dish names. */}
+                <tr>
+                  <th scope="col" rowSpan={2} className="whitespace-nowrap border-r border-line px-3 py-2 font-semibold align-bottom">Table</th>
+                  <th scope="col" rowSpan={2} className="whitespace-nowrap border-r border-line px-3 py-2 font-semibold align-bottom">Room</th>
+                  <th scope="col" rowSpan={2} className="whitespace-nowrap border-r border-line px-3 py-2 font-semibold align-bottom">Guests</th>
+                  {optionGroups.map((group) => (
+                    <th
+                      key={group.courseId}
+                      scope="colgroup"
+                      colSpan={group.options.length}
+                      className="whitespace-nowrap border-r border-line px-3 py-2 text-center font-semibold"
+                    >
+                      {group.courseName}
+                    </th>
+                  ))}
+                  <th scope="col" rowSpan={2} className="px-3 py-2 font-semibold align-bottom">Comment</th>
+                  <th scope="col" rowSpan={2} className="px-3 py-2 font-semibold align-bottom" data-print="hide">
+                    <span className="sr-only">Actions</span>
+                  </th>
+                </tr>
+                <tr>
+                  {optionColumns.map((column, index) => (
+                    <th
+                      key={column.id}
+                      scope="col"
                       className={cx(
-                        "border-t border-line align-top",
-                        shaded && "bg-surface-muted",
-                        row.cancelled && "opacity-50 line-through",
+                        "px-2 py-2 text-center align-bottom text-xs font-medium",
+                        optionColumns[index + 1]?.courseId !== column.courseId && "border-r border-line",
                       )}
                     >
-                      <td className="px-3 py-2">
-                        {isEditing ? (
-                          <input
-                            autoFocus
-                            aria-label={`Table for room ${row.room}`}
-                            value={editing.value}
-                            onChange={(event) => setEditing({ ...editing, value: event.target.value })}
-                            onBlur={submitTable}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") submitTable();
-                              if (event.key === "Escape") setEditing(null);
-                            }}
-                            className="w-20 rounded border border-line-strong bg-surface px-2 py-1 text-ink outline-none focus:border-accent"
-                          />
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setEditing({ reservationNumber: row.reservationNumber, value: row.table })
-                            }
-                            className="min-h-8 min-w-12 rounded border border-dashed border-line-strong px-2 py-1 text-left font-semibold text-ink hover:border-accent"
-                          >
-                            {row.table || <span className="text-ink-subtle">set</span>}
-                          </button>
+                      <span className="block max-w-24 leading-tight">{column.label}</span>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {roomRows.map((row) => (
+                  <tr
+                    key={row.key}
+                    className={cx(
+                      "border-t border-line",
+                      groupShade.get(row.key) && "bg-surface-muted",
+                      row.cancelled && "opacity-50 line-through",
+                    )}
+                  >
+                    <td className="border-r border-line px-3 py-2">{tableCell(row.reservationNumber, row.table)}</td>
+                    <td className="whitespace-nowrap border-r border-line px-3 py-2 font-medium tabular-nums text-ink">
+                      {row.room}
+                    </td>
+                    <td className="border-r border-line px-3 py-2 tabular-nums">{row.guests}</td>
+                    {optionColumns.map((column, index) => (
+                      <td
+                        key={column.id}
+                        className={cx(
+                          "px-2 py-2 text-center tabular-nums",
+                          optionColumns[index + 1]?.courseId !== column.courseId && "border-r border-line",
+                          row.counts[column.id] ? "font-semibold text-ink" : "text-ink-subtle",
                         )}
+                      >
+                        {/* Blank rather than 0, so the counts that matter stand out. */}
+                        {row.counts[column.id] || ""}
                       </td>
-                      <td className="whitespace-nowrap px-3 py-2 font-medium tabular-nums text-ink">{row.room}</td>
-                      <td className="whitespace-nowrap px-3 py-2 tabular-nums">{row.guests}</td>
-                      {columns.map((column) => (
-                        <td key={column.id} className="px-3 py-2">
-                          {row.choices[column.id] || <span className="text-ink-subtle">—</span>}
-                        </td>
-                      ))}
-                      <td className="px-3 py-2">
-                        {row.comment ? (
-                          <span className="font-medium text-danger">{row.comment}</span>
-                        ) : (
-                          <span className="text-ink-subtle">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2" data-print="hide">
-                        {firstRowOfBooking.has(row.key) ? <ContactLink contact={reservation?.contact} /> : null}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2" data-print="hide">
-                        <div className={cx("flex items-center gap-2", !firstRowOfBooking.has(row.key) && "invisible")}>
-                          <Link
-                            href={`/admin/reservation/${row.reservationNumber}`}
-                            className="text-xs underline underline-offset-2 hover:text-accent"
+                    ))}
+                    <td className="px-3 py-2">
+                      {row.comment ? <span className="font-medium text-danger">{row.comment}</span> : null}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2" data-print="hide">
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href={`/admin/reservation/${row.reservationNumber}`}
+                          className="text-xs underline underline-offset-2 hover:text-accent"
+                        >
+                          {row.reservationNumber}
+                        </Link>
+                        {!row.cancelled ? (
+                          <Button
+                            variant="danger"
+                            onClick={() => onCancel(row.reservationNumber)}
+                            loading={busyReservationNumber === row.reservationNumber}
+                            loadingLabel="…"
                           >
-                            {row.reservationNumber}
-                          </Link>
-                          {!row.cancelled ? (
-                            <Button
-                              variant="danger"
-                              onClick={() => onCancel(row.reservationNumber)}
-                              loading={busyReservationNumber === row.reservationNumber}
-                              loadingLabel="…"
-                            >
-                              Cancel
-                            </Button>
-                          ) : (
-                            <Badge tone="info">cancelled</Badge>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
+                            Cancel
+                          </Button>
+                        ) : (
+                          <Badge tone="info">cancelled</Badge>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
+              {/* The prep list: what the kitchen actually has to cook. */}
+              <tfoot className="border-t-2 border-line-strong bg-surface-sunken font-semibold text-ink">
+                <tr>
+                  <th scope="row" colSpan={2} className="border-r border-line px-3 py-3 text-left">
+                    Total to prepare
+                  </th>
+                  <td className="border-r border-line px-3 py-3 tabular-nums">
+                    {roomRows.filter((row) => !row.cancelled).reduce((sum, row) => sum + row.guests, 0)}
+                  </td>
+                  {optionColumns.map((column, index) => (
+                    <td
+                      key={column.id}
+                      className={cx(
+                        "px-2 py-3 text-center text-base tabular-nums",
+                        optionColumns[index + 1]?.courseId !== column.courseId && "border-r border-line",
+                        !totals[column.id] && "text-ink-subtle",
+                      )}
+                    >
+                      {totals[column.id] || "0"}
+                    </td>
+                  ))}
+                  <td className="px-3 py-3" />
+                  <td className="px-3 py-3" data-print="hide" />
+                </tr>
+              </tfoot>
             </table>
           </div>
         )}

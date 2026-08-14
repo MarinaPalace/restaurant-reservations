@@ -28,11 +28,21 @@ its reservation number to the others, who tick "we are dining with another room"
 Joining is refused if the number is unknown, for another evening, or cancelled. Staff assign the
 actual table number in the dashboard, and it applies to everyone sharing that table.
 
-**Kitchen sheet.** The dashboard prints the daily sheet in the shape of the old Excel book —
-Table, Room, Guests, a column per course, and a Comment column carrying allergies and requests.
-Two layouts toggle: one row per guest (for plating) and one row per room (for reception). Both
-export to CSV for Excel, with a UTF-8 BOM so accented and Cyrillic dish names survive the open.
-Rooms sharing a table are grouped together and shaded as one block.
+**Declining a course.** A guest can pick "No thank you" on any course. That is stored as a real
+selection with a reserved option id, so the kitchen can tell "does not want a starter" apart from
+"has not chosen yet". Declined courses never appear in the prep counts.
+
+**Kitchen sheet.** Two layouts toggle in the dashboard, and each exports to CSV for Excel with a
+UTF-8 BOM so accented and Cyrillic dish names survive the open.
+
+- *Per guest* — the plating list: Table, Room, Guest, a column per course naming the dish, and a
+  Comment column carrying allergies and requests.
+- *Per room* — the prep sheet: Table, Room, Guests, then a column for **every option**, grouped
+  under its course, with counts in the cells and a **Total to prepare** row at the bottom. That
+  bottom row is how many of each dish the kitchen makes. Cancelled bookings are excluded from it.
+
+Rooms sharing a table sort together and are shaded as one block. Cells showing zero are left blank
+so the counts that matter stand out.
 
 **Calendar reminders.** The confirmation screen offers Google Calendar and an `.ics` download for
 Apple Calendar and Outlook, including the per-guest menu choices and an alarm three hours before

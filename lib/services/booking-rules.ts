@@ -1,4 +1,5 @@
 import { isPastDateKey } from "@/lib/date";
+import { isNoneSelection } from "@/lib/menu-selection";
 import { MAX_GUESTS_PER_RESERVATION } from "@/lib/validation/booking";
 import type { MenuCourse, RestaurantDateAvailability, ReservationSelection } from "@/types/booking";
 
@@ -92,7 +93,16 @@ export function validateReservationRequest(input: ReservationValidationInput): R
 
   for (const selection of normalizedSelections) {
     const activeOptions = activeOptionsByCourse.get(selection.courseId);
-    if (!activeOptions || !activeOptions.has(selection.optionId)) {
+    if (!activeOptions) {
+      return invalid(BOOKING_MESSAGES.invalidOption);
+    }
+
+    // Declining a course is always allowed, so "None" needs no menu entry.
+    if (isNoneSelection(selection)) {
+      continue;
+    }
+
+    if (!activeOptions.has(selection.optionId)) {
       return invalid(BOOKING_MESSAGES.invalidOption);
     }
   }

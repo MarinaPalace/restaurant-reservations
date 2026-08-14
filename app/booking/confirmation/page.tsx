@@ -1,11 +1,10 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { PageShell } from "@/components/page-shell";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/feedback";
-import { clearBookingSession, useConfirmation } from "@/hooks/use-booking-session";
+import { useConfirmation } from "@/hooks/use-booking-session";
 import { buildGoogleCalendarUrl, buildIcsFile, describeReservationTime } from "@/lib/calendar";
 import { formatContact, MESSAGING_APP_LABELS } from "@/lib/contact";
 import { formatLongDate } from "@/lib/date";
@@ -17,7 +16,6 @@ import { formatLongDate } from "@/lib/date";
  * a hydration mismatch.
  */
 export default function ConfirmationPage() {
-  const router = useRouter();
   const reservation = useConfirmation();
 
   /** Hands the guest an .ics file for any calendar that is not Google. */
@@ -165,19 +163,11 @@ export default function ConfirmationPage() {
           )}
         </div>
 
-        <div className="mt-6 flex flex-col gap-3 sm:flex-row" data-print="hide">
-          <Button variant="secondary" size="lg" className="flex-1" onClick={() => window.print()}>
+        {/* No "book another" action: a guest may reserve dinner once per
+            stay, so offering it would invite a booking we would refuse. */}
+        <div className="mt-6" data-print="hide">
+          <Button variant="secondary" size="lg" className="w-full" onClick={() => window.print()}>
             Print
-          </Button>
-          <Button
-            size="lg"
-            className="flex-1"
-            onClick={() => {
-              clearBookingSession();
-              router.push("/booking");
-            }}
-          >
-            New reservation
           </Button>
         </div>
       </Card>

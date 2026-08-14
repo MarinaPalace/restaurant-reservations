@@ -4,6 +4,7 @@ import { MenuCourseModel } from "@/lib/models/menu-course";
 import { MenuOptionModel } from "@/lib/models/menu-option";
 import { RestaurantDateModel } from "@/lib/models/restaurant-date";
 import { localizeMenuCatalog } from "@/lib/menu-localization";
+import { decodeStoredImage, isStoredImage, toPublicImageUrl } from "@/lib/menu-images";
 import {
   withRemainingSeats,
   type MenuCourse,
@@ -104,10 +105,42 @@ export async function getMenuCatalog(language = "en"): Promise<MenuCourse[]> {
 
   const visible = catalog
     .filter((course) => course.active)
-    .map((course) => ({ ...course, options: course.options.filter((option) => option.active) }))
+    .map((course) => ({
+      ...course,
+      // Uploaded photos become cacheable URLs rather than inline base64, which
+      // keeps this response small even with a picture on every dish.
+      imageUrl: toPublicImageUrl(course.id, course.imageUrl),
+      options: course.options
+        .filter((option) => option.active)
+        .map((option) => ({ ...option, imageUrl: toPublicImageUrl(option.id, option.imageUrl) })),
+    }))
     .sort((a, b) => a.order - b.order);
 
   return localizeMenuCatalog(visible, language);
+}
+
+/**
+ * Finds the bytes behind an uploaded course or option photo.
+ *
+ * The admin catalogue is used deliberately: it still holds the raw data URLs,
+ * whereas the guest catalogue has already had them rewritten to these URLs.
+ */
+export async function findMenuImage(id: string) {
+  const catalog = await getFullMenuCatalog();
+
+  for (const course of catalog) {
+    if (course.id === id && isStoredImage(course.imageUrl)) {
+      return decodeStoredImage(course.imageUrl as string);
+    }
+
+    for (const option of course.options) {
+      if (option.id === id && isStoredImage(option.imageUrl)) {
+        return decodeStoredImage(option.imageUrl as string);
+      }
+    }
+  }
+
+  return null;
 }
 
 /**

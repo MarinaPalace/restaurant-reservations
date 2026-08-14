@@ -51,6 +51,16 @@ export type ReservationSelection = {
 
 export type ReservationStatus = "confirmed" | "cancelled";
 
+/** Which app the guest prefers to be messaged on, when they leave a phone number. */
+export type MessagingApp = "phone" | "whatsapp" | "viber" | "telegram";
+
+export type ReservationContact = {
+  method: "email" | "phone";
+  email?: string;
+  phone?: string;
+  messagingApp?: MessagingApp;
+};
+
 export type ReservationRecord = {
   _id?: string;
   reservationNumber: string;
@@ -58,6 +68,8 @@ export type ReservationRecord = {
   guestCount: number;
   date: string;
   selections: ReservationSelection[];
+  /** How to reach the guest. Optional so bookings made before this existed still load. */
+  contact?: ReservationContact;
   status: ReservationStatus;
   createdAt?: string;
   updatedAt?: string;

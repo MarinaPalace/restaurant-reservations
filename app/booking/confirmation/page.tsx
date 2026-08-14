@@ -6,6 +6,8 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/feedback";
 import { clearBookingSession, useConfirmation } from "@/hooks/use-booking-session";
+import { buildGoogleCalendarUrl, buildIcsFile, describeReservationTime } from "@/lib/calendar";
+import { formatContact, MESSAGING_APP_LABELS } from "@/lib/contact";
 import { formatLongDate } from "@/lib/date";
 
 /**
@@ -17,6 +19,24 @@ import { formatLongDate } from "@/lib/date";
 export default function ConfirmationPage() {
   const router = useRouter();
   const reservation = useConfirmation();
+
+  /** Hands the guest an .ics file for any calendar that is not Google. */
+  const downloadIcs = () => {
+    if (!reservation) {
+      return;
+    }
+
+    const blob = new Blob([buildIcsFile(reservation)], { type: "text/calendar;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = `reservation-${reservation.reservationNumber}.ics`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
 
   if (!reservation) {
     return (
@@ -77,7 +97,39 @@ export default function ConfirmationPage() {
             <dt className="text-ink-subtle">Guests</dt>
             <dd className="font-semibold text-ink">{reservation.guestCount}</dd>
           </div>
+          {reservation.contact ? (
+            <div className="flex justify-between gap-3">
+              <dt className="text-ink-subtle">We will contact you on</dt>
+              <dd className="text-right font-semibold text-ink">
+                {formatContact(reservation.contact)}
+                {reservation.contact.method === "phone" && reservation.contact.messagingApp ? (
+                  <span className="block text-xs font-normal text-ink-muted">
+                    via {MESSAGING_APP_LABELS[reservation.contact.messagingApp]}
+                  </span>
+                ) : null}
+              </dd>
+            </div>
+          ) : null}
         </dl>
+
+        <div className="mt-5 rounded-control border border-line bg-surface-muted p-4" data-print="hide">
+          <p className="text-sm font-medium text-ink">Add a reminder</p>
+          <p className="mt-1 text-sm text-ink-muted">{describeReservationTime(reservation.date)}</p>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+            <a
+              href={buildGoogleCalendarUrl(reservation)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-control bg-primary px-4 text-sm font-semibold text-primary-fg transition-colors hover:bg-primary-hover"
+            >
+              Google Calendar
+              <span className="sr-only">(opens in a new tab)</span>
+            </a>
+            <Button variant="secondary" className="flex-1" onClick={downloadIcs}>
+              Apple or Outlook
+            </Button>
+          </div>
+        </div>
 
         <div className="mt-5 space-y-3">
           {guestGroups.map(({ guestIndex, entries }) =>

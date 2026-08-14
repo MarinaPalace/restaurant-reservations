@@ -144,6 +144,7 @@ export async function createLocalReservation(input: {
   guestCount: number;
   date: string;
   selections: ReservationRecord["selections"];
+  contact?: ReservationRecord["contact"];
 }): Promise<LocalBookingResult> {
   return withStoreLock(async () => {
     const dates = await readDates();
@@ -166,6 +167,7 @@ export async function createLocalReservation(input: {
       guestCount: input.guestCount,
       date: input.date,
       selections: input.selections,
+      contact: input.contact,
       status: "confirmed",
       createdAt: timestamp,
       updatedAt: timestamp,

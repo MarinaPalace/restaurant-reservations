@@ -2,7 +2,26 @@
 
 A hotel guest reservation app for an à la carte restaurant, built with Next.js 16, TypeScript, Tailwind CSS v4 and MongoDB/Mongoose.
 
-Guests book from their room number in a five-step flow (room → guests → date → menu → confirm); staff manage availability, the menu and the nightly kitchen report from `/admin`.
+Guests book from their room number in a five-step flow (room → guests → date → menu → confirm),
+leave a contact detail, and can add the booking to their calendar. Staff manage availability,
+the menu and the nightly kitchen report from `/admin`.
+
+## Features worth knowing about
+
+**Dish photos.** Courses and options each take a picture, either a URL or an upload. Uploads are
+resized and re-encoded in the browser before they are sent, so a photo straight off a phone
+arrives at roughly 100–200 KB. Stored photos are served from `/api/menu/images/<id>` with a
+content hash in the URL and immutable cache headers, which keeps the menu response small and lets
+browsers cache each picture. External image addresses are passed through untouched.
+
+**Contact details.** Every booking carries an email address or a phone number, chosen by the
+guest on the confirmation step. A phone number also picks a preferred app — phone/SMS, WhatsApp,
+Viber or Telegram — and staff see a one-click link that opens the right one.
+
+**Calendar reminders.** The confirmation screen offers Google Calendar and an `.ics` download for
+Apple Calendar and Outlook, including the per-guest menu choices and an alarm three hours before
+the sitting. Reservations store a date but no time, so the sitting time comes from
+`NEXT_PUBLIC_DINNER_TIME`.
 
 ## Run locally
 
@@ -24,6 +43,8 @@ Admin sign-in in development falls back to `admin` / `admin123` and prints a war
 | `ADMIN_PASSWORD_HASH` | **In production** | bcrypt hash of the admin password. |
 | `ADMIN_SESSION_SECRET` | **In production** | ≥16 chars, used to sign admin session cookies. |
 | `LOCAL_STORE_DIR` | No | Overrides where the JSON store is written. Used by the tests. |
+| `NEXT_PUBLIC_DINNER_TIME` | No | Sitting time in 24-hour `HH:MM` for calendar reminders. Defaults to `19:00`. |
+| `NEXT_PUBLIC_DINNER_DURATION_MINUTES` | No | Length of the sitting. Defaults to `120`. |
 
 In production the admin area fails closed: without `ADMIN_PASSWORD_HASH` and `ADMIN_SESSION_SECRET` every admin request returns 503 rather than falling back to a default password.
 

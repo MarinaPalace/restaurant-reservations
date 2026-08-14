@@ -10,7 +10,12 @@ import {
   reservationNumberExists,
   upsertLocalDate,
 } from "@/lib/db/local-store";
-import { withRemainingSeats, type ReservationRecord, type ReservationSelection } from "@/types/booking";
+import {
+  withRemainingSeats,
+  type ReservationContact,
+  type ReservationRecord,
+  type ReservationSelection,
+} from "@/types/booking";
 
 export class BookingError extends Error {
   constructor(public readonly code: "DATE_CLOSED" | "DATE_FULL") {
@@ -43,6 +48,7 @@ type MongoReservationDocument = {
   guestCount: unknown;
   date: unknown;
   selections?: unknown;
+  contact?: unknown;
   status?: unknown;
   createdAt?: unknown;
   updatedAt?: unknown;
@@ -56,6 +62,7 @@ function toReservationRecord(document: MongoReservationDocument): ReservationRec
     guestCount: Number(document.guestCount),
     date: String(document.date),
     selections: Array.isArray(document.selections) ? (document.selections as ReservationSelection[]) : [],
+    contact: (document.contact as ReservationContact | undefined) ?? undefined,
     status: document.status === "cancelled" ? "cancelled" : "confirmed",
     createdAt: document.createdAt ? new Date(document.createdAt as string).toISOString() : undefined,
     updatedAt: document.updatedAt ? new Date(document.updatedAt as string).toISOString() : undefined,
@@ -67,6 +74,7 @@ export async function createReservationEntry(input: {
   guestCount: number;
   date: string;
   selections: ReservationSelection[];
+  contact?: ReservationContact;
 }): Promise<ReservationRecord> {
   if (!isMongoConfigured()) {
     const reservationNumber = await allocateReservationNumber(reservationNumberExists);
@@ -113,6 +121,7 @@ export async function createReservationEntry(input: {
       guestCount: input.guestCount,
       date: input.date,
       selections: input.selections,
+      contact: input.contact,
       status: "confirmed",
     });
 

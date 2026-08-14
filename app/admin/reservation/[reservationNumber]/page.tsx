@@ -4,6 +4,7 @@ import { PageShell } from "@/components/page-shell";
 import { Card, CardHeader } from "@/components/ui/card";
 import { ButtonLink } from "@/components/ui/button";
 import { Badge } from "@/components/ui/feedback";
+import { ContactLink } from "@/components/contact-link";
 import { isAdminAuthenticated } from "@/lib/auth/session";
 import { getReservationByNumber } from "@/lib/services/reservations";
 import { formatLongDate } from "@/lib/date";
@@ -59,6 +60,12 @@ export default async function ReservationDetailPage({
             <dt className="text-sm text-ink-subtle">Date</dt>
             <dd className="mt-1 text-lg font-semibold text-ink">
               <time dateTime={reservation.date}>{formatLongDate(reservation.date)}</time>
+            </dd>
+          </div>
+          <div>
+            <dt className="text-sm text-ink-subtle">Contact</dt>
+            <dd className="mt-1">
+              <ContactLink contact={reservation.contact} />
             </dd>
           </div>
           <div>

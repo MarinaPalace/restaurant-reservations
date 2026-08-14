@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { DishImage } from "@/components/dish-image";
+import { ImageUploader } from "@/components/image-uploader";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Alert } from "@/components/ui/feedback";
@@ -11,7 +11,6 @@ import { cx } from "@/components/ui/utils";
 import type { MenuCourse, MenuOption, MenuTranslation } from "@/types/booking";
 
 const DEFAULT_LANGUAGE = "en";
-const MAX_IMAGE_BYTES = 500 * 1024;
 
 /** Reads a name/description in the given language, falling back to English. */
 function readTranslated(item: MenuCourse | MenuOption, language: string, field: keyof MenuTranslation) {
@@ -140,33 +139,6 @@ export function MenuEditor({ initialCourses }: { initialCourses: MenuCourse[] })
       ...course,
       options: course.options.filter((option) => option.id !== optionId),
     }));
-  };
-
-  const readImageFile = async (file: File | undefined, apply: (dataUrl: string) => void) => {
-    if (!file) {
-      return;
-    }
-
-    // Images are inlined as data URLs, so an unbounded upload would bloat
-    // every menu response for every guest.
-    if (file.size > MAX_IMAGE_BYTES) {
-      setError(`Images must be under ${Math.round(MAX_IMAGE_BYTES / 1024)} KB. Please use a smaller file or a URL.`);
-      return;
-    }
-
-    try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result ?? ""));
-        reader.onerror = () => reject(new Error("Could not read the image."));
-        reader.readAsDataURL(file);
-      });
-
-      apply(dataUrl);
-      setError("");
-    } catch {
-      setError("Could not read that image file.");
-    }
   };
 
   const addLanguage = () => {
@@ -398,36 +370,13 @@ export function MenuEditor({ initialCourses }: { initialCourses: MenuCourse[] })
                   </label>
                 </div>
 
-                <div className="mt-4 grid gap-4 md:grid-cols-[1fr_auto]">
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <Field label="Image URL">
-                      {(fieldProps) => (
-                        <Input
-                          {...fieldProps}
-                          value={course.imageUrl ?? ""}
-                          onChange={(event) =>
-                            updateCourse(course.id, (current) => ({ ...current, imageUrl: event.target.value }))
-                          }
-                        />
-                      )}
-                    </Field>
-                    <Field label="Upload image" hint="Max 500 KB">
-                      {(fieldProps) => (
-                        <input
-                          {...fieldProps}
-                          type="file"
-                          accept="image/*"
-                          onChange={(event) =>
-                            readImageFile(event.target.files?.[0], (dataUrl) =>
-                              updateCourse(course.id, (current) => ({ ...current, imageUrl: dataUrl })),
-                            )
-                          }
-                          className="w-full rounded-control border border-line-strong bg-surface px-4 py-2.5 text-sm text-ink"
-                        />
-                      )}
-                    </Field>
-                  </div>
-                  <DishImage src={course.imageUrl} alt="" width={160} height={96} className="h-24 w-40" />
+                <div className="mt-4">
+                  <ImageUploader
+                    label="Course photo"
+                    value={course.imageUrl ?? ""}
+                    onChange={(imageUrl) => updateCourse(course.id, (current) => ({ ...current, imageUrl }))}
+                    previewClassName="h-24 w-32"
+                  />
                 </div>
               </>
             ) : null}
@@ -481,7 +430,7 @@ export function MenuEditor({ initialCourses }: { initialCourses: MenuCourse[] })
 
                       {isDefaultLanguage ? (
                         <>
-                          <div className="mt-4 grid gap-4 md:grid-cols-2">
+                          <div className="mt-4">
                             <Field label="Allergens" hint="Comma separated">
                               {(fieldProps) => (
                                 <Input
@@ -499,20 +448,19 @@ export function MenuEditor({ initialCourses }: { initialCourses: MenuCourse[] })
                                 />
                               )}
                             </Field>
-                            <Field label="Image URL">
-                              {(fieldProps) => (
-                                <Input
-                                  {...fieldProps}
-                                  value={option.imageUrl ?? ""}
-                                  onChange={(event) =>
-                                    updateOption(course.id, option.id, (current) => ({
-                                      ...current,
-                                      imageUrl: event.target.value,
-                                    }))
-                                  }
-                                />
-                              )}
-                            </Field>
+                          </div>
+
+                          {/* Guests see this picture beside the dish, so it
+                              gets the same uploader as a course. */}
+                          <div className="mt-4">
+                            <ImageUploader
+                              label="Dish photo"
+                              value={option.imageUrl ?? ""}
+                              onChange={(imageUrl) =>
+                                updateOption(course.id, option.id, (current) => ({ ...current, imageUrl }))
+                              }
+                              previewClassName="size-24"
+                            />
                           </div>
 
                           <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
@@ -530,12 +478,9 @@ export function MenuEditor({ initialCourses }: { initialCourses: MenuCourse[] })
                               />
                               Available
                             </label>
-                            <div className="flex items-center gap-3">
-                              <DishImage src={option.imageUrl} alt="" width={64} height={64} className="size-16" />
-                              <Button variant="danger" onClick={() => removeOption(course.id, option.id)}>
-                                Remove
-                              </Button>
-                            </div>
+                            <Button variant="danger" onClick={() => removeOption(course.id, option.id)}>
+                              Remove option
+                            </Button>
                           </div>
                         </>
                       ) : null}

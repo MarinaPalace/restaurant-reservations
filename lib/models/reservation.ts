@@ -13,6 +13,17 @@ const selectionSchema = new Schema(
   { _id: false },
 );
 
+const contactSchema = new Schema(
+  {
+    method: { type: String, enum: ["email", "phone"], required: true },
+    email: { type: String },
+    phone: { type: String },
+    // Only meaningful alongside a phone number.
+    messagingApp: { type: String, enum: ["phone", "whatsapp", "viber", "telegram"] },
+  },
+  { _id: false },
+);
+
 const reservationSchema = new Schema(
   {
     reservationNumber: { type: String, required: true, unique: true, index: true },
@@ -20,6 +31,8 @@ const reservationSchema = new Schema(
     guestCount: { type: Number, required: true },
     date: { type: String, required: true, index: true },
     selections: [selectionSchema],
+    // Optional so reservations taken before contact details existed still load.
+    contact: { type: contactSchema, required: false },
     status: { type: String, enum: ["confirmed", "cancelled"], default: "confirmed" },
   },
   { timestamps: true },

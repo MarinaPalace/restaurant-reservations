@@ -7,14 +7,19 @@ import { BookingSteps } from "@/components/booking-steps";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Alert } from "@/components/ui/feedback";
+import { ContactFields } from "@/components/contact-fields";
 import { useBookingGuard, storeConfirmation } from "@/hooks/use-booking-session";
+import { describeContactProblem, normalizeContact } from "@/lib/contact";
 import { formatLongDate } from "@/lib/date";
+import type { ReservationContact } from "@/types/booking";
 
 export default function SummaryPage() {
   const router = useRouter();
   const { session, ready } = useBookingGuard(["room", "guests", "date", "selections"]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [contact, setContact] = useState<ReservationContact>({ method: "email", email: "", messagingApp: "phone" });
+  const [contactError, setContactError] = useState("");
 
   const guestCount = Math.max(session.guestCount, 1);
 
@@ -33,8 +38,15 @@ export default function SummaryPage() {
       return;
     }
 
+    const contactProblem = describeContactProblem(contact);
+    if (contactProblem) {
+      setContactError(contactProblem);
+      return;
+    }
+
     setSubmitting(true);
     setError("");
+    setContactError("");
 
     try {
       const response = await fetch("/api/reservations", {
@@ -45,6 +57,7 @@ export default function SummaryPage() {
           guestCount,
           date: session.date,
           selections: session.selections,
+          contact: normalizeContact(contact),
         }),
       });
 
@@ -115,6 +128,17 @@ export default function SummaryPage() {
               )}
             </section>
           ))}
+        </div>
+
+        <div className="mt-6">
+          <ContactFields
+            contact={contact}
+            onChange={(next) => {
+              setContact(next);
+              setContactError("");
+            }}
+            error={contactError}
+          />
         </div>
 
         {error ? (

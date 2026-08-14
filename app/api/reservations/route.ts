@@ -3,6 +3,7 @@ import { BookingError, createReservationEntry } from "@/lib/services/reservation
 import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
 import { BOOKING_MESSAGES, validateReservationRequest } from "@/lib/services/booking-rules";
 import { createReservationSchema } from "@/lib/validation/booking";
+import { describeContactProblem, normalizeContact } from "@/lib/contact";
 
 const GENERIC_ERROR = "Something went wrong while creating your reservation. Please try again.";
 
@@ -38,6 +39,11 @@ export async function POST(request: Request) {
       menu,
     });
 
+    const contactProblem = describeContactProblem(parsed.data.contact);
+    if (contactProblem) {
+      return NextResponse.json({ error: contactProblem, code: "INVALID_REQUEST" }, { status: 400 });
+    }
+
     if (!validation.ok) {
       const isAvailabilityProblem =
         validation.error === BOOKING_MESSAGES.unavailable ||
@@ -55,6 +61,7 @@ export async function POST(request: Request) {
       guestCount: parsed.data.guestCount,
       date: parsed.data.date,
       selections: validation.selections,
+      contact: normalizeContact(parsed.data.contact!),
     });
 
     return NextResponse.json({ reservation }, { status: 201 });

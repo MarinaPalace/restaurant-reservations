@@ -13,11 +13,21 @@ export const reservationSelectionSchema = z.object({
   optionName: z.string().min(1),
 });
 
+export const reservationContactSchema = z.object({
+  method: z.enum(["email", "phone"]),
+  email: z.string().max(320).optional(),
+  phone: z.string().max(32).optional(),
+  messagingApp: z.enum(["phone", "whatsapp", "viber", "telegram"]).optional(),
+});
+
 export const createReservationSchema = z.object({
   roomNumber: z.coerce.number().int().positive(),
   guestCount: z.number().int().min(1).max(MAX_GUESTS_PER_RESERVATION),
   date: dateKeySchema,
   selections: z.array(reservationSelectionSchema).min(1),
+  // Optional here so a missing contact is reported by describeContactProblem,
+  // which words it for a guest rather than echoing a schema error.
+  contact: reservationContactSchema.optional(),
 });
 
 export type CreateReservationInput = z.infer<typeof createReservationSchema>;

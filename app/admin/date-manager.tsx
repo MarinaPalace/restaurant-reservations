@@ -7,6 +7,7 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, Badge, EmptyState } from "@/components/ui/feedback";
 import { Field, Input } from "@/components/ui/field";
+import { ContactLink } from "@/components/contact-link";
 import { formatLongDate, isValidDateKey, startOfMonth, todayKey } from "@/lib/date";
 import { withRemainingSeats, type ReservationRecord, type RestaurantDateAvailability } from "@/types/booking";
 
@@ -333,6 +334,9 @@ export function AdminDateManager({
                       Guests
                     </th>
                     <th scope="col" className="px-4 py-3 font-semibold">
+                      Contact
+                    </th>
+                    <th scope="col" className="px-4 py-3 font-semibold">
                       Choices
                     </th>
                     <th scope="col" className="px-4 py-3 font-semibold">
@@ -363,6 +367,9 @@ export function AdminDateManager({
                         </th>
                         <td className="px-4 py-3 tabular-nums">{reservation.roomNumber}</td>
                         <td className="px-4 py-3 tabular-nums">{reservation.guestCount}</td>
+                        <td className="px-4 py-3">
+                          <ContactLink contact={reservation.contact} />
+                        </td>
                         <td className="px-4 py-3">
                           {reservation.selections.length === 0 ? (
                             <span className="text-ink-muted">No menu selections</span>

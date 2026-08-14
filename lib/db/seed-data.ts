@@ -41,6 +41,7 @@ export const DEFAULT_MENU: MenuCourse[] = [
         allergens: ["Fish", "Sesame"],
         active: true,
         imageUrl: "",
+        ingredients: "Salmon, dill, pickled shallot, citrus, rye crisp",
         translations: {
           fr: { name: "Saumon mariné aux agrumes", description: "Servi avec aneth et échalote confite." },
         },
@@ -85,6 +86,8 @@ export const DEFAULT_MENU: MenuCourse[] = [
         allergens: [],
         active: true,
         imageUrl: "",
+        ingredients: "Carrot, ginger, coriander, coconut milk",
+        vegan: true,
         translations: {},
       },
     ],

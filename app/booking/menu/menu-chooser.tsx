@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DishImage } from "@/components/dish-image";
+import { VeganBadge } from "@/components/vegan-badge";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Alert } from "@/components/ui/feedback";
@@ -192,7 +193,7 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
                           aria-checked={isSelected}
                           onClick={() => chooseOption(activeGuestIndex, course, option)}
                           className={cx(
-                            "flex w-full items-start gap-3 rounded-control border p-4 text-left transition-colors",
+                            "relative flex w-full items-start gap-3 rounded-control border p-4 text-left transition-colors",
                             isSelected
                               ? "border-primary bg-primary text-primary-fg"
                               : "border-line-strong bg-surface text-ink hover:border-accent",
@@ -200,7 +201,7 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
                         >
                           <DishImage src={option.imageUrl} alt="" width={80} height={80} className="size-20 shrink-0" />
                           <span className="min-w-0 flex-1">
-                            <span className="block text-base font-semibold">{option.name}</span>
+                            <span className="block pr-16 text-base font-semibold">{option.name}</span>
                             {option.description ? (
                               <span
                                 className={cx(
@@ -211,10 +212,21 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
                                 {option.description}
                               </span>
                             ) : null}
+                            {/* Only shown when the kitchen has filled it in. */}
+                            {option.ingredients ? (
+                              <span
+                                className={cx(
+                                  "mt-2 block text-xs text-pretty",
+                                  isSelected ? "text-primary-fg/80" : "text-ink-muted",
+                                )}
+                              >
+                                <span className="font-medium">Ingredients:</span> {option.ingredients}
+                              </span>
+                            ) : null}
                             {option.allergens.length ? (
                               <span
                                 className={cx(
-                                  "mt-2 block text-xs",
+                                  "mt-1 block text-xs",
                                   isSelected ? "text-primary-fg/80" : "text-ink-subtle",
                                 )}
                               >
@@ -222,6 +234,14 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
                               </span>
                             ) : null}
                           </span>
+
+                          {/* Top-right of the option, clear of the text. */}
+                          {option.vegan ? (
+                            <span className="absolute right-3 top-3">
+                              <VeganBadge />
+                            </span>
+                          ) : null}
+
                           <span aria-hidden="true" className="text-lg">
                             {isSelected ? "✓" : ""}
                           </span>

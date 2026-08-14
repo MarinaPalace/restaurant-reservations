@@ -64,6 +64,8 @@ function toMenuOption(option: MongoDocument): MenuOption {
     allergens: Array.isArray(option.allergens) ? option.allergens.map(String) : [],
     active: Boolean(option.active),
     imageUrl: typeof option.imageUrl === "string" ? option.imageUrl : "",
+    ingredients: typeof option.ingredients === "string" ? option.ingredients : "",
+    vegan: Boolean(option.vegan),
     translations: (option.translations as MenuCourse["translations"]) ?? {},
   };
 }
@@ -194,6 +196,8 @@ export async function saveMenuCatalog(courses: MenuCourse[]): Promise<MenuCourse
         allergens: option.allergens ?? [],
         active: option.active,
         imageUrl: option.imageUrl ?? "",
+        ingredients: option.ingredients ?? "",
+        vegan: option.vegan ?? false,
         translations: option.translations ?? {},
       };
 

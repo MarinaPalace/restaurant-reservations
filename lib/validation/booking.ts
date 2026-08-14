@@ -86,6 +86,7 @@ export const tableAssignmentSchema = z.object({
 const menuTranslationSchema = z.object({
   name: z.string().optional(),
   description: z.string().optional(),
+  ingredients: z.string().optional(),
 });
 
 export const menuCatalogSchema = z.object({
@@ -109,6 +110,9 @@ export const menuCatalogSchema = z.object({
             allergens: z.array(z.string()).default([]),
             active: z.boolean().default(true),
             imageUrl: z.string().default(""),
+            // Optional so a menu saved without them keeps whatever it had.
+            ingredients: z.string().max(500).optional(),
+            vegan: z.boolean().optional(),
             translations: z.record(z.string(), menuTranslationSchema).optional(),
           }),
         ),

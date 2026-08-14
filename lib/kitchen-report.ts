@@ -271,6 +271,60 @@ export function groupRoomRowsByTable(rows: RoomRow[], columns: OptionColumn[]): 
 }
 
 /**
+ * One row per *table* rather than per room.
+ *
+ * Rooms dining together are served as a single table, so their choices are
+ * combined into one line and the Room column lists everyone on it. Reading two
+ * separate lines and adding them up in your head was the thing that made a
+ * shared table hard to see.
+ */
+export type CombinedTableRow = {
+  key: string;
+  table: string;
+  /** Every room on this table, in reading order. */
+  rooms: string[];
+  guests: number;
+  counts: Record<string, number>;
+  comments: { room: string; note: string }[];
+  /** The bookings behind the row, for the per-reservation actions. */
+  members: { reservationNumber: string; room: string; cancelled: boolean }[];
+  isShared: boolean;
+  /** True only when every booking on the table is cancelled. */
+  cancelled: boolean;
+};
+
+export function buildCombinedTableRows(groups: TableGroup[], columns: OptionColumn[]): CombinedTableRow[] {
+  return groups.map((group) => {
+    const live = group.rows.filter((row) => !row.cancelled);
+    // A table with a cancellation still shows the remaining rooms' food.
+    const counted = live.length > 0 ? live : [];
+    const counts: Record<string, number> = {};
+
+    for (const column of columns) {
+      counts[column.id] = counted.reduce((sum, row) => sum + (row.counts[column.id] ?? 0), 0);
+    }
+
+    return {
+      key: group.key,
+      table: group.table,
+      rooms: group.rows.map((row) => row.room),
+      guests: group.guests,
+      counts,
+      comments: group.rows
+        .filter((row) => row.comment)
+        .map((row) => ({ room: row.room, note: row.comment })),
+      members: group.rows.map((row) => ({
+        reservationNumber: row.reservationNumber,
+        room: row.room,
+        cancelled: row.cancelled,
+      })),
+      isShared: group.isShared,
+      cancelled: group.rows.every((row) => row.cancelled),
+    };
+  });
+}
+
+/**
  * The cut-off slip for the kitchen: every dish with something to make, and how
  * many. No tables, no rooms — just the prep list.
  */
@@ -329,19 +383,21 @@ export function buildGuestCsv(columns: CourseColumn[], rows: GuestRow[]) {
   ]);
 }
 
-export function buildRoomCsv(columns: OptionColumn[], rows: RoomRow[], totals: Record<string, number>) {
-  // Two header lines so each option column sits under its course, the way the
-  // sheet reads on screen.
+export function buildTableCsv(
+  columns: OptionColumn[],
+  rows: CombinedTableRow[],
+  totals: Record<string, number>,
+) {
   const courseHeader = ["", "", "", ...columns.map((column) => column.courseName), "", ""];
-  const optionHeader = ["Table", "Room", "Guests", ...columns.map((column) => column.label), "Comment", "Status"];
+  const optionHeader = ["Table", "Rooms", "Guests", ...columns.map((column) => column.label), "Comment", "Status"];
 
   const body = rows.map((row) => [
     row.table,
-    row.room,
+    row.rooms.join(" + "),
     String(row.guests),
     // Blank rather than 0, so the counts that matter stand out.
     ...columns.map((column) => (row.counts[column.id] ? String(row.counts[column.id]) : "")),
-    row.comment,
+    row.comments.map((entry) => `${entry.room}: ${entry.note}`).join(" · "),
     row.cancelled ? "CANCELLED" : "confirmed",
   ]);
 

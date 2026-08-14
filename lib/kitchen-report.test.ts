@@ -8,7 +8,8 @@ import {
   buildGuestRows,
   buildOptionColumns,
   buildOptionTotals,
-  buildRoomCsv,
+  buildCombinedTableRows,
+  buildTableCsv,
   buildRoomRows,
   countDeclined,
   countPlates,
@@ -16,6 +17,14 @@ import {
 } from "@/lib/kitchen-report";
 import { NONE_OPTION_ID, NONE_OPTION_NAME } from "@/lib/menu-selection";
 import type { MenuCourse, ReservationRecord } from "@/types/booking";
+
+/** Excel needs this to read the file as UTF-8. */
+const BOM = "﻿";
+
+/** Splits on CRLF, which is what the CSV writer emits. */
+function splitCsvLines(csv: string) {
+  return csv.trimEnd().split(String.fromCharCode(13, 10));
+}
 
 function course(id: string, name: string, order: number, options: [string, string][]): MenuCourse {
   return {
@@ -233,29 +242,33 @@ describe("csv export", () => {
   it("writes the per-guest sheet one line per diner", () => {
     const columns = buildCourseColumns(reservations, menu);
     const csv = buildGuestCsv(columns, buildGuestRows(reservations, columns));
-    const lines = csv.trimEnd().split("\r\n");
+    const lines = splitCsvLines(csv);
 
-    expect(lines[0]).toBe("﻿Table,Room,Guest,Starter,Main,Comment,Status");
+    expect(lines[0]).toBe(`${BOM}Table,Room,Guest,Starter,Main,Comment,Status`);
     expect(lines).toHaveLength(5); // header + 4 diners
   });
 
-  it("writes the per-room sheet as counts under two header rows", () => {
+  it("writes the per-table sheet as counts under two header rows", () => {
     const columns = buildOptionColumns(reservations, menu);
-    const rows = buildRoomRows(reservations, columns);
-    const csv = buildRoomCsv(columns, rows, buildOptionTotals(rows, columns));
-    const lines = csv.trimEnd().split("\r\n");
+    const rows = buildCombinedTableRows(
+      groupRoomRowsByTable(buildRoomRows(reservations, columns), columns),
+      columns,
+    );
+    const csv = buildTableCsv(columns, rows, buildOptionTotals(buildRoomRows(reservations, columns), columns));
+    const lines = splitCsvLines(csv);
 
-    expect(lines[0]).toBe("﻿,,,Starter,Starter,Main,Main,,");
-    expect(lines[1]).toBe("Table,Room,Guests,Salmon,Velouté,Duck,Sea bream,Comment,Status");
-    // Room 402: one Salmon, one Velouté, two Duck, no Sea bream.
-    expect(lines.find((line) => line.startsWith("4,402"))).toBe("4,402,2,1,1,2,,No nuts,confirmed");
+    expect(lines[0]).toBe(`${BOM},,,Starter,Starter,Main,Main,,`);
+    expect(lines[1]).toBe("Table,Rooms,Guests,Salmon,Velouté,Duck,Sea bream,Comment,Status");
+    // Rooms 118 and 402 share table 4, so they are one line with combined counts.
+    expect(lines[2]).toBe("4,118 + 402,3,2,1,2,1,402: No nuts,confirmed");
   });
 
   it("finishes with the total the kitchen prepares", () => {
     const columns = buildOptionColumns(reservations, menu);
-    const rows = buildRoomRows(reservations, columns);
-    const csv = buildRoomCsv(columns, rows, buildOptionTotals(rows, columns));
-    const lines = csv.trimEnd().split("\r\n");
+    const roomRows = buildRoomRows(reservations, columns);
+    const rows = buildCombinedTableRows(groupRoomRowsByTable(roomRows, columns), columns);
+    const csv = buildTableCsv(columns, rows, buildOptionTotals(roomRows, columns));
+    const lines = splitCsvLines(csv);
 
     expect(lines[lines.length - 1]).toBe("TOTAL,,4,2,1,3,1,,");
   });
@@ -365,5 +378,56 @@ describe("kitchen prep slip", () => {
     expect(buildPrepList(onlyColumns, onlyTotals)).toEqual([
       { courseName: "Starter", optionName: "Salmon", quantity: 1 },
     ]);
+  });
+});
+
+describe("rooms combined onto one table", () => {
+  const reservations = [roomWithTwo, roomSharingTable, roomDecliningACourse];
+  const columns = buildOptionColumns(reservations, menu);
+  const rows = buildCombinedTableRows(
+    groupRoomRowsByTable(buildRoomRows(reservations, columns), columns),
+    columns,
+  );
+
+  it("produces one row per table, not per room", () => {
+    expect(rows).toHaveLength(2);
+  });
+
+  it("lists every room sharing the table", () => {
+    expect(rows[0].rooms).toEqual(["118", "402"]);
+    expect(rows[0].isShared).toBe(true);
+    expect(rows[1].rooms).toEqual(["210"]);
+    expect(rows[1].isShared).toBe(false);
+  });
+
+  /** The whole point: one number per dish for the table. */
+  it("combines the menu choices across the table", () => {
+    expect(rows[0].counts.o1).toBe(2);
+    expect(rows[0].counts.o2).toBe(1);
+    expect(rows[0].counts.o3).toBe(2);
+    expect(rows[0].counts.o4).toBe(1);
+    expect(rows[0].guests).toBe(3);
+  });
+
+  it("keeps each room's comment attributed to it", () => {
+    expect(rows[0].comments).toEqual([{ room: "402", note: "No nuts" }]);
+  });
+
+  it("keeps every booking reachable for cancelling", () => {
+    expect(rows[0].members.map((member) => member.room)).toEqual(["118", "402"]);
+  });
+
+  it("leaves a cancelled room out of the combined counts", () => {
+    const withCancelled = [{ ...roomWithTwo, status: "cancelled" as const }, roomSharingTable];
+    const cancelledRows = buildCombinedTableRows(
+      groupRoomRowsByTable(buildRoomRows(withCancelled, columns), columns),
+      columns,
+    );
+
+    // Only 118's single Salmon and Sea bream remain.
+    expect(cancelledRows[0].counts.o3).toBe(0);
+    expect(cancelledRows[0].counts.o4).toBe(1);
+    expect(cancelledRows[0].guests).toBe(1);
+    expect(cancelledRows[0].cancelled).toBe(false);
   });
 });

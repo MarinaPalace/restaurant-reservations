@@ -50,6 +50,13 @@ its reservation number to the others, who tick "we are dining with another room"
 Joining is refused if the number is unknown, for another evening, or cancelled. Staff assign the
 actual table number in the dashboard, and it applies to everyone sharing that table.
 
+**Dish details.** An option can carry an ingredients line and a vegan flag, both optional. The
+ingredients line is translatable and is hidden entirely from guests when blank; a vegan dish shows
+a leaf badge in its top-right corner. Allergens are chosen from the fourteen declarable EU
+allergens, and anything already on the menu is offered alongside them, so switching to the picker
+cannot drop a value typed by hand. All three fields are additive — a menu saved before they
+existed reads and re-saves unchanged.
+
 **Declining a course.** A guest can pick "No thank you" on any course. That is stored as a real
 selection with a reserved option id, so the kitchen can tell "does not want a starter" apart from
 "has not chosen yet". Declined courses never appear in the prep counts.
@@ -59,11 +66,12 @@ UTF-8 BOM so accented and Cyrillic dish names survive the open.
 
 - *Per guest* — the plating list: Table, Room, Guest, a column per course naming the dish, and a
   Comment column carrying allergies and requests.
-- *Per table* (the default) — the prep sheet: Table, Room, Guests, then a column for **every
-  option**, grouped under its course, with counts in the cells. Rooms dining together are grouped
-  with a **"Table N together"** subtotal row summing each dish across the table, and a **Total to
-  prepare** row closes the sheet. Cancelled bookings are excluded from both. Cells showing zero are
-  left blank so the counts that matter stand out.
+- *Per table* (the default) — the prep sheet: one row per **table**, not per room. Rooms dining
+  together appear as a single line with every room listed in the Rooms column ("HA3 + L10") and
+  their choices already added together, so nothing has to be summed by eye. Then a column for
+  **every option**, grouped under its course, and a **Total to prepare** row closing the sheet.
+  Cancelled bookings are excluded from the counts. Cells showing zero are left blank so the counts
+  that matter stand out.
 
 **Printing.** Print gives you only the sheet — no calendar, no navigation — followed by a dashed
 cut line and a compact slip listing every dish with its quantity, total plates, and any allergy

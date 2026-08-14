@@ -8,6 +8,9 @@ const menuOptionSchema = new Schema(
     allergens: [{ type: String }],
     active: { type: Boolean, required: true, default: true },
     imageUrl: { type: String, default: "" },
+    // Added later; documents without them read as undefined/false.
+    ingredients: { type: String },
+    vegan: { type: Boolean, default: false },
     translations: { type: Schema.Types.Mixed, default: {} },
   },
   { timestamps: true },

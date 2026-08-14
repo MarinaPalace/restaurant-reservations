@@ -7,15 +7,18 @@ import { Button, ButtonLink } from "@/components/ui/button";
 import { Alert } from "@/components/ui/feedback";
 import { Field, Input, Textarea } from "@/components/ui/field";
 import { LANGUAGE_NAMES, isLanguageCode, listLanguages } from "@/lib/languages";
+import { hasAllergen, listAllergenChoices, toggleAllergen } from "@/lib/allergens";
+import { VeganBadge } from "@/components/vegan-badge";
 import { cx } from "@/components/ui/utils";
 import type { MenuCourse, MenuOption, MenuTranslation } from "@/types/booking";
 
 const DEFAULT_LANGUAGE = "en";
 
-/** Reads a name/description in the given language, falling back to English. */
+/** Reads a translatable field in the given language, falling back to English. */
 function readTranslated(item: MenuCourse | MenuOption, language: string, field: keyof MenuTranslation) {
   if (language === DEFAULT_LANGUAGE) {
-    return item[field] ?? "";
+    // Only options carry ingredients, so the lookup is deliberately loose.
+    return (item as Record<string, unknown>)[field]?.toString() ?? "";
   }
   return item.translations?.[language]?.[field] ?? "";
 }
@@ -60,6 +63,11 @@ export function MenuEditor({ initialCourses }: { initialCourses: MenuCourse[] })
   );
   const activeLanguage = languages.includes(language) ? language : DEFAULT_LANGUAGE;
   const isDefaultLanguage = activeLanguage === DEFAULT_LANGUAGE;
+
+  const allergenChoices = useMemo(
+    () => listAllergenChoices(courses.flatMap((course) => course.options.flatMap((option) => option.allergens ?? []))),
+    [courses],
+  );
 
   const updateCourse = (courseId: string, update: (course: MenuCourse) => MenuCourse) => {
     setCourses((current) => current.map((course) => (course.id === courseId ? update(course) : course)));
@@ -128,6 +136,8 @@ export function MenuEditor({ initialCourses }: { initialCourses: MenuCourse[] })
           allergens: [],
           active: true,
           imageUrl: "",
+          ingredients: "",
+          vegan: false,
           translations: { en: { name: "New option", description: "" } },
         },
       ],
@@ -448,28 +458,85 @@ export function MenuEditor({ initialCourses }: { initialCourses: MenuCourse[] })
                             />
                           )}
                         </Field>
+
+                        <div className="md:col-span-2">
+                          <Field
+                            label={`Ingredients (${activeLanguage.toUpperCase()})`}
+                            hint="Optional. Left blank, guests never see an ingredients line."
+                          >
+                            {(fieldProps) => (
+                              <Textarea
+                                {...fieldProps}
+                                maxLength={500}
+                                placeholder="Salmon, dill, pickled shallot, citrus"
+                                value={readTranslated(option, activeLanguage, "ingredients")}
+                                onChange={(event) =>
+                                  updateOption(course.id, option.id, (current) =>
+                                    withTranslation(current, activeLanguage, "ingredients", event.target.value),
+                                  )
+                                }
+                              />
+                            )}
+                          </Field>
+                        </div>
                       </div>
 
                       {isDefaultLanguage ? (
                         <>
                           <div className="mt-4">
-                            <Field label="Allergens" hint="Comma separated">
-                              {(fieldProps) => (
-                                <Input
-                                  {...fieldProps}
-                                  value={option.allergens.join(", ")}
-                                  onChange={(event) =>
-                                    updateOption(course.id, option.id, (current) => ({
-                                      ...current,
-                                      allergens: event.target.value
-                                        .split(",")
-                                        .map((entry) => entry.trim())
-                                        .filter(Boolean),
-                                    }))
-                                  }
-                                />
-                              )}
-                            </Field>
+                            <fieldset>
+                              <legend className="text-sm font-medium text-ink">Allergens</legend>
+                              <p className="mt-1 text-xs text-ink-muted">
+                                The fourteen declarable allergens, plus anything already on this menu.
+                              </p>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {allergenChoices.map((allergen) => {
+                                  const selected = hasAllergen(option.allergens ?? [], allergen);
+
+                                  return (
+                                    <button
+                                      key={allergen}
+                                      type="button"
+                                      role="checkbox"
+                                      aria-checked={selected}
+                                      onClick={() =>
+                                        updateOption(course.id, option.id, (current) => ({
+                                          ...current,
+                                          allergens: toggleAllergen(current.allergens ?? [], allergen),
+                                        }))
+                                      }
+                                      className={cx(
+                                        "min-h-9 rounded-full border px-3 text-xs font-medium transition-colors",
+                                        selected
+                                          ? "border-danger/40 bg-danger-soft text-danger"
+                                          : "border-line-strong bg-surface text-ink-muted hover:border-accent",
+                                      )}
+                                    >
+                                      {selected ? "✓ " : ""}
+                                      {allergen}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </fieldset>
+                          </div>
+
+                          <div className="mt-4">
+                            <label className="flex min-h-11 w-fit items-center gap-3 rounded-control border border-line bg-surface px-3 text-sm font-medium text-ink">
+                              <input
+                                type="checkbox"
+                                className="size-4 accent-[var(--primary)]"
+                                checked={Boolean(option.vegan)}
+                                onChange={(event) =>
+                                  updateOption(course.id, option.id, (current) => ({
+                                    ...current,
+                                    vegan: event.target.checked,
+                                  }))
+                                }
+                              />
+                              This dish is vegan
+                              {option.vegan ? <VeganBadge compact /> : null}
+                            </label>
                           </div>
 
                           {/* Guests see this picture beside the dish, so it

@@ -556,3 +556,125 @@ describe("staff edits", () => {
     expect(await reservations.updateReservationDetails("ALC-NOPE00", { guestCount: 2 })).toBeNull();
   });
 });
+
+/**
+ * The menu already in production predates ingredients, vegan and the allergen
+ * picker. Loading and re-saving it must not quietly drop anything.
+ */
+describe("existing menus survive the new fields", () => {
+  async function insertLegacyMenu() {
+    const { MenuCourseModel } = await import("@/lib/models/menu-course");
+    const { MenuOptionModel } = await import("@/lib/models/menu-option");
+
+    // Written straight to the collections, exactly as an older build left it:
+    // no ingredients, no vegan flag.
+    const course = await MenuCourseModel.create({
+      order: 1,
+      name: "Starter",
+      description: "A bright opening course",
+      required: true,
+      active: true,
+      imageUrl: "https://example.com/starter.jpg",
+      translations: { bg: { name: "Предястие", description: "Леко и свежо" } },
+    });
+
+    await MenuOptionModel.create({
+      courseId: String(course._id),
+      name: "Citrus Cured Salmon",
+      description: "Served with dill.",
+      allergens: ["Fish", "Sesame"],
+      active: true,
+      imageUrl: "https://example.com/salmon.jpg",
+      translations: { bg: { name: "Сьомга", description: "Със копър" } },
+    });
+
+    return String(course._id);
+  }
+
+  it("reads a menu saved before the new fields existed", async () => {
+    const { restaurant } = await loadServices();
+    await insertLegacyMenu();
+
+    const [course] = await restaurant.getFullMenuCatalog();
+
+    expect(course.name).toBe("Starter");
+    expect(course.options[0].allergens).toEqual(["Fish", "Sesame"]);
+    // Absent fields read as empty rather than blowing up.
+    expect(course.options[0].ingredients).toBe("");
+    expect(course.options[0].vegan).toBe(false);
+  });
+
+  it("keeps every existing field through a save that changes nothing", async () => {
+    const { restaurant } = await loadServices();
+    await insertLegacyMenu();
+
+    const before = await restaurant.getFullMenuCatalog();
+    await restaurant.saveMenuCatalog(before);
+    const after = await restaurant.getFullMenuCatalog();
+
+    expect(after).toEqual(before);
+    expect(after[0].options[0].allergens).toEqual(["Fish", "Sesame"]);
+    expect(after[0].options[0].imageUrl).toBe("https://example.com/salmon.jpg");
+    expect(after[0].translations?.bg?.name).toBe("Предястие");
+    expect(after[0].options[0].translations?.bg?.name).toBe("Сьомга");
+  });
+
+  it("keeps ids stable, so existing reservations still point at the dish", async () => {
+    const { restaurant } = await loadServices();
+    await insertLegacyMenu();
+
+    const before = await restaurant.getFullMenuCatalog();
+    await restaurant.saveMenuCatalog(before);
+    const after = await restaurant.getFullMenuCatalog();
+
+    expect(after[0].id).toBe(before[0].id);
+    expect(after[0].options[0].id).toBe(before[0].options[0].id);
+  });
+
+  it("stores the new fields once they are filled in", async () => {
+    const { restaurant } = await loadServices();
+    await insertLegacyMenu();
+
+    const before = await restaurant.getFullMenuCatalog();
+    await restaurant.saveMenuCatalog([
+      {
+        ...before[0],
+        options: before[0].options.map((option) => ({
+          ...option,
+          ingredients: "Salmon, dill, citrus",
+          vegan: false,
+        })),
+      },
+    ]);
+
+    const [course] = await restaurant.getFullMenuCatalog();
+    expect(course.options[0].ingredients).toBe("Salmon, dill, citrus");
+    expect(course.options[0].allergens).toEqual(["Fish", "Sesame"]);
+  });
+
+  it("carries a translated ingredients line to the guest menu", async () => {
+    const { restaurant } = await loadServices();
+    await insertLegacyMenu();
+
+    const before = await restaurant.getFullMenuCatalog();
+    await restaurant.saveMenuCatalog([
+      {
+        ...before[0],
+        options: before[0].options.map((option) => ({
+          ...option,
+          ingredients: "Salmon, dill, citrus",
+          vegan: true,
+          translations: { ...option.translations, bg: { ...option.translations?.bg, ingredients: "Сьомга, копър" } },
+        })),
+      },
+    ]);
+
+    const bulgarian = await restaurant.getMenuCatalog("bg");
+    expect(bulgarian[0].options[0].ingredients).toBe("Сьомга, копър");
+    expect(bulgarian[0].options[0].vegan).toBe(true);
+
+    // English falls back to the master copy.
+    const english = await restaurant.getMenuCatalog();
+    expect(english[0].options[0].ingredients).toBe("Salmon, dill, citrus");
+  });
+});

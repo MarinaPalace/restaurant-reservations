@@ -1,6 +1,7 @@
 export type MenuTranslation = {
   name?: string;
   description?: string;
+  ingredients?: string;
 };
 
 export type MenuOption = {
@@ -11,6 +12,13 @@ export type MenuOption = {
   allergens: string[];
   active: boolean;
   imageUrl?: string;
+  /**
+   * What is in the dish. Optional, and hidden from guests when blank, so
+   * options that predate this field are unaffected.
+   */
+  ingredients?: string;
+  /** Shown to guests as a badge. Absent on older options, which reads false. */
+  vegan?: boolean;
   translations?: Record<string, MenuTranslation>;
 };
 

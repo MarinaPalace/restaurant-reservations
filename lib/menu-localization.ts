@@ -11,7 +11,8 @@ import type { MenuCourse } from "@/types/booking";
 type Translatable = {
   name?: string;
   description?: string;
-  translations?: Record<string, { name?: string; description?: string }>;
+  ingredients?: string;
+  translations?: Record<string, { name?: string; description?: string; ingredients?: string }>;
 };
 
 /** Falls back to the English copy whenever a translation is missing or blank. */
@@ -22,6 +23,7 @@ export function getLocalizedText<T extends Translatable>(item: T, language: stri
   return {
     name: translation.name || item.name || "",
     description: translation.description || item.description || "",
+    ingredients: translation.ingredients || item.ingredients || "",
   };
 }
 
@@ -35,7 +37,12 @@ export function localizeMenuCatalog<T extends MenuCourse>(menu: T[], language: s
       description: localizedCourse.description,
       options: course.options.map((option) => {
         const localizedOption = getLocalizedText(option, language);
-        return { ...option, name: localizedOption.name, description: localizedOption.description };
+        return {
+          ...option,
+          name: localizedOption.name,
+          description: localizedOption.description,
+          ingredients: localizedOption.ingredients,
+        };
       }),
     };
   });

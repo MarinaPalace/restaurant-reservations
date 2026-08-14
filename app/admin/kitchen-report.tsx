@@ -12,10 +12,11 @@ import {
   buildGuestRows,
   buildKitchenFileName,
   buildOptionColumns,
+  buildCombinedTableRows,
   buildOptionTotals,
   buildPrepList,
-  buildRoomCsv,
   buildRoomRows,
+  buildTableCsv,
   countDeclined,
   countPlates,
   groupOptionColumns,
@@ -66,6 +67,10 @@ export function KitchenReport({
   const guestRows = useMemo(() => buildGuestRows(reservations, courseColumns), [reservations, courseColumns]);
   const roomRows = useMemo(() => buildRoomRows(reservations, optionColumns), [reservations, optionColumns]);
   const tableGroups = useMemo(() => groupRoomRowsByTable(roomRows, optionColumns), [roomRows, optionColumns]);
+  const tableRows = useMemo(
+    () => buildCombinedTableRows(tableGroups, optionColumns),
+    [tableGroups, optionColumns],
+  );
   const totals = useMemo(() => buildOptionTotals(roomRows, optionColumns), [roomRows, optionColumns]);
   const prepList = useMemo(() => buildPrepList(optionColumns, totals), [optionColumns, totals]);
 
@@ -94,11 +99,11 @@ export function KitchenReport({
     return first;
   }, [guestRows]);
 
-  const hasRows = (layout === "guest" ? guestRows : roomRows).length > 0;
+  const hasRows = (layout === "guest" ? guestRows : tableRows).length > 0;
 
   const downloadCsv = () => {
     const csv =
-      layout === "guest" ? buildGuestCsv(courseColumns, guestRows) : buildRoomCsv(optionColumns, roomRows, totals);
+      layout === "guest" ? buildGuestCsv(courseColumns, guestRows) : buildTableCsv(optionColumns, tableRows, totals);
 
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -294,7 +299,7 @@ export function KitchenReport({
                     groups rather than as one long run of dish names. */}
                 <tr>
                   <th scope="col" rowSpan={2} className="whitespace-nowrap border-r border-line px-3 py-2 align-bottom font-semibold">Table</th>
-                  <th scope="col" rowSpan={2} className="whitespace-nowrap border-r border-line px-3 py-2 align-bottom font-semibold">Room</th>
+                  <th scope="col" rowSpan={2} className="whitespace-nowrap border-r border-line px-3 py-2 align-bottom font-semibold">Rooms</th>
                   <th scope="col" rowSpan={2} className="whitespace-nowrap border-r border-line px-3 py-2 align-bottom font-semibold">Guests</th>
                   {optionGroups.map((group) => (
                     <th
@@ -327,62 +332,65 @@ export function KitchenReport({
                 </tr>
               </thead>
 
-              {tableGroups.map((group) => (
-                <tbody key={group.key} className="border-t-2 border-line-strong">
-                  {group.rows.map((row) => (
-                    <tr key={row.key} className={cx("border-t border-line", row.cancelled && "opacity-50 line-through")}>
-                      <td className="border-r border-line px-3 py-2">{tableCell(row.reservationNumber, row.table)}</td>
-                      <td className="whitespace-nowrap border-r border-line px-3 py-2 font-medium text-ink">
-                        {row.room}
+              <tbody>
+                {tableRows.map((row) => (
+                  <tr
+                    key={row.key}
+                    className={cx(
+                      "border-t border-line",
+                      // A shared table is one service, so it reads as one block.
+                      row.isShared && "bg-accent-soft/40",
+                      row.cancelled && "opacity-50 line-through",
+                    )}
+                  >
+                    <td className="border-r border-line px-3 py-2">
+                      {tableCell(row.members[0].reservationNumber, row.table)}
+                    </td>
+                    <td className="whitespace-nowrap border-r border-line px-3 py-2 font-medium text-ink">
+                      {row.rooms.join(" + ")}
+                      {row.isShared ? (
+                        <span className="ml-2 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-ink">
+                          {row.rooms.length} rooms together
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="border-r border-line px-3 py-2 tabular-nums">{row.guests}</td>
+                    {optionColumns.map((column, index) => (
+                      <td
+                        key={column.id}
+                        className={cx(
+                          "px-2 py-2 text-center tabular-nums",
+                          optionColumns[index + 1]?.courseId !== column.courseId && "border-r border-line",
+                          row.counts[column.id] ? "font-semibold text-ink" : "text-ink-subtle",
+                        )}
+                      >
+                        {/* Blank rather than 0, so the counts that matter stand out. */}
+                        {row.counts[column.id] || ""}
                       </td>
-                      <td className="border-r border-line px-3 py-2 tabular-nums">{row.guests}</td>
-                      {optionColumns.map((column, index) => (
-                        <td
-                          key={column.id}
-                          className={cx(
-                            "px-2 py-2 text-center tabular-nums",
-                            optionColumns[index + 1]?.courseId !== column.courseId && "border-r border-line",
-                            row.counts[column.id] ? "font-semibold text-ink" : "text-ink-subtle",
-                          )}
-                        >
-                          {/* Blank rather than 0, so the counts that matter stand out. */}
-                          {row.counts[column.id] || ""}
-                        </td>
+                    ))}
+                    <td className="px-3 py-2">
+                      {row.comments.map((entry) => (
+                        <span key={entry.room} className="block font-medium text-danger">
+                          {row.isShared ? `${entry.room}: ` : ""}
+                          {entry.note}
+                        </span>
                       ))}
-                      <td className="px-3 py-2">
-                        {row.comment ? <span className="font-medium text-danger">{row.comment}</span> : null}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2" data-print="hide">
-                        {actionsCell(row.reservationNumber, row.cancelled)}
-                      </td>
-                    </tr>
-                  ))}
-
-                  {/* Rooms dining together are plated as one table, so the
-                      waiter needs the combined count, not each room's. */}
-                  {group.isShared ? (
-                    <tr className="border-t border-line bg-accent-soft font-semibold text-accent-ink">
-                      <th scope="row" colSpan={2} className="border-r border-line px-3 py-2 text-left">
-                        Table {group.table || "—"} together
-                      </th>
-                      <td className="border-r border-line px-3 py-2 tabular-nums">{group.guests}</td>
-                      {optionColumns.map((column, index) => (
-                        <td
-                          key={column.id}
-                          className={cx(
-                            "px-2 py-2 text-center tabular-nums",
-                            optionColumns[index + 1]?.courseId !== column.courseId && "border-r border-line",
-                          )}
-                        >
-                          {group.subtotals[column.id] || ""}
-                        </td>
-                      ))}
-                      <td className="px-3 py-2" />
-                      <td className="px-3 py-2" data-print="hide" />
-                    </tr>
-                  ) : null}
-                </tbody>
-              ))}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2" data-print="hide">
+                      <div className="flex flex-col gap-1">
+                        {row.members.map((member) => (
+                          <div key={member.reservationNumber} className="flex items-center gap-2">
+                            {row.isShared ? (
+                              <span className="text-xs font-medium text-ink-muted">{member.room}</span>
+                            ) : null}
+                            {actionsCell(member.reservationNumber, member.cancelled)}
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
 
               <tfoot className="border-t-2 border-line-strong bg-surface-sunken font-semibold text-ink">
                 <tr>
@@ -390,7 +398,7 @@ export function KitchenReport({
                     Total to prepare
                   </th>
                   <td className="border-r border-line px-3 py-3 tabular-nums">
-                    {roomRows.filter((row) => !row.cancelled).reduce((sum, row) => sum + row.guests, 0)}
+                    {tableRows.filter((row) => !row.cancelled).reduce((sum, row) => sum + row.guests, 0)}
                   </td>
                   {optionColumns.map((column, index) => (
                     <td

@@ -28,14 +28,26 @@ export const createReservationSchema = z.object({
   // Optional here so a missing contact is reported by describeContactProblem,
   // which words it for a guest rather than echoing a schema error.
   contact: reservationContactSchema.optional(),
+  notes: z.string().trim().max(500).optional(),
+  /** Reservation number of the party this booking wants to share a table with. */
+  joinReservationNumber: z.string().trim().max(40).optional(),
 });
 
 export type CreateReservationInput = z.infer<typeof createReservationSchema>;
+
+export const timeSchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "Please enter a time as HH:MM.");
 
 export const restaurantDateSchema = z.object({
   date: dateKeySchema,
   isOpen: z.boolean(),
   capacity: z.number().int().min(0).max(10_000),
+  serviceTime: timeSchema.optional(),
+});
+
+export const tableAssignmentSchema = z.object({
+  tableNumber: z.string().trim().max(20),
 });
 
 const menuTranslationSchema = z.object({

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { BookingError, createReservationEntry } from "@/lib/services/reservations";
+import { BookingError, TableJoinError, createReservationEntry } from "@/lib/services/reservations";
 import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
 import { BOOKING_MESSAGES, validateReservationRequest } from "@/lib/services/booking-rules";
 import { createReservationSchema } from "@/lib/validation/booking";
@@ -62,10 +62,17 @@ export async function POST(request: Request) {
       date: parsed.data.date,
       selections: validation.selections,
       contact: normalizeContact(parsed.data.contact!),
+      notes: parsed.data.notes,
+      joinReservationNumber: parsed.data.joinReservationNumber,
     });
 
     return NextResponse.json({ reservation }, { status: 201 });
   } catch (error) {
+    // The party being joined may have gone away between choosing it and here.
+    if (error instanceof TableJoinError) {
+      return NextResponse.json({ error: error.message, code: "TABLE_JOIN_FAILED" }, { status: 409 });
+    }
+
     // The date may have filled up between the check above and the write.
     if (error instanceof BookingError) {
       return NextResponse.json(

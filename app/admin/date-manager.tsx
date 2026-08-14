@@ -1,22 +1,28 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
 import { MonthCalendar, type DayState } from "@/components/month-calendar";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, Badge, EmptyState } from "@/components/ui/feedback";
 import { Field, Input } from "@/components/ui/field";
-import { ContactLink } from "@/components/contact-link";
+import { KitchenReport } from "@/app/admin/kitchen-report";
 import { formatLongDate, isValidDateKey, startOfMonth, todayKey } from "@/lib/date";
-import { withRemainingSeats, type ReservationRecord, type RestaurantDateAvailability } from "@/types/booking";
+import {
+  withRemainingSeats,
+  type MenuCourse,
+  type ReservationRecord,
+  type RestaurantDateAvailability,
+} from "@/types/booking";
 
 export function AdminDateManager({
   initialDates,
   initialReservations,
+  menu,
 }: {
   initialDates: RestaurantDateAvailability[];
   initialReservations: ReservationRecord[];
+  menu: MenuCourse[];
 }) {
   const [dates, setDates] = useState(initialDates);
   const [reservations, setReservations] = useState(initialReservations);
@@ -24,7 +30,7 @@ export function AdminDateManager({
   const [month, setMonth] = useState(() => startOfMonth(new Date()));
   const [newDate, setNewDate] = useState("");
   const [saving, setSaving] = useState(false);
-  const [cancellingNumber, setCancellingNumber] = useState<string | null>(null);
+  const [busyNumber, setBusyNumber] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -37,10 +43,6 @@ export function AdminDateManager({
         .sort((a, b) => a.roomNumber - b.roomNumber),
     [reservations, selectedDate],
   );
-
-  const expectedCovers = selectedDayReservations
-    .filter((reservation) => reservation.status === "confirmed")
-    .reduce((total, reservation) => total + reservation.guestCount, 0);
 
   const getDayState = (dateKey: string): DayState => {
     const entry = dates.find((item) => item.date === dateKey);
@@ -117,6 +119,7 @@ export function AdminDateManager({
           date: selectedEntry.date,
           isOpen: selectedEntry.isOpen,
           capacity: Number(selectedEntry.capacity),
+          serviceTime: selectedEntry.serviceTime || undefined,
         }),
       });
 
@@ -135,9 +138,41 @@ export function AdminDateManager({
     }
   };
 
+  /** Table numbers apply to every room sharing that table. */
+  const assignTable = async (reservationNumber: string, tableNumber: string) => {
+    setBusyNumber(reservationNumber);
+    setError("");
+
+    try {
+      const response = await fetch(
+        `/api/admin/reservations/${encodeURIComponent(reservationNumber)}/table`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tableNumber }),
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error("Unable to save the table number.");
+      }
+
+      const { reservations: updated }: { reservations: ReservationRecord[] } = await response.json();
+      const byNumber = new Map(updated.map((entry) => [entry.reservationNumber, entry]));
+
+      setReservations((current) =>
+        current.map((reservation) => byNumber.get(reservation.reservationNumber) ?? reservation),
+      );
+    } catch (tableError) {
+      setError(tableError instanceof Error ? tableError.message : "Unable to save the table number.");
+    } finally {
+      setBusyNumber(null);
+    }
+  };
+
   /** Cancelling from the dashboard also returns the seats to the date. */
   const cancelReservation = async (reservationNumber: string) => {
-    setCancellingNumber(reservationNumber);
+    setBusyNumber(reservationNumber);
     setError("");
     setNotice("");
 
@@ -175,7 +210,7 @@ export function AdminDateManager({
     } catch (cancelError) {
       setError(cancelError instanceof Error ? cancelError.message : "Unable to cancel this reservation.");
     } finally {
-      setCancellingNumber(null);
+      setBusyNumber(null);
     }
   };
 
@@ -266,6 +301,20 @@ export function AdminDateManager({
                     )}
                   </Field>
 
+                  <Field
+                    label="Arrival time"
+                    hint="Everyone is seated at this time. Shown to guests and used for calendar reminders."
+                  >
+                    {(fieldProps) => (
+                      <Input
+                        {...fieldProps}
+                        type="time"
+                        value={selectedEntry.serviceTime ?? ""}
+                        onChange={(event) => patchSelected({ serviceTime: event.target.value })}
+                      />
+                    )}
+                  </Field>
+
                   <div className="flex flex-wrap gap-2">
                     <Badge tone={selectedEntry.isOpen ? "success" : "info"}>
                       {selectedEntry.isOpen ? `${selectedEntry.remainingSeats} free seats` : "Closed"}
@@ -299,128 +348,15 @@ export function AdminDateManager({
         </div>
       </Card>
 
-      <Card className="p-5 sm:p-6" as="section">
-        <CardHeader
-          eyebrow="Kitchen report"
-          title={`Reservations for ${formatLongDate(selectedDate)}`}
-          description={`${expectedCovers} ${expectedCovers === 1 ? "cover" : "covers"} expected.`}
-          actions={
-            <div data-print="hide">
-              <Button variant="secondary" onClick={() => window.print()}>
-                Print report
-              </Button>
-            </div>
-          }
-        />
-
-        <div className="mt-5">
-          {selectedDayReservations.length === 0 ? (
-            <EmptyState title="No reservations yet" description="Nothing has been booked for this evening." />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
-                <caption className="sr-only">
-                  Reservations for {formatLongDate(selectedDate)}, grouped by room number
-                </caption>
-                <thead className="bg-surface-sunken text-ink-muted">
-                  <tr>
-                    <th scope="col" className="px-4 py-3 font-semibold">
-                      Reservation
-                    </th>
-                    <th scope="col" className="px-4 py-3 font-semibold">
-                      Room
-                    </th>
-                    <th scope="col" className="px-4 py-3 font-semibold">
-                      Guests
-                    </th>
-                    <th scope="col" className="px-4 py-3 font-semibold">
-                      Contact
-                    </th>
-                    <th scope="col" className="px-4 py-3 font-semibold">
-                      Choices
-                    </th>
-                    <th scope="col" className="px-4 py-3 font-semibold">
-                      Status
-                    </th>
-                    <th scope="col" className="px-4 py-3 font-semibold" data-print="hide">
-                      <span className="sr-only">Actions</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {selectedDayReservations.map((reservation) => {
-                    const byGuest = new Map<number, typeof reservation.selections>();
-                    for (const selection of reservation.selections) {
-                      const guestIndex = selection.guestIndex ?? 0;
-                      byGuest.set(guestIndex, [...(byGuest.get(guestIndex) ?? []), selection]);
-                    }
-
-                    return (
-                      <tr key={reservation.reservationNumber} className="border-t border-line align-top">
-                        <th scope="row" className="px-4 py-3 text-left font-medium text-ink">
-                          <Link
-                            href={`/admin/reservation/${reservation.reservationNumber}`}
-                            className="underline underline-offset-2 hover:text-accent"
-                          >
-                            {reservation.reservationNumber}
-                          </Link>
-                        </th>
-                        <td className="px-4 py-3 tabular-nums">{reservation.roomNumber}</td>
-                        <td className="px-4 py-3 tabular-nums">{reservation.guestCount}</td>
-                        <td className="px-4 py-3">
-                          <ContactLink contact={reservation.contact} />
-                        </td>
-                        <td className="px-4 py-3">
-                          {reservation.selections.length === 0 ? (
-                            <span className="text-ink-muted">No menu selections</span>
-                          ) : (
-                            <div className="space-y-2">
-                              {[...byGuest.entries()]
-                                .sort(([a], [b]) => a - b)
-                                .map(([guestIndex, entries]) => (
-                                  <div key={guestIndex} className="rounded-control bg-surface-muted p-2">
-                                    <p className="text-xs font-semibold uppercase tracking-wide text-ink-subtle">
-                                      Guest {guestIndex + 1}
-                                    </p>
-                                    <ul className="mt-1 space-y-0.5">
-                                      {entries.map((entry, index) => (
-                                        <li key={`${entry.courseId}-${index}`}>
-                                          <span className="font-medium text-ink">{entry.courseName}:</span>{" "}
-                                          <span className="text-ink-muted">{entry.optionName}</span>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  </div>
-                                ))}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-4 py-3">
-                          <Badge tone={reservation.status === "confirmed" ? "success" : "info"}>
-                            {reservation.status}
-                          </Badge>
-                        </td>
-                        <td className="px-4 py-3" data-print="hide">
-                          {reservation.status === "confirmed" ? (
-                            <Button
-                              variant="danger"
-                              onClick={() => cancelReservation(reservation.reservationNumber)}
-                              loading={cancellingNumber === reservation.reservationNumber}
-                              loadingLabel="Cancelling…"
-                            >
-                              Cancel
-                            </Button>
-                          ) : null}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </Card>
+      <KitchenReport
+        date={selectedDate}
+        serviceTime={selectedEntry?.serviceTime}
+        reservations={selectedDayReservations}
+        menu={menu}
+        onAssignTable={assignTable}
+        onCancel={cancelReservation}
+        busyReservationNumber={busyNumber}
+      />
     </div>
   );
 }

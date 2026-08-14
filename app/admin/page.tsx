@@ -6,7 +6,7 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { ButtonLink } from "@/components/ui/button";
 import { isAdminAuthenticated } from "@/lib/auth/session";
 import { getReservationsList } from "@/lib/services/reservations";
-import { getRestaurantDates } from "@/lib/services/restaurant";
+import { getFullMenuCatalog, getRestaurantDates } from "@/lib/services/restaurant";
 import { todayKey } from "@/lib/date";
 
 export const metadata: Metadata = { title: "Staff dashboard" };
@@ -18,7 +18,11 @@ export default async function AdminPage() {
     redirect("/admin/login");
   }
 
-  const [reservations, restaurantDates] = await Promise.all([getReservationsList(), getRestaurantDates()]);
+  const [reservations, restaurantDates, menu] = await Promise.all([
+    getReservationsList(),
+    getRestaurantDates(),
+    getFullMenuCatalog(),
+  ]);
 
   const today = todayKey();
   const upcoming = reservations.filter((reservation) => reservation.date >= today && reservation.status === "confirmed");
@@ -65,7 +69,7 @@ export default async function AdminPage() {
         </dl>
       </Card>
 
-      <AdminDateManager initialDates={restaurantDates} initialReservations={reservations} />
+      <AdminDateManager initialDates={restaurantDates} initialReservations={reservations} menu={menu} />
     </PageShell>
   );
 }

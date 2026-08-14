@@ -112,6 +112,11 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
             <p className="font-semibold text-ink">
               <time dateTime={selectedDate}>{formatLongDate(selectedDate)}</time>
             </p>
+            {selectedEntry?.serviceTime ? (
+              <p className="mt-1 font-medium text-accent-ink">
+                Everyone is seated at {selectedEntry.serviceTime}. Please arrive on time.
+              </p>
+            ) : null}
             <p className="mt-1">
               {!selectedEntry
                 ? "This date is not open for reservations."

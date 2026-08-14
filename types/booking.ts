@@ -35,6 +35,8 @@ export type StoredRestaurantDate = {
   isOpen: boolean;
   capacity: number;
   reservedSeats: number;
+  /** Strict arrival time for the sitting, "HH:MM" in the restaurant's timezone. */
+  serviceTime?: string;
 };
 
 export type RestaurantDateAvailability = StoredRestaurantDate & {
@@ -70,6 +72,17 @@ export type ReservationRecord = {
   selections: ReservationSelection[];
   /** How to reach the guest. Optional so bookings made before this existed still load. */
   contact?: ReservationContact;
+  /** Arrival time copied from the date when the booking was made. */
+  time?: string;
+  /** Allergies or anything else the kitchen should know. */
+  notes?: string;
+  /**
+   * Rooms dining together share this id. It is the reservation number of
+   * whoever booked first, so guests can read it out to each other.
+   */
+  tableGroupId?: string;
+  /** Assigned by staff in the dashboard; blank until someone sets it. */
+  tableNumber?: string;
   status: ReservationStatus;
   createdAt?: string;
   updatedAt?: string;

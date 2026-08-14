@@ -93,6 +93,12 @@ export default function ConfirmationPage() {
               <time dateTime={reservation.date}>{formatLongDate(reservation.date)}</time>
             </dd>
           </div>
+          {reservation.time ? (
+            <div className="flex justify-between gap-3">
+              <dt className="text-ink-subtle">Arrival time</dt>
+              <dd className="font-semibold text-ink">{reservation.time}</dd>
+            </div>
+          ) : null}
           <div className="flex justify-between gap-3">
             <dt className="text-ink-subtle">Guests</dt>
             <dd className="font-semibold text-ink">{reservation.guestCount}</dd>
@@ -112,9 +118,19 @@ export default function ConfirmationPage() {
           ) : null}
         </dl>
 
+        {reservation.tableGroupId ? (
+          <p className="mt-4 rounded-control border border-success/30 bg-success-soft p-3 text-sm font-medium text-success">
+            You are seated with the other rooms in booking {reservation.tableGroupId}.
+          </p>
+        ) : (
+          <p className="mt-4 rounded-control border border-line bg-surface-muted p-3 text-sm text-ink-muted">
+            Dining with another room? Give them your reservation number and they can ask to share your table.
+          </p>
+        )}
+
         <div className="mt-5 rounded-control border border-line bg-surface-muted p-4" data-print="hide">
           <p className="text-sm font-medium text-ink">Add a reminder</p>
-          <p className="mt-1 text-sm text-ink-muted">{describeReservationTime(reservation.date)}</p>
+          <p className="mt-1 text-sm text-ink-muted">{describeReservationTime(reservation.date, reservation.time)}</p>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
             <a
               href={buildGoogleCalendarUrl(reservation)}

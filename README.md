@@ -18,6 +18,22 @@ browsers cache each picture. External image addresses are passed through untouch
 guest on the confirmation step. A phone number also picks a preferred app — phone/SMS, WhatsApp,
 Viber or Telegram — and staff see a one-click link that opens the right one.
 
+**Arrival times.** Each evening has a strict arrival time, set per date in the dashboard. It is
+shown to guests when they pick the date and again on their confirmation, copied onto the booking
+as it is made (so moving a later sitting does not rewrite existing bookings), and used for the
+calendar reminder. `NEXT_PUBLIC_DINNER_TIME` is only the fallback for dates with no time set.
+
+**Shared tables.** Two or three rooms can eat together: the first room books as usual and passes
+its reservation number to the others, who tick "we are dining with another room" and enter it.
+Joining is refused if the number is unknown, for another evening, or cancelled. Staff assign the
+actual table number in the dashboard, and it applies to everyone sharing that table.
+
+**Kitchen sheet.** The dashboard prints the daily sheet in the shape of the old Excel book —
+Table, Room, Guests, a column per course, and a Comment column carrying allergies and requests.
+Two layouts toggle: one row per guest (for plating) and one row per room (for reception). Both
+export to CSV for Excel, with a UTF-8 BOM so accented and Cyrillic dish names survive the open.
+Rooms sharing a table are grouped together and shaded as one block.
+
 **Calendar reminders.** The confirmation screen offers Google Calendar and an `.ics` download for
 Apple Calendar and Outlook, including the per-guest menu choices and an alarm three hours before
 the sitting. Reservations store a date but no time, so the sitting time comes from
@@ -43,7 +59,7 @@ Admin sign-in in development falls back to `admin` / `admin123` and prints a war
 | `ADMIN_PASSWORD_HASH` | **In production** | bcrypt hash of the admin password. |
 | `ADMIN_SESSION_SECRET` | **In production** | ≥16 chars, used to sign admin session cookies. |
 | `LOCAL_STORE_DIR` | No | Overrides where the JSON store is written. Used by the tests. |
-| `NEXT_PUBLIC_DINNER_TIME` | No | Sitting time in 24-hour `HH:MM` for calendar reminders. Defaults to `19:00`. |
+| `NEXT_PUBLIC_DINNER_TIME` | No | Fallback sitting time (`HH:MM`) for dates with no arrival time set. Defaults to `19:00`. |
 | `NEXT_PUBLIC_DINNER_DURATION_MINUTES` | No | Length of the sitting. Defaults to `120`. |
 
 In production the admin area fails closed: without `ADMIN_PASSWORD_HASH` and `ADMIN_SESSION_SECRET` every admin request returns 503 rather than falling back to a default password.

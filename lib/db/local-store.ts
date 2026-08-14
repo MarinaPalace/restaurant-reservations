@@ -99,6 +99,7 @@ export async function upsertLocalDate(input: {
   date: string;
   isOpen: boolean;
   capacity: number;
+  serviceTime?: string;
 }): Promise<RestaurantDateAvailability> {
   return withStoreLock(async () => {
     const dates = await readDates();
@@ -106,8 +107,19 @@ export async function upsertLocalDate(input: {
 
     const next: StoredRestaurantDate =
       index === -1
-        ? { date: input.date, isOpen: input.isOpen, capacity: input.capacity, reservedSeats: 0 }
-        : { ...dates[index], isOpen: input.isOpen, capacity: input.capacity };
+        ? {
+            date: input.date,
+            isOpen: input.isOpen,
+            capacity: input.capacity,
+            reservedSeats: 0,
+            serviceTime: input.serviceTime,
+          }
+        : {
+            ...dates[index],
+            isOpen: input.isOpen,
+            capacity: input.capacity,
+            serviceTime: input.serviceTime,
+          };
 
     if (index === -1) {
       dates.push(next);
@@ -145,6 +157,8 @@ export async function createLocalReservation(input: {
   date: string;
   selections: ReservationRecord["selections"];
   contact?: ReservationRecord["contact"];
+  notes?: string;
+  tableGroupId?: string;
 }): Promise<LocalBookingResult> {
   return withStoreLock(async () => {
     const dates = await readDates();
@@ -168,6 +182,11 @@ export async function createLocalReservation(input: {
       date: input.date,
       selections: input.selections,
       contact: input.contact,
+      // Copied from the date so the booking keeps the time it was made for,
+      // even if staff later move the sitting.
+      time: dateEntry.serviceTime,
+      notes: input.notes,
+      tableGroupId: input.tableGroupId,
       status: "confirmed",
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -217,6 +236,53 @@ export async function cancelLocalReservation(reservationNumber: string): Promise
 
     await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
     return cancelled;
+  });
+}
+
+/**
+ * Records that a reservation now anchors a shared table. The first booker's
+ * own number becomes the group id, so guests can read it out to each other.
+ */
+export async function setLocalReservationGroup(reservationNumber: string, tableGroupId: string) {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    const index = reservations.findIndex((entry) => entry.reservationNumber === reservationNumber);
+    if (index === -1) {
+      return null;
+    }
+
+    reservations[index] = { ...reservations[index], tableGroupId };
+    await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    return reservations[index];
+  });
+}
+
+/** Sets the table number on a reservation and everyone sharing its table. */
+export async function setLocalReservationTable(reservationNumber: string, tableNumber: string) {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    const target = reservations.find((entry) => entry.reservationNumber === reservationNumber);
+    if (!target) {
+      return null;
+    }
+
+    const groupId = target.tableGroupId;
+    const updated: ReservationRecord[] = [];
+
+    for (let index = 0; index < reservations.length; index += 1) {
+      const entry = reservations[index];
+      const inGroup = groupId
+        ? entry.tableGroupId === groupId
+        : entry.reservationNumber === reservationNumber;
+
+      if (inGroup) {
+        reservations[index] = { ...entry, tableNumber, updatedAt: new Date().toISOString() };
+        updated.push(reservations[index]);
+      }
+    }
+
+    await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    return updated;
   });
 }
 

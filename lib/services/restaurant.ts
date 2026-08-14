@@ -26,6 +26,7 @@ export async function getRestaurantDates(): Promise<RestaurantDateAvailability[]
       isOpen: Boolean(date.isOpen),
       capacity: Number(date.capacity),
       reservedSeats: Number(date.reservedSeats),
+      serviceTime: date.serviceTime ? String(date.serviceTime) : undefined,
     }),
   );
 }
@@ -46,6 +47,7 @@ export async function getRestaurantDate(date: string): Promise<RestaurantDateAva
     isOpen: Boolean(record.isOpen),
     capacity: Number(record.capacity),
     reservedSeats: Number(record.reservedSeats),
+    serviceTime: record.serviceTime ? String(record.serviceTime) : undefined,
   });
 }
 

@@ -12,8 +12,10 @@ import type { ReservationRecord } from "@/types/booking";
 const DEFAULT_TIME = "19:00";
 const DEFAULT_DURATION_MINUTES = 120;
 
-function getServiceTime() {
-  const configured = process.env.NEXT_PUBLIC_DINNER_TIME?.trim();
+function getServiceTime(preferred?: string) {
+  // The time staff set for that evening wins; the env value is only a
+  // fallback for dates configured before arrival times existed.
+  const configured = (preferred || process.env.NEXT_PUBLIC_DINNER_TIME)?.trim();
   const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(configured ?? "");
 
   if (!match) {
@@ -29,8 +31,8 @@ function getDurationMinutes() {
   return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_DURATION_MINUTES;
 }
 
-export function getReservationWindow(dateKey: string) {
-  const { hour, minute } = getServiceTime();
+export function getReservationWindow(dateKey: string, serviceTime?: string) {
+  const { hour, minute } = getServiceTime(serviceTime);
   const start = fromDateKey(dateKey);
   start.setHours(hour, minute, 0, 0);
 
@@ -69,7 +71,7 @@ export function buildEventTitle(reservation: ReservationRecord) {
 }
 
 export function buildGoogleCalendarUrl(reservation: ReservationRecord, locationName = "À la carte restaurant") {
-  const { start, end } = getReservationWindow(reservation.date);
+  const { start, end } = getReservationWindow(reservation.date, reservation.time);
 
   const params = new URLSearchParams({
     action: "TEMPLATE",
@@ -89,7 +91,7 @@ function escapeIcsText(value: string) {
 
 /** An .ics file, for Apple Calendar, Outlook and everything that is not Google. */
 export function buildIcsFile(reservation: ReservationRecord, locationName = "À la carte restaurant") {
-  const { start, end } = getReservationWindow(reservation.date);
+  const { start, end } = getReservationWindow(reservation.date, reservation.time);
 
   return [
     "BEGIN:VCALENDAR",
@@ -116,8 +118,8 @@ export function buildIcsFile(reservation: ReservationRecord, locationName = "À 
   ].join("\r\n");
 }
 
-export function describeReservationTime(dateKey: string) {
-  const { start, end } = getReservationWindow(dateKey);
+export function describeReservationTime(dateKey: string, serviceTime?: string) {
+  const { start, end } = getReservationWindow(dateKey, serviceTime);
   const time = (date: Date) =>
     new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
 

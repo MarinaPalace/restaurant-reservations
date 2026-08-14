@@ -8,8 +8,11 @@ import {
   getLocalReservation,
   listLocalReservations,
   reservationNumberExists,
+  setLocalReservationGroup,
+  setLocalReservationTable,
   upsertLocalDate,
 } from "@/lib/db/local-store";
+import { getRestaurantDate } from "@/lib/services/restaurant";
 import {
   withRemainingSeats,
   type ReservationContact,
@@ -49,6 +52,10 @@ type MongoReservationDocument = {
   date: unknown;
   selections?: unknown;
   contact?: unknown;
+  time?: unknown;
+  notes?: unknown;
+  tableGroupId?: unknown;
+  tableNumber?: unknown;
   status?: unknown;
   createdAt?: unknown;
   updatedAt?: unknown;
@@ -63,10 +70,85 @@ function toReservationRecord(document: MongoReservationDocument): ReservationRec
     date: String(document.date),
     selections: Array.isArray(document.selections) ? (document.selections as ReservationSelection[]) : [],
     contact: (document.contact as ReservationContact | undefined) ?? undefined,
+    time: document.time ? String(document.time) : undefined,
+    notes: document.notes ? String(document.notes) : undefined,
+    tableGroupId: document.tableGroupId ? String(document.tableGroupId) : undefined,
+    tableNumber: document.tableNumber ? String(document.tableNumber) : undefined,
     status: document.status === "cancelled" ? "cancelled" : "confirmed",
     createdAt: document.createdAt ? new Date(document.createdAt as string).toISOString() : undefined,
     updatedAt: document.updatedAt ? new Date(document.updatedAt as string).toISOString() : undefined,
   };
+}
+
+export class TableJoinError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TableJoinError";
+  }
+}
+
+/**
+ * Works out which table group a new booking belongs to.
+ *
+ * The party being joined must exist, be for the same evening and still be
+ * live; otherwise rooms could be attached to a cancelled or unrelated table.
+ */
+async function resolveTableGroup(joinReservationNumber: string | undefined, date: string) {
+  if (!joinReservationNumber) {
+    return undefined;
+  }
+
+  const target = await getReservationByNumber(joinReservationNumber.trim().toUpperCase());
+
+  if (!target) {
+    throw new TableJoinError("We could not find that reservation number. Please check it and try again.");
+  }
+
+  if (target.date !== date) {
+    throw new TableJoinError("That reservation is for a different evening, so you cannot share a table.");
+  }
+
+  if (target.status !== "confirmed") {
+    throw new TableJoinError("That reservation has been cancelled, so you cannot share a table with it.");
+  }
+
+  if (target.tableGroupId) {
+    return target.tableGroupId;
+  }
+
+  // First time this party is joined: it becomes the anchor of the group.
+  const groupId = target.reservationNumber;
+  await setReservationGroup(target.reservationNumber, groupId);
+  return groupId;
+}
+
+async function setReservationGroup(reservationNumber: string, tableGroupId: string) {
+  if (!isMongoConfigured()) {
+    await setLocalReservationGroup(reservationNumber, tableGroupId);
+    return;
+  }
+
+  await connectToDatabase();
+  await ReservationModel.updateOne({ reservationNumber }, { $set: { tableGroupId } });
+}
+
+/** Sets a table number across everyone sharing that table. */
+export async function assignTableNumber(reservationNumber: string, tableNumber: string) {
+  if (!isMongoConfigured()) {
+    return setLocalReservationTable(reservationNumber, tableNumber);
+  }
+
+  await connectToDatabase();
+  const target = await ReservationModel.findOne({ reservationNumber }).lean();
+  if (!target) {
+    return null;
+  }
+
+  const filter = target.tableGroupId ? { tableGroupId: target.tableGroupId } : { reservationNumber };
+  await ReservationModel.updateMany(filter, { $set: { tableNumber } });
+
+  const updated = await ReservationModel.find(filter).lean();
+  return updated.map((entry) => toReservationRecord(entry as MongoReservationDocument));
 }
 
 export async function createReservationEntry(input: {
@@ -75,10 +157,15 @@ export async function createReservationEntry(input: {
   date: string;
   selections: ReservationSelection[];
   contact?: ReservationContact;
+  notes?: string;
+  /** Reservation number of a party this booking should share a table with. */
+  joinReservationNumber?: string;
 }): Promise<ReservationRecord> {
+  const tableGroupId = await resolveTableGroup(input.joinReservationNumber, input.date);
+
   if (!isMongoConfigured()) {
     const reservationNumber = await allocateReservationNumber(reservationNumberExists);
-    const result = await createLocalReservation({ reservationNumber, ...input });
+    const result = await createLocalReservation({ reservationNumber, ...input, tableGroupId });
 
     if (!result.ok) {
       throw new BookingError(result.reason);
@@ -122,6 +209,10 @@ export async function createReservationEntry(input: {
       date: input.date,
       selections: input.selections,
       contact: input.contact,
+      // Copied from the date so the booking keeps the time it was made for.
+      time: (await getRestaurantDate(input.date))?.serviceTime,
+      notes: input.notes,
+      tableGroupId,
       status: "confirmed",
     });
 
@@ -182,7 +273,12 @@ export async function getReservationsList(): Promise<ReservationRecord[]> {
   return reservations.map((reservation) => toReservationRecord(reservation as MongoReservationDocument));
 }
 
-export async function updateRestaurantDate(input: { date: string; isOpen: boolean; capacity: number }) {
+export async function updateRestaurantDate(input: {
+  date: string;
+  isOpen: boolean;
+  capacity: number;
+  serviceTime?: string;
+}) {
   if (!isMongoConfigured()) {
     return upsertLocalDate(input);
   }
@@ -191,7 +287,10 @@ export async function updateRestaurantDate(input: { date: string; isOpen: boolea
 
   const updated = await RestaurantDateModel.findOneAndUpdate(
     { date: input.date },
-    { $set: { isOpen: input.isOpen, capacity: input.capacity }, $setOnInsert: { reservedSeats: 0 } },
+    {
+      $set: { isOpen: input.isOpen, capacity: input.capacity, serviceTime: input.serviceTime ?? null },
+      $setOnInsert: { reservedSeats: 0 },
+    },
     { returnDocument: "after", upsert: true },
   ).lean();
 
@@ -200,5 +299,6 @@ export async function updateRestaurantDate(input: { date: string; isOpen: boolea
     isOpen: Boolean(updated.isOpen),
     capacity: Number(updated.capacity),
     reservedSeats: Number(updated.reservedSeats),
+    serviceTime: updated.serviceTime ? String(updated.serviceTime) : undefined,
   });
 }

@@ -6,6 +6,8 @@ const restaurantDateSchema = new Schema(
     isOpen: { type: Boolean, required: true, default: true },
     capacity: { type: Number, required: true, default: 0 },
     reservedSeats: { type: Number, required: true, default: 0 },
+    // Strict arrival time, "HH:MM".
+    serviceTime: { type: String },
   },
   { timestamps: true },
 );

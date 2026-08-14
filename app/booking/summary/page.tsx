@@ -7,6 +7,7 @@ import { BookingSteps } from "@/components/booking-steps";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Alert } from "@/components/ui/feedback";
+import { Field, Input, Textarea } from "@/components/ui/field";
 import { ContactFields } from "@/components/contact-fields";
 import { useBookingGuard, storeConfirmation } from "@/hooks/use-booking-session";
 import { describeContactProblem, normalizeContact } from "@/lib/contact";
@@ -20,6 +21,9 @@ export default function SummaryPage() {
   const [error, setError] = useState("");
   const [contact, setContact] = useState<ReservationContact>({ method: "email", email: "", messagingApp: "phone" });
   const [contactError, setContactError] = useState("");
+  const [notes, setNotes] = useState("");
+  const [shareTable, setShareTable] = useState(false);
+  const [joinNumber, setJoinNumber] = useState("");
 
   const guestCount = Math.max(session.guestCount, 1);
 
@@ -58,6 +62,8 @@ export default function SummaryPage() {
           date: session.date,
           selections: session.selections,
           contact: normalizeContact(contact),
+          notes: notes.trim() || undefined,
+          joinReservationNumber: shareTable && joinNumber.trim() ? joinNumber.trim().toUpperCase() : undefined,
         }),
       });
 
@@ -68,6 +74,13 @@ export default function SummaryPage() {
         // client guessing from the wording of the message.
         if (data.code === "DATE_UNAVAILABLE") {
           router.push("/booking/date");
+          return;
+        }
+
+        // The party they tried to join is the problem, not the booking.
+        if (data.code === "TABLE_JOIN_FAILED") {
+          setError(data.error);
+          setSubmitting(false);
           return;
         }
 
@@ -130,7 +143,53 @@ export default function SummaryPage() {
           ))}
         </div>
 
-        <div className="mt-6">
+        <div className="mt-6 space-y-4">
+          <Field
+            label="Allergies or requests"
+            hint="Anything the kitchen should know. Optional."
+          >
+            {(fieldProps) => (
+              <Textarea
+                {...fieldProps}
+                maxLength={500}
+                placeholder="e.g. one guest is allergic to nuts"
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
+              />
+            )}
+          </Field>
+
+          <div className="rounded-control border border-line bg-surface-muted p-4">
+            <label className="flex min-h-11 items-center gap-3 text-sm font-medium text-ink">
+              <input
+                type="checkbox"
+                className="size-4 accent-[var(--primary)]"
+                checked={shareTable}
+                onChange={(event) => setShareTable(event.target.checked)}
+              />
+              We are dining with another room
+            </label>
+
+            {shareTable ? (
+              <div className="mt-3">
+                <Field
+                  label="Their reservation number"
+                  hint="Ask them for the number on their confirmation, e.g. ALC-3E94B8."
+                >
+                  {(fieldProps) => (
+                    <Input
+                      {...fieldProps}
+                      value={joinNumber}
+                      placeholder="ALC-______"
+                      autoCapitalize="characters"
+                      onChange={(event) => setJoinNumber(event.target.value.toUpperCase())}
+                    />
+                  )}
+                </Field>
+              </div>
+            ) : null}
+          </div>
+
           <ContactFields
             contact={contact}
             onChange={(next) => {

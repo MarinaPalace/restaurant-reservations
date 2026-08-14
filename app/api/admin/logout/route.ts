@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
+import { endAdminSession } from "@/lib/auth/session";
 
-export async function POST() {
-  const cookieStore = await cookies();
-  cookieStore.set("admin-auth", "", {
-    httpOnly: true,
-    path: "/",
-    expires: new Date(0),
-  });
+export async function POST(request: Request) {
+  await endAdminSession();
 
-  return NextResponse.redirect(new URL("/admin/login", process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"));
+  /**
+   * 303 turns the redirect into a GET. A 307 (the default) would replay the
+   * POST against the login page, and the redirect target is derived from the
+   * request so it works on any host, not just localhost.
+   */
+  return NextResponse.redirect(new URL("/admin/login", request.url), { status: 303 });
 }

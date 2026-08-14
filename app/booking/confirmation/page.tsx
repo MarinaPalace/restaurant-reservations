@@ -1,88 +1,118 @@
 "use client";
 
-import { useMemo } from "react";
+import { useRouter } from "next/navigation";
+import { PageShell } from "@/components/page-shell";
+import { Card, CardHeader } from "@/components/ui/card";
+import { Button, ButtonLink } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/feedback";
+import { clearBookingSession, useConfirmation } from "@/hooks/use-booking-session";
+import { formatLongDate } from "@/lib/date";
 
+/**
+ * The reservation is read through the session store rather than during render:
+ * the previous version called sessionStorage from a useMemo, so the server
+ * rendered "no reservation found" while the client rendered the confirmation —
+ * a hydration mismatch.
+ */
 export default function ConfirmationPage() {
-  const reservation = useMemo(() => {
-    if (typeof window === "undefined") {
-      return null;
-    }
-
-    const stored = window.sessionStorage.getItem("reservation-confirmation");
-    if (!stored) {
-      return null;
-    }
-
-    try {
-      return JSON.parse(stored) as {
-        reservationNumber?: string;
-        roomNumber?: number;
-        guestCount?: number;
-        date?: string;
-        selections?: Array<{ guestIndex?: number; courseName: string; optionName: string }>;
-      };
-    } catch {
-      return null;
-    }
-  }, []);
+  const router = useRouter();
+  const reservation = useConfirmation();
 
   if (!reservation) {
     return (
-      <main className="min-h-screen bg-[#f7f3ee] p-4 text-[#1d1b1a]">
-        <div className="mx-auto flex min-h-screen max-w-md items-center justify-center">
-          <div className="rounded-[28px] border border-[#e7d8c6] bg-white p-6 text-center shadow-[0_18px_55px_rgba(49,31,13,0.08)]">
-            <p className="text-lg font-medium text-[#7a6455]">No reservation found.</p>
-          </div>
-        </div>
-      </main>
+      <PageShell width="sm">
+        <Card className="p-6">
+          <EmptyState
+            title="No reservation found"
+            description="This confirmation is only available in the browser tab where the booking was made."
+            action={<ButtonLink href="/booking">Start a new reservation</ButtonLink>}
+          />
+        </Card>
+      </PageShell>
     );
   }
 
+  const guestGroups = Array.from({ length: Math.max(reservation.guestCount, 1) }, (_, guestIndex) => ({
+    guestIndex,
+    entries: reservation.selections.filter((entry) => (entry.guestIndex ?? 0) === guestIndex),
+  }));
+
   return (
-    <main className="min-h-screen bg-[#f7f3ee] p-4 text-[#1d1b1a]">
-      <div className="mx-auto flex min-h-screen max-w-md items-center justify-center">
-        <div className="w-full rounded-[28px] border border-[#e7d8c6] bg-white p-6 shadow-[0_18px_55px_rgba(49,31,13,0.08)]">
-          <div className="mb-5 text-center">
-            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-[#edf6ee] text-3xl text-[#2f7d51]">✓</div>
-            <h1 className="text-3xl font-semibold tracking-tight">Reservation Confirmed</h1>
-            <p className="mt-2 text-base text-[#5f5148]">Thank you.</p>
+    <PageShell width="sm">
+      <Card className="p-6">
+        <div className="text-center">
+          <div
+            aria-hidden="true"
+            className="mx-auto mb-4 flex size-14 items-center justify-center rounded-full bg-success-soft text-3xl text-success"
+          >
+            ✓
           </div>
-
-          <dl className="space-y-3 rounded-2xl bg-[#faf7f3] p-4 text-sm text-[#564d46]">
-            <div className="flex justify-between gap-3">
-              <dt className="font-medium uppercase tracking-wide text-[#7a6455]">Room</dt>
-              <dd className="font-semibold text-[#1d1b1a]">{reservation.roomNumber}</dd>
-            </div>
-            <div className="flex justify-between gap-3">
-              <dt className="font-medium uppercase tracking-wide text-[#7a6455]">Date</dt>
-              <dd className="font-semibold text-[#1d1b1a]">
-                {reservation.date ? new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric" }).format(new Date(`${reservation.date}T12:00:00`)) : "-"}
-              </dd>
-            </div>
-            <div className="flex justify-between gap-3">
-              <dt className="font-medium uppercase tracking-wide text-[#7a6455]">Guests</dt>
-              <dd className="font-semibold text-[#1d1b1a]">{reservation.guestCount}</dd>
-            </div>
-          </dl>
-
-          <div className="mt-5 rounded-2xl border border-[#e7d8c6] bg-[#fffdfb] p-4">
-            <div className="text-[10px] font-medium uppercase tracking-[0.2em] text-[#8e6b49]">Reservation Number</div>
-            <div className="mt-1 text-2xl font-semibold tracking-[0.18em]">{reservation.reservationNumber}</div>
-          </div>
-
-          <div className="mt-5 space-y-3">
-            {reservation.selections?.map((selection, index) => (
-              <div key={`${selection.courseName}-${selection.guestIndex ?? "guest"}-${index}`} className="rounded-2xl border border-[#f0e6db] bg-[#f9f5f1] p-3">
-                <div className="text-[10px] font-medium uppercase tracking-[0.2em] text-[#8e6b49]">
-                  {selection.guestIndex !== undefined ? `Guest ${selection.guestIndex + 1}` : "Selection"}
-                </div>
-                <div className="mt-1 text-[10px] font-medium uppercase tracking-[0.2em] text-[#8e6b49]">{selection.courseName}</div>
-                <div className="mt-1 text-lg font-semibold text-[#1d1b1a]">{selection.optionName}</div>
-              </div>
-            ))}
-          </div>
+          <CardHeader
+            as="h1"
+            align="center"
+            title="Reservation confirmed"
+            description="We look forward to welcoming you. Please arrive a few minutes early."
+          />
         </div>
-      </div>
-    </main>
+
+        <div className="mt-6 rounded-control border border-line bg-surface-muted p-4 text-center">
+          <p className="eyebrow">Reservation number</p>
+          <p className="mt-1 font-mono text-2xl font-semibold tracking-[0.18em] text-ink">
+            {reservation.reservationNumber}
+          </p>
+        </div>
+
+        <dl className="mt-5 space-y-3 rounded-control bg-surface-muted p-4 text-sm">
+          <div className="flex justify-between gap-3">
+            <dt className="text-ink-subtle">Room</dt>
+            <dd className="font-semibold text-ink">{reservation.roomNumber}</dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-ink-subtle">Date</dt>
+            <dd className="font-semibold text-ink">
+              <time dateTime={reservation.date}>{formatLongDate(reservation.date)}</time>
+            </dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-ink-subtle">Guests</dt>
+            <dd className="font-semibold text-ink">{reservation.guestCount}</dd>
+          </div>
+        </dl>
+
+        <div className="mt-5 space-y-3">
+          {guestGroups.map(({ guestIndex, entries }) =>
+            entries.length === 0 ? null : (
+              <section key={guestIndex} className="rounded-control border border-line bg-surface-muted p-3">
+                <h2 className="eyebrow">Guest {guestIndex + 1}</h2>
+                <ul className="mt-2 space-y-2">
+                  {entries.map((entry) => (
+                    <li key={`${guestIndex}-${entry.courseId}`}>
+                      <p className="text-xs font-medium uppercase tracking-wide text-ink-subtle">{entry.courseName}</p>
+                      <p className="text-base font-semibold text-ink">{entry.optionName}</p>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ),
+          )}
+        </div>
+
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row" data-print="hide">
+          <Button variant="secondary" size="lg" className="flex-1" onClick={() => window.print()}>
+            Print
+          </Button>
+          <Button
+            size="lg"
+            className="flex-1"
+            onClick={() => {
+              clearBookingSession();
+              router.push("/booking");
+            }}
+          >
+            New reservation
+          </Button>
+        </div>
+      </Card>
+    </PageShell>
   );
 }

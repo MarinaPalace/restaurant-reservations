@@ -1,71 +1,76 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
-import { createReservationEntry } from "@/lib/services/reservations";
-import { getMenuCatalog } from "@/lib/services/restaurant";
+import { BookingError, createReservationEntry } from "@/lib/services/reservations";
+import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
+import { BOOKING_MESSAGES, validateReservationRequest } from "@/lib/services/booking-rules";
+import { createReservationSchema } from "@/lib/validation/booking";
 
-const reservationInputSchema = z.object({
-  roomNumber: z.coerce.number().int().positive(),
-  guestCount: z.number().int().min(1).max(6),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  selections: z.array(
-    z.object({
-      guestIndex: z.number().int().nonnegative().optional(),
-      courseId: z.string().min(1),
-      courseName: z.string().min(1),
-      optionId: z.string().min(1),
-      optionName: z.string().min(1),
-    }),
-  ),
-});
+const GENERIC_ERROR = "Something went wrong while creating your reservation. Please try again.";
 
 export async function POST(request: Request) {
+  let body: unknown;
+
   try {
-    const body = await request.json();
-    const parsed = reservationInputSchema.safeParse(body);
-
-    if (!parsed.success) {
-      return NextResponse.json({ error: "Please enter valid reservation details." }, { status: 400 });
-    }
-
-    const menu = await getMenuCatalog();
-    const requiredCourses = menu.filter((course) => course.required);
-
-    for (let guestIndex = 0; guestIndex < parsed.data.guestCount; guestIndex += 1) {
-      const guestSelections = parsed.data.selections.filter((selection) => selection.guestIndex === guestIndex);
-
-      for (const course of requiredCourses) {
-        const selection = guestSelections.find((item) => item.courseId === course.id);
-        if (!selection) {
-          return NextResponse.json({ error: `Please choose an option for ${course.name}.` }, { status: 400 });
-        }
-
-        const courseOption = course.options.find((item) => item.id === selection.optionId);
-        if (!courseOption || !courseOption.active) {
-          return NextResponse.json({ error: "Invalid menu option selected." }, { status: 400 });
-        }
-      }
-    }
-
-    try {
-      const reservation = await createReservationEntry({
-        roomNumber: parsed.data.roomNumber,
-        guestCount: parsed.data.guestCount,
-        date: parsed.data.date,
-        selections: parsed.data.selections,
-      });
-
-      return NextResponse.json({ reservation }, { status: 201 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      if (message === "DATE_CLOSED") {
-        return NextResponse.json({ error: "Unfortunately, this date is no longer available. Please select another date." }, { status: 409 });
-      }
-      if (message === "DATE_FULL") {
-        return NextResponse.json({ error: "Unfortunately, this date is fully booked. Please choose another evening." }, { status: 409 });
-      }
-      return NextResponse.json({ error: "Something went wrong while creating your reservation. Please try again." }, { status: 500 });
-    }
+    body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Something went wrong while creating your reservation. Please try again." }, { status: 500 });
+    return NextResponse.json({ error: "Please enter valid reservation details." }, { status: 400 });
+  }
+
+  const parsed = createReservationSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.issues[0]?.message ?? "Please enter valid reservation details." },
+      { status: 400 },
+    );
+  }
+
+  try {
+    const [menu, restaurantDate] = await Promise.all([
+      getMenuCatalog(),
+      getRestaurantDate(parsed.data.date),
+    ]);
+
+    const validation = validateReservationRequest({
+      roomNumber: parsed.data.roomNumber,
+      guestCount: parsed.data.guestCount,
+      date: parsed.data.date,
+      selections: parsed.data.selections,
+      restaurantDate,
+      menu,
+    });
+
+    if (!validation.ok) {
+      const isAvailabilityProblem =
+        validation.error === BOOKING_MESSAGES.unavailable ||
+        validation.error === BOOKING_MESSAGES.fullyBooked ||
+        validation.error === BOOKING_MESSAGES.pastDate;
+
+      return NextResponse.json(
+        { error: validation.error, code: isAvailabilityProblem ? "DATE_UNAVAILABLE" : "INVALID_REQUEST" },
+        { status: isAvailabilityProblem ? 409 : 400 },
+      );
+    }
+
+    const reservation = await createReservationEntry({
+      roomNumber: parsed.data.roomNumber,
+      guestCount: parsed.data.guestCount,
+      date: parsed.data.date,
+      selections: validation.selections,
+    });
+
+    return NextResponse.json({ reservation }, { status: 201 });
+  } catch (error) {
+    // The date may have filled up between the check above and the write.
+    if (error instanceof BookingError) {
+      return NextResponse.json(
+        {
+          error: error.code === "DATE_CLOSED" ? BOOKING_MESSAGES.unavailable : BOOKING_MESSAGES.fullyBooked,
+          code: "DATE_UNAVAILABLE",
+        },
+        { status: 409 },
+      );
+    }
+
+    console.error("[reservations] failed to create reservation", error);
+    return NextResponse.json({ error: GENERIC_ERROR }, { status: 500 });
   }
 }

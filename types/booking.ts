@@ -26,11 +26,18 @@ export type MenuCourse = {
   options: MenuOption[];
 };
 
-export type RestaurantDateAvailability = {
+/**
+ * How a date is persisted. `remainingSeats` is deliberately absent: it is
+ * always derived from capacity and reservedSeats so the two can never drift.
+ */
+export type StoredRestaurantDate = {
   date: string;
   isOpen: boolean;
   capacity: number;
   reservedSeats: number;
+};
+
+export type RestaurantDateAvailability = StoredRestaurantDate & {
   remainingSeats: number;
 };
 
@@ -42,6 +49,8 @@ export type ReservationSelection = {
   optionName: string;
 };
 
+export type ReservationStatus = "confirmed" | "cancelled";
+
 export type ReservationRecord = {
   _id?: string;
   reservationNumber: string;
@@ -49,7 +58,14 @@ export type ReservationRecord = {
   guestCount: number;
   date: string;
   selections: ReservationSelection[];
-  status: "confirmed" | "cancelled";
+  status: ReservationStatus;
   createdAt?: string;
   updatedAt?: string;
 };
+
+export function withRemainingSeats(date: StoredRestaurantDate): RestaurantDateAvailability {
+  return {
+    ...date,
+    remainingSeats: Math.max(date.capacity - date.reservedSeats, 0),
+  };
+}

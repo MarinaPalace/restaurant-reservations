@@ -1,26 +1,191 @@
 @import "tailwindcss";
 
+/**
+ * Design tokens.
+ *
+ * Every colour in the app comes from this file. Components reference semantic
+ * names (surface, ink, line, accent) rather than raw hex values, so the whole
+ * product can be re-themed — and so dark mode is a token swap instead of a
+ * per-component rewrite.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+  --canvas: #f7f3ee;
+  --surface: #ffffff;
+  --surface-muted: #faf7f3;
+  --surface-sunken: #f3ebe1;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --ink: #1d1b1a;
+  --ink-muted: #5f5148;
+  --ink-subtle: #75604f;
+
+  --line: #e7d8c6;
+  --line-strong: #d5c4ad;
+
+  --accent: #8a6743;
+  --accent-ink: #6e4d2e;
+  --accent-soft: #f5ebde;
+
+  --primary: #1d1b1a;
+  --primary-hover: #342c26;
+  --primary-fg: #ffffff;
+
+  --success: #276b44;
+  --success-soft: #e8f4ec;
+  --danger: #a63a2d;
+  --danger-soft: #fdf1ee;
+  --warning: #8a5a12;
+  --warning-soft: #fbf0dc;
+
+  --focus-ring: #8a6743;
+  --card-shadow: 0 18px 55px rgba(49, 31, 13, 0.08);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --canvas: #14110f;
+    --surface: #1c1917;
+    --surface-muted: #221e1b;
+    --surface-sunken: #2a2521;
+
+    --ink: #f5efe8;
+    --ink-muted: #c9bbac;
+    --ink-subtle: #ab9a88;
+
+    --line: #362e27;
+    --line-strong: #4a3f35;
+
+    --accent: #dcb083;
+    --accent-ink: #f0dcc3;
+    --accent-soft: #2f251c;
+
+    --primary: #ecdfd0;
+    --primary-hover: #dccbb6;
+    --primary-fg: #1d1b1a;
+
+    --success: #7fd1a0;
+    --success-soft: #17271d;
+    --danger: #f0a094;
+    --danger-soft: #2d1815;
+    --warning: #e0b165;
+    --warning-soft: #2b2213;
+
+    --focus-ring: #dcb083;
+    --card-shadow: 0 18px 55px rgba(0, 0, 0, 0.45);
   }
 }
 
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-surface-sunken: var(--surface-sunken);
+
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-subtle: var(--ink-subtle);
+
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-fg: var(--primary-fg);
+
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+
+  --radius-control: 1rem;
+  --radius-card: 1.75rem;
+
+  --shadow-card: var(--card-shadow);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+
+/* A single, consistent focus indicator everywhere, including for keyboard
+   users on custom controls. */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* The eyebrow label repeated above every page title. */
+.eyebrow {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* The kitchen report is printed daily: drop the chrome, force legible ink on
+   white, and keep a reservation from being split across two pages. */
+@media print {
+  :root {
+    --canvas: #ffffff;
+    --surface: #ffffff;
+    --surface-muted: #ffffff;
+    --surface-sunken: #ffffff;
+    --ink: #000000;
+    --ink-muted: #333333;
+    --ink-subtle: #444444;
+    --line: #999999;
+    --line-strong: #666666;
+    --card-shadow: none;
+  }
+
+  body {
+    background: #ffffff;
+  }
+
+  [data-print="hide"] {
+    display: none !important;
+  }
+
+  [data-print="only"] {
+    display: block !important;
+  }
+
+  table {
+    break-inside: auto;
+  }
+
+  tr {
+    break-inside: avoid;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+}
+
+[data-print="only"] {
+  display: none;
 }

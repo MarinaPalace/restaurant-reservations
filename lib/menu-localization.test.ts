@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getLocalizedText, localizeMenuCatalog } from "@/lib/services/restaurant";
+import { getLocalizedText, localizeMenuCatalog } from "@/lib/menu-localization";
 
 describe("menu localization", () => {
   it("falls back to English labels when a translation is missing", () => {

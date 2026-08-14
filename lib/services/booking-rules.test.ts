@@ -1,171 +1,164 @@
 import { describe, expect, it } from "vitest";
 import { validateReservationRequest } from "@/lib/services/booking-rules";
+import type { MenuCourse, ReservationSelection, RestaurantDateAvailability } from "@/types/booking";
 
-const menu = [
-  {
-    id: "course-1",
+const NOW = new Date(2026, 7, 14, 12);
+const DINNER_DATE = "2026-08-18";
+
+function course(id: string, name: string, optionIds: string[], overrides: Partial<MenuCourse> = {}): MenuCourse {
+  return {
+    id,
     order: 1,
-    name: "Amuse Bouche",
+    name,
     description: "",
     required: true,
     active: true,
-    options: [{ id: "opt-1", courseId: "course-1", name: "Chef's Selection", description: "", allergens: [], active: true }],
-  },
-  {
-    id: "course-2",
-    order: 2,
-    name: "Starter",
-    description: "",
-    required: true,
-    active: true,
-    options: [
-      { id: "opt-2", courseId: "course-2", name: "Option A", description: "", allergens: [], active: true },
-      { id: "opt-3", courseId: "course-2", name: "Option B", description: "", allergens: [], active: true },
-    ],
-  },
-  {
-    id: "course-3",
-    order: 3,
-    name: "Soup",
-    description: "",
-    required: true,
-    active: true,
-    options: [
-      { id: "opt-4", courseId: "course-3", name: "Soup A", description: "", allergens: [], active: true },
-      { id: "opt-5", courseId: "course-3", name: "Soup B", description: "", allergens: [], active: true },
-    ],
-  },
-  {
-    id: "course-4",
-    order: 4,
-    name: "Main Course",
-    description: "",
-    required: true,
-    active: true,
-    options: [
-      { id: "opt-6", courseId: "course-4", name: "Main A", description: "", allergens: [], active: true },
-      { id: "opt-7", courseId: "course-4", name: "Main B", description: "", allergens: [], active: true },
-    ],
-  },
-  {
-    id: "course-5",
-    order: 5,
-    name: "Dessert",
-    description: "",
-    required: true,
-    active: true,
-    options: [
-      { id: "opt-8", courseId: "course-5", name: "Dessert A", description: "", allergens: [], active: true },
-      { id: "opt-9", courseId: "course-5", name: "Dessert B", description: "", allergens: [], active: true },
-    ],
-  },
-  {
-    id: "course-6",
-    order: 6,
-    name: "Petit Four",
-    description: "",
-    required: true,
-    active: true,
-    options: [{ id: "opt-10", courseId: "course-6", name: "Chef's Selection", description: "", allergens: [], active: true }],
-  },
+    options: optionIds.map((optionId) => ({
+      id: optionId,
+      courseId: id,
+      name: optionId,
+      description: "",
+      allergens: [],
+      active: true,
+    })),
+    ...overrides,
+  };
+}
+
+const menu: MenuCourse[] = [
+  course("course-1", "Amuse Bouche", ["opt-1"]),
+  course("course-2", "Starter", ["opt-2", "opt-3"]),
+  course("course-3", "Main Course", ["opt-4", "opt-5"]),
 ];
+
+function selectionsForGuest(guestIndex: number, optionIds: [string, string, string]): ReservationSelection[] {
+  return [
+    { guestIndex, courseId: "course-1", courseName: "Amuse Bouche", optionId: optionIds[0], optionName: "A" },
+    { guestIndex, courseId: "course-2", courseName: "Starter", optionId: optionIds[1], optionName: "B" },
+    { guestIndex, courseId: "course-3", courseName: "Main Course", optionId: optionIds[2], optionName: "C" },
+  ];
+}
 
 const validSelections = [
-  { guestIndex: 0, courseId: "course-1", courseName: "Amuse Bouche", optionId: "opt-1", optionName: "Chef's Selection" },
-  { guestIndex: 0, courseId: "course-2", courseName: "Starter", optionId: "opt-2", optionName: "Option A" },
-  { guestIndex: 0, courseId: "course-3", courseName: "Soup", optionId: "opt-4", optionName: "Soup A" },
-  { guestIndex: 0, courseId: "course-4", courseName: "Main Course", optionId: "opt-6", optionName: "Main A" },
-  { guestIndex: 0, courseId: "course-5", courseName: "Dessert", optionId: "opt-8", optionName: "Dessert A" },
-  { guestIndex: 0, courseId: "course-6", courseName: "Petit Four", optionId: "opt-10", optionName: "Chef's Selection" },
-  { guestIndex: 1, courseId: "course-1", courseName: "Amuse Bouche", optionId: "opt-1", optionName: "Chef's Selection" },
-  { guestIndex: 1, courseId: "course-2", courseName: "Starter", optionId: "opt-3", optionName: "Option B" },
-  { guestIndex: 1, courseId: "course-3", courseName: "Soup", optionId: "opt-5", optionName: "Soup B" },
-  { guestIndex: 1, courseId: "course-4", courseName: "Main Course", optionId: "opt-7", optionName: "Main B" },
-  { guestIndex: 1, courseId: "course-5", courseName: "Dessert", optionId: "opt-9", optionName: "Dessert B" },
-  { guestIndex: 1, courseId: "course-6", courseName: "Petit Four", optionId: "opt-10", optionName: "Chef's Selection" },
+  ...selectionsForGuest(0, ["opt-1", "opt-2", "opt-4"]),
+  ...selectionsForGuest(1, ["opt-1", "opt-3", "opt-5"]),
 ];
 
-describe("reservation validation", () => {
-  it("allows a valid reservation", () => {
-    const result = validateReservationRequest({
-      roomNumber: 1234,
-      guestCount: 2,
-      date: "2026-08-18",
-      selections: validSelections,
-      restaurantDate: { date: "2026-08-18", isOpen: true, capacity: 40, reservedSeats: 10, remainingSeats: 30 },
-      menu,
-    });
+function availability(overrides: Partial<RestaurantDateAvailability> = {}): RestaurantDateAvailability {
+  return { date: DINNER_DATE, isOpen: true, capacity: 40, reservedSeats: 10, remainingSeats: 30, ...overrides };
+}
 
-    expect(result.ok).toBe(true);
+function validate(overrides: Partial<Parameters<typeof validateReservationRequest>[0]> = {}) {
+  return validateReservationRequest({
+    roomNumber: 402,
+    guestCount: 2,
+    date: DINNER_DATE,
+    selections: validSelections,
+    restaurantDate: availability(),
+    menu,
+    now: NOW,
+    ...overrides,
+  });
+}
+
+describe("reservation validation", () => {
+  it("allows a complete reservation", () => {
+    expect(validate().ok).toBe(true);
   });
 
-  it("rejects missing required menu selections", () => {
-    const result = validateReservationRequest({
-      roomNumber: 1234,
-      guestCount: 2,
-      date: "2026-08-18",
-      selections: validSelections.slice(0, 5),
-      restaurantDate: { date: "2026-08-18", isOpen: true, capacity: 40, reservedSeats: 10, remainingSeats: 30 },
-      menu,
-    });
+  it("rejects an invalid room number", () => {
+    expect(validate({ roomNumber: 0 }).error).toContain("valid room number");
+    expect(validate({ roomNumber: -3 }).error).toContain("valid room number");
+  });
 
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain("Please choose an option");
+  it("rejects a party larger than the restaurant accepts", () => {
+    expect(validate({ guestCount: 7 }).error).toContain("valid guest count");
+    expect(validate({ guestCount: 0 }).error).toContain("valid guest count");
+  });
+
+  it("rejects a date in the past", () => {
+    expect(validate({ date: "2026-08-13", restaurantDate: availability({ date: "2026-08-13" }) }).error).toContain(
+      "already passed",
+    );
   });
 
   it("rejects a closed date", () => {
-    const result = validateReservationRequest({
-      roomNumber: 1234,
-      guestCount: 2,
-      date: "2026-08-20",
-      selections: validSelections,
-      restaurantDate: { date: "2026-08-20", isOpen: false, capacity: 40, reservedSeats: 0, remainingSeats: 40 },
-      menu,
-    });
+    expect(validate({ restaurantDate: availability({ isOpen: false }) }).error).toContain("no longer available");
+  });
 
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain("no longer available");
+  it("rejects a date that is not configured at all", () => {
+    expect(validate({ restaurantDate: null }).error).toContain("no longer available");
   });
 
   it("rejects a fully booked date", () => {
-    const result = validateReservationRequest({
-      roomNumber: 1234,
-      guestCount: 2,
-      date: "2026-08-22",
-      selections: validSelections,
-      restaurantDate: { date: "2026-08-22", isOpen: true, capacity: 40, reservedSeats: 40, remainingSeats: 0 },
-      menu,
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain("fully booked");
+    expect(validate({ restaurantDate: availability({ reservedSeats: 40, remainingSeats: 0 }) }).error).toContain(
+      "fully booked",
+    );
   });
 
-  it("rejects guest count above remaining capacity", () => {
-    const result = validateReservationRequest({
-      roomNumber: 1234,
-      guestCount: 4,
-      date: "2026-08-18",
-      selections: validSelections,
-      restaurantDate: { date: "2026-08-18", isOpen: true, capacity: 40, reservedSeats: 38, remainingSeats: 2 },
-      menu,
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain("fully booked");
+  it("rejects a party larger than the seats left", () => {
+    expect(
+      validate({ guestCount: 4, restaurantDate: availability({ reservedSeats: 38, remainingSeats: 2 }) }).error,
+    ).toContain("fully booked");
   });
 
-  it("rejects invalid menu options", () => {
-    const result = validateReservationRequest({
-      roomNumber: 1234,
-      guestCount: 2,
-      date: "2026-08-18",
-      selections: [{ ...validSelections[0], optionId: "bad-option" }, ...validSelections.slice(1)],
-      restaurantDate: { date: "2026-08-18", isOpen: true, capacity: 40, reservedSeats: 10, remainingSeats: 30 },
-      menu,
-    });
+  it("rejects missing required courses", () => {
+    expect(validate({ selections: validSelections.slice(0, 5) }).error).toContain("Please choose an option");
+  });
 
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain("Invalid menu option");
+  it("rejects an unknown menu option", () => {
+    const tampered = [{ ...validSelections[0], optionId: "opt-not-real" }, ...validSelections.slice(1)];
+    expect(validate({ selections: tampered }).error).toContain("Invalid menu option");
+  });
+
+  it("rejects an option that staff have switched off", () => {
+    const menuWithInactiveOption: MenuCourse[] = [
+      menu[0],
+      {
+        ...menu[1],
+        options: menu[1].options.map((option) => (option.id === "opt-2" ? { ...option, active: false } : option)),
+      },
+      menu[2],
+    ];
+
+    expect(validate({ menu: menuWithInactiveOption }).error).toContain("Invalid menu option");
+  });
+
+  it("rejects two choices for the same course", () => {
+    const doubled = [
+      ...validSelections,
+      { guestIndex: 0, courseId: "course-2", courseName: "Starter", optionId: "opt-3", optionName: "B" },
+    ];
+
+    expect(validate({ selections: doubled }).error).toContain("only one option");
+  });
+
+  it("rejects choices for a guest who is not on the booking", () => {
+    const extraGuest = [...validSelections, ...selectionsForGuest(4, ["opt-1", "opt-2", "opt-4"])];
+    expect(validate({ selections: extraGuest }).error).toContain("valid guest count");
+  });
+
+  /**
+   * Regression test: the route used to require an explicit guestIndex, so a
+   * single-guest booking sent by an older client was rejected with "Please
+   * choose an option for Amuse Bouche" even though every course was chosen.
+   */
+  it("accepts a single-guest booking sent without a guest index", () => {
+    const legacySelections = selectionsForGuest(0, ["opt-1", "opt-2", "opt-4"]).map((entry) => ({
+      courseId: entry.courseId,
+      courseName: entry.courseName,
+      optionId: entry.optionId,
+      optionName: entry.optionName,
+    }));
+
+    const result = validate({ guestCount: 1, selections: legacySelections });
+
+    expect(result.ok).toBe(true);
+    expect(result.selections?.every((entry) => entry.guestIndex === 0)).toBe(true);
+  });
+
+  it("ignores courses that are not required", () => {
+    const menuWithOptionalCourse = [...menu, course("course-4", "Cheese", ["opt-6"], { required: false })];
+    expect(validate({ menu: menuWithOptionalCourse }).ok).toBe(true);
   });
 });

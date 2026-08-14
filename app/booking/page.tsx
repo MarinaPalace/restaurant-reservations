@@ -1,63 +1,80 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { PageShell } from "@/components/page-shell";
+import { BookingSteps } from "@/components/booking-steps";
+import { Card, CardHeader } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Field, Input } from "@/components/ui/field";
+import { useBookingSession, writeBookingSession } from "@/hooks/use-booking-session";
+import { isValidRoomNumber } from "@/lib/booking-session";
 
 export default function BookingPage() {
   const router = useRouter();
-  const [roomNumber, setRoomNumber] = useState("");
+  const session = useBookingSession();
+  const [roomNumber, setRoomNumber] = useState<string | null>(null);
   const [error, setError] = useState("");
 
-  const handleContinue = () => {
-    const trimmed = roomNumber.trim();
-    if (!/^\d+$/.test(trimmed)) {
-      setError("Please enter a valid room number.");
+  // Falls back to whatever is already in the session until the guest types.
+  const value = roomNumber ?? session.roomNumber;
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    const trimmed = value.trim();
+
+    if (!isValidRoomNumber(trimmed)) {
+      setError("Please enter your room number using digits only.");
       return;
     }
 
-    sessionStorage.setItem("booking-room-number", trimmed);
+    writeBookingSession({ roomNumber: trimmed });
     router.push("/booking/guests");
   };
 
-  const roomHelp = useMemo(() => roomNumber.trim() ? roomNumber.trim() : "Room Number", [roomNumber]);
-
   return (
-    <main className="min-h-screen bg-[#f7f3ee] p-4 text-[#1d1b1a]">
-      <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center">
-        <div className="rounded-[28px] border border-[#e7d8c6] bg-white p-6 shadow-[0_18px_55px_rgba(49,31,13,0.08)]">
-          <div className="mb-6 text-center">
-            <p className="text-xs font-medium uppercase tracking-[0.22em] text-[#8e6b49]">À LA CARTE RESTAURANT</p>
-            <h1 className="mt-4 text-4xl font-semibold tracking-tight text-[#1d1b1a]">Reserve Your Dinner</h1>
-          </div>
+    <PageShell width="sm">
+      <BookingSteps current="room" />
+      <Card className="p-6">
+        <CardHeader
+          as="h1"
+          align="center"
+          eyebrow="À la carte restaurant"
+          title="Reserve your dinner"
+          description="Your table is booked to your room, so we can find your reservation at the door."
+        />
 
-          <label className="mb-2 block text-base font-medium text-[#2a231d]">Please enter your room number to begin.</label>
-          <input
-            aria-label="Room Number"
-            inputMode="numeric"
-            value={roomNumber}
-            onChange={(event) => {
-              setRoomNumber(event.target.value.replace(/\D+/g, ""));
-              setError("");
-            }}
-            placeholder="Room Number"
-            className="w-full rounded-2xl border border-[#d5c4ad] bg-[#fffdfb] px-4 py-4 text-xl outline-none transition focus:border-[#8e6b49] focus:ring-4 focus:ring-[#8e6b49]/10"
-          />
+        {/* A real form: the on-screen keyboard shows "Go", and Enter submits. */}
+        <form onSubmit={handleSubmit} noValidate className="mt-6 space-y-6">
+          <Field label="Room number" error={error}>
+            {(fieldProps) => (
+              <Input
+                {...fieldProps}
+                name="roomNumber"
+                inputMode="numeric"
+                autoComplete="off"
+                autoFocus
+                maxLength={6}
+                placeholder="e.g. 402"
+                value={value}
+                onChange={(event) => {
+                  setRoomNumber(event.target.value.replace(/\D+/g, ""));
+                  setError("");
+                }}
+                className="text-xl"
+              />
+            )}
+          </Field>
 
-          {error ? <p className="mt-3 text-sm font-medium text-[#a63a2d]">{error}</p> : null}
-
-          <button
-            type="button"
-            onClick={handleContinue}
-            className="mt-6 flex w-full items-center justify-center rounded-2xl bg-[#1d1b1a] px-5 py-4 text-lg font-semibold text-white shadow-sm transition hover:bg-[#2e2723]"
-          >
+          <Button type="submit" size="lg" className="w-full">
             Continue
-          </button>
+          </Button>
+        </form>
 
-          <div className="mt-6 rounded-2xl border border-[#efe4d4] bg-[#f9f5f1] p-3 text-sm text-[#5f5148]">
-            Guest service hotline: <span className="font-semibold text-[#1d1b1a]">{roomHelp}</span>
-          </div>
-        </div>
-      </div>
-    </main>
+        <p className="mt-6 rounded-control border border-line bg-surface-muted p-3 text-sm text-ink-muted">
+          Need help? Dial <span className="font-semibold text-ink">9</span> from your room to reach guest services.
+        </p>
+      </Card>
+    </PageShell>
   );
 }

@@ -1,72 +1,104 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { PageShell } from "@/components/page-shell";
+import { BookingSteps } from "@/components/booking-steps";
+import { Card, CardHeader } from "@/components/ui/card";
+import { Button, ButtonLink } from "@/components/ui/button";
+import { Alert } from "@/components/ui/feedback";
+import { useBookingGuard, writeBookingSession } from "@/hooks/use-booking-session";
+import { pruneSelectionsToGuestCount } from "@/lib/booking-session";
+import { MAX_GUESTS_PER_RESERVATION } from "@/lib/validation/booking";
+import { cx } from "@/components/ui/utils";
 
-const GUEST_OPTIONS = [1, 2, 3, 4, 5, 6];
+const GUEST_OPTIONS = Array.from({ length: MAX_GUESTS_PER_RESERVATION }, (_, index) => index + 1);
 
 export default function GuestsPage() {
   const router = useRouter();
-  const [selected, setSelected] = useState<number | null>(null);
-  const [roomNumber, setRoomNumber] = useState("");
+  const { session, ready } = useBookingGuard(["room"]);
+  const [choice, setChoice] = useState<number | null>(null);
+  const [error, setError] = useState("");
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const saved = Number(window.sessionStorage.getItem("booking-guest-count") ?? "");
-      setSelected(Number.isFinite(saved) && saved > 0 ? saved : null);
-      setRoomNumber(window.sessionStorage.getItem("booking-room-number") ?? "");
-    }
-  }, []);
+  const selected = choice ?? (session.guestCount > 0 ? session.guestCount : null);
 
-  const continueBooking = () => {
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+
     if (!selected) {
+      setError("Please choose how many guests will be dining.");
       return;
     }
 
-    sessionStorage.setItem("booking-guest-count", String(selected));
+    // Reducing the party size must drop the menu choices of guests who are no
+    // longer coming, or the summary would submit stale selections.
+    writeBookingSession({
+      guestCount: selected,
+      selections: pruneSelectionsToGuestCount(session.selections, selected),
+    });
     router.push("/booking/date");
   };
 
   return (
-    <main className="min-h-screen bg-[#f7f3ee] p-4 text-[#1d1b1a]">
-      <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center">
-        <div className="rounded-[28px] border border-[#e7d8c6] bg-white p-6 shadow-[0_18px_55px_rgba(49,31,13,0.08)]">
-          <div className="mb-5 text-center">
-            <p className="text-xs font-medium uppercase tracking-[0.22em] text-[#8e6b49]">ROOM {roomNumber || "---"}</p>
-            <h2 className="mt-4 text-3xl font-semibold tracking-tight text-[#1d1b1a]">How many guests will be dining?</h2>
-          </div>
+    <PageShell width="sm">
+      <BookingSteps current="guests" />
+      <Card className="p-6">
+        <CardHeader
+          as="h1"
+          align="center"
+          eyebrow={ready && session.roomNumber ? `Room ${session.roomNumber}` : "Room"}
+          title="How many guests?"
+          description="Every guest chooses their own menu on the next step."
+        />
 
-          <div className="grid grid-cols-3 gap-3">
-            {GUEST_OPTIONS.map((option) => {
-              const isSelected = selected === option;
-              return (
-                <button
-                  key={option}
-                  type="button"
-                  onClick={() => setSelected(option)}
-                  className={[
-                    "rounded-2xl border px-4 py-5 text-center text-2xl font-semibold transition",
-                    isSelected
-                      ? "border-[#1d1b1a] bg-[#1d1b1a] text-white shadow-sm"
-                      : "border-[#d7c8b6] bg-[#fffdfb] text-[#1d1b1a] hover:border-[#8e6b49]",
-                  ].join(" ")}
-                >
-                  {option}
-                </button>
-              );
-            })}
-          </div>
+        <form onSubmit={handleSubmit} className="mt-6">
+          <fieldset>
+            <legend className="sr-only">Number of guests</legend>
+            <div role="radiogroup" aria-label="Number of guests" className="grid grid-cols-3 gap-3">
+              {GUEST_OPTIONS.map((option) => {
+                const isSelected = selected === option;
 
-          <button
-            type="button"
-            onClick={continueBooking}
-            disabled={!selected}
-            className="mt-6 flex w-full items-center justify-center rounded-2xl bg-[#1d1b1a] px-5 py-4 text-lg font-semibold text-white shadow-sm transition hover:bg-[#2e2723] disabled:cursor-not-allowed disabled:bg-[#c7b8a4]"
-          >
-            Continue
-          </button>
-        </div>
-      </div>
-    </main>
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    role="radio"
+                    aria-checked={isSelected}
+                    onClick={() => {
+                      setChoice(option);
+                      setError("");
+                    }}
+                    className={cx(
+                      "rounded-control border px-4 py-5 text-center text-2xl font-semibold transition-colors",
+                      isSelected
+                        ? "border-primary bg-primary text-primary-fg"
+                        : "border-line-strong bg-surface text-ink hover:border-accent",
+                    )}
+                  >
+                    {option}
+                    <span className="sr-only"> {option === 1 ? "guest" : "guests"}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </fieldset>
+
+          {error ? (
+            <Alert tone="danger" className="mt-4">
+              {error}
+            </Alert>
+          ) : null}
+
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+            <ButtonLink href="/booking" size="lg" className="flex-1">
+              Back
+            </ButtonLink>
+            <Button type="submit" size="lg" disabled={!selected} className="flex-1">
+              Continue
+            </Button>
+          </div>
+        </form>
+      </Card>
+    </PageShell>
   );
 }

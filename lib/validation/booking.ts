@@ -1,16 +1,9 @@
 import { z } from "zod";
+import { isValidDateKey } from "@/lib/date";
 
-export const roomNumberSchema = z
-  .string()
-  .trim()
-  .min(1, "Please enter a valid room number.")
-  .refine((value) => /^\d+$/.test(value), "Please enter a valid room number.");
+export const MAX_GUESTS_PER_RESERVATION = 6;
 
-export const guestCountSchema = z
-  .number()
-  .int()
-  .min(1, "Please select at least one guest.")
-  .max(6, "Guest count is not available for this reservation.");
+const dateKeySchema = z.string().refine(isValidDateKey, "Please choose a valid dinner date.");
 
 export const reservationSelectionSchema = z.object({
   guestIndex: z.number().int().nonnegative().optional(),
@@ -22,15 +15,54 @@ export const reservationSelectionSchema = z.object({
 
 export const createReservationSchema = z.object({
   roomNumber: z.coerce.number().int().positive(),
-  guestCount: guestCountSchema,
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  guestCount: z.number().int().min(1).max(MAX_GUESTS_PER_RESERVATION),
+  date: dateKeySchema,
   selections: z.array(reservationSelectionSchema).min(1),
 });
 
-export const dateAvailabilitySchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+export type CreateReservationInput = z.infer<typeof createReservationSchema>;
+
+export const restaurantDateSchema = z.object({
+  date: dateKeySchema,
   isOpen: z.boolean(),
-  capacity: z.number().int().nonnegative(),
-  reservedSeats: z.number().int().nonnegative(),
-  remainingSeats: z.number().int().nonnegative(),
+  capacity: z.number().int().min(0).max(10_000),
+});
+
+const menuTranslationSchema = z.object({
+  name: z.string().optional(),
+  description: z.string().optional(),
+});
+
+export const menuCatalogSchema = z.object({
+  courses: z
+    .array(
+      z.object({
+        id: z.string().optional(),
+        order: z.number().int().min(1),
+        name: z.string().min(1, "Every course needs a name."),
+        description: z.string().default(""),
+        required: z.boolean().default(true),
+        active: z.boolean().default(true),
+        imageUrl: z.string().default(""),
+        translations: z.record(z.string(), menuTranslationSchema).optional(),
+        options: z.array(
+          z.object({
+            id: z.string().optional(),
+            courseId: z.string().optional(),
+            name: z.string().min(1, "Every option needs a name."),
+            description: z.string().default(""),
+            allergens: z.array(z.string()).default([]),
+            active: z.boolean().default(true),
+            imageUrl: z.string().default(""),
+            translations: z.record(z.string(), menuTranslationSchema).optional(),
+          }),
+        ),
+      }),
+    )
+    .max(50),
+});
+
+export const adminLoginSchema = z.object({
+  username: z.string().min(1).max(200),
+  password: z.string().min(1).max(200),
 });

@@ -1,0 +1,224 @@
+import { randomUUID } from "crypto";
+import { getDataFilePath, readJsonFile, writeJsonFile } from "@/lib/db/json-file";
+import { DEFAULT_MENU, buildDefaultDates } from "@/lib/db/seed-data";
+import {
+  withRemainingSeats,
+  type MenuCourse,
+  type ReservationRecord,
+  type RestaurantDateAvailability,
+  type StoredRestaurantDate,
+} from "@/types/booking";
+
+/**
+ * File-backed store used when MONGODB_URI is not configured.
+ *
+ * It replaces the previous in-memory mock, which lost every reservation on
+ * restart and — more importantly — never actually consumed seats, so the
+ * restaurant could be booked past capacity indefinitely.
+ */
+
+const MENU_FILE = "menu.json";
+const DATES_FILE = "dates.json";
+const RESERVATIONS_FILE = "reservations.json";
+
+/**
+ * A single lock covers the whole store: creating a reservation touches both
+ * the reservations file and the dates file, and those two writes must not
+ * interleave with another booking's read-modify-write cycle.
+ */
+let storeLock: Promise<unknown> = Promise.resolve();
+
+function withStoreLock<T>(operation: () => Promise<T>): Promise<T> {
+  const result = storeLock.catch(() => undefined).then(operation);
+  storeLock = result.catch(() => undefined);
+  return result;
+}
+
+async function readMenu(): Promise<MenuCourse[]> {
+  const menu = await readJsonFile<MenuCourse[]>(getDataFilePath(MENU_FILE), []);
+  if (!Array.isArray(menu) || menu.length === 0) {
+    await writeJsonFile(getDataFilePath(MENU_FILE), DEFAULT_MENU);
+    return structuredClone(DEFAULT_MENU);
+  }
+  return menu;
+}
+
+async function readDates(): Promise<StoredRestaurantDate[]> {
+  const dates = await readJsonFile<StoredRestaurantDate[]>(getDataFilePath(DATES_FILE), []);
+  if (!Array.isArray(dates) || dates.length === 0) {
+    const seeded = buildDefaultDates();
+    await writeJsonFile(getDataFilePath(DATES_FILE), seeded);
+    return seeded;
+  }
+  return dates;
+}
+
+async function readReservations(): Promise<ReservationRecord[]> {
+  const reservations = await readJsonFile<ReservationRecord[]>(getDataFilePath(RESERVATIONS_FILE), []);
+  return Array.isArray(reservations) ? reservations : [];
+}
+
+export async function getLocalMenu(): Promise<MenuCourse[]> {
+  return readMenu();
+}
+
+/** Persists the menu, assigning stable ids to newly drafted courses/options. */
+export async function saveLocalMenu(courses: MenuCourse[]): Promise<MenuCourse[]> {
+  return withStoreLock(async () => {
+    const normalized = courses.map((course) => {
+      const courseId = course.id && !course.id.startsWith("draft-") ? course.id : `course-${randomUUID()}`;
+
+      return {
+        ...course,
+        id: courseId,
+        options: (course.options ?? []).map((option) => ({
+          ...option,
+          id: option.id && !option.id.startsWith("draft-") ? option.id : `option-${randomUUID()}`,
+          courseId,
+        })),
+      };
+    });
+
+    await writeJsonFile(getDataFilePath(MENU_FILE), normalized);
+    return normalized;
+  });
+}
+
+export async function getLocalDates(): Promise<RestaurantDateAvailability[]> {
+  const dates = await readDates();
+  return [...dates].sort((a, b) => a.date.localeCompare(b.date)).map(withRemainingSeats);
+}
+
+export async function getLocalDate(date: string): Promise<RestaurantDateAvailability | null> {
+  const dates = await readDates();
+  const match = dates.find((entry) => entry.date === date);
+  return match ? withRemainingSeats(match) : null;
+}
+
+export async function upsertLocalDate(input: {
+  date: string;
+  isOpen: boolean;
+  capacity: number;
+}): Promise<RestaurantDateAvailability> {
+  return withStoreLock(async () => {
+    const dates = await readDates();
+    const index = dates.findIndex((entry) => entry.date === input.date);
+
+    const next: StoredRestaurantDate =
+      index === -1
+        ? { date: input.date, isOpen: input.isOpen, capacity: input.capacity, reservedSeats: 0 }
+        : { ...dates[index], isOpen: input.isOpen, capacity: input.capacity };
+
+    if (index === -1) {
+      dates.push(next);
+    } else {
+      dates[index] = next;
+    }
+
+    await writeJsonFile(getDataFilePath(DATES_FILE), dates);
+    return withRemainingSeats(next);
+  });
+}
+
+export async function listLocalReservations(): Promise<ReservationRecord[]> {
+  const reservations = await readReservations();
+  return [...reservations].sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+}
+
+export async function getLocalReservation(reservationNumber: string): Promise<ReservationRecord | null> {
+  const reservations = await readReservations();
+  return reservations.find((entry) => entry.reservationNumber === reservationNumber) ?? null;
+}
+
+export type LocalBookingResult =
+  | { ok: true; reservation: ReservationRecord }
+  | { ok: false; reason: "DATE_CLOSED" | "DATE_FULL" };
+
+/**
+ * Creates a reservation and consumes the seats in the same locked section, so
+ * two guests booking the last table at once cannot both succeed.
+ */
+export async function createLocalReservation(input: {
+  reservationNumber: string;
+  roomNumber: number;
+  guestCount: number;
+  date: string;
+  selections: ReservationRecord["selections"];
+}): Promise<LocalBookingResult> {
+  return withStoreLock(async () => {
+    const dates = await readDates();
+    const index = dates.findIndex((entry) => entry.date === input.date);
+    const dateEntry = index === -1 ? null : dates[index];
+
+    if (!dateEntry || !dateEntry.isOpen) {
+      return { ok: false, reason: "DATE_CLOSED" };
+    }
+
+    const remainingSeats = Math.max(dateEntry.capacity - dateEntry.reservedSeats, 0);
+    if (remainingSeats < input.guestCount) {
+      return { ok: false, reason: "DATE_FULL" };
+    }
+
+    const timestamp = new Date().toISOString();
+    const reservation: ReservationRecord = {
+      reservationNumber: input.reservationNumber,
+      roomNumber: input.roomNumber,
+      guestCount: input.guestCount,
+      date: input.date,
+      selections: input.selections,
+      status: "confirmed",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+
+    const reservations = await readReservations();
+    reservations.push(reservation);
+    dates[index] = { ...dateEntry, reservedSeats: dateEntry.reservedSeats + input.guestCount };
+
+    await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    await writeJsonFile(getDataFilePath(DATES_FILE), dates);
+
+    return { ok: true, reservation };
+  });
+}
+
+/** Cancels a reservation and releases its seats. Cancelling twice is a no-op. */
+export async function cancelLocalReservation(reservationNumber: string): Promise<ReservationRecord | null> {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    const index = reservations.findIndex((entry) => entry.reservationNumber === reservationNumber);
+    if (index === -1) {
+      return null;
+    }
+
+    const reservation = reservations[index];
+    if (reservation.status === "cancelled") {
+      return reservation;
+    }
+
+    const cancelled: ReservationRecord = {
+      ...reservation,
+      status: "cancelled",
+      updatedAt: new Date().toISOString(),
+    };
+    reservations[index] = cancelled;
+
+    const dates = await readDates();
+    const dateIndex = dates.findIndex((entry) => entry.date === reservation.date);
+    if (dateIndex !== -1) {
+      dates[dateIndex] = {
+        ...dates[dateIndex],
+        reservedSeats: Math.max(dates[dateIndex].reservedSeats - reservation.guestCount, 0),
+      };
+      await writeJsonFile(getDataFilePath(DATES_FILE), dates);
+    }
+
+    await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    return cancelled;
+  });
+}
+
+export async function reservationNumberExists(reservationNumber: string) {
+  const reservations = await readReservations();
+  return reservations.some((entry) => entry.reservationNumber === reservationNumber);
+}

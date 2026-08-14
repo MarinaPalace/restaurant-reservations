@@ -10,6 +10,7 @@ import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
 import { validateReservationRequest } from "@/lib/services/booking-rules";
 import { staffReservationPatchSchema } from "@/lib/validation/booking";
 import { normalizeContact } from "@/lib/contact";
+import { canonicalizeSelections } from "@/lib/menu-selection";
 import { pruneSelectionsToGuestCount } from "@/lib/booking-session";
 
 /**
@@ -84,7 +85,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ re
       roomNumber: parsed.data.roomNumber,
       guestCount: parsed.data.guestCount,
       date: parsed.data.date,
-      selections: validation.selections,
+      selections: canonicalizeSelections(validation.selections, menu),
       notes: parsed.data.notes,
       contact: parsed.data.contact ? normalizeContact(parsed.data.contact) : undefined,
       tableNumber: parsed.data.tableNumber,

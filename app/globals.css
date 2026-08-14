@@ -148,6 +148,40 @@ body {
 /* The kitchen report is printed daily: drop the chrome, force legible ink on
    white, and keep a reservation from being split across two pages. */
 @media print {
+  /*
+   * Print only the sheet. Everything else — the calendar, the stats, the
+   * navigation — is hidden rather than merely un-styled, because staff cut the
+   * printout up and hand the bottom of it to the kitchen.
+   */
+  body * {
+    visibility: hidden !important;
+  }
+
+  [data-print-area],
+  [data-print-area] * {
+    visibility: visible !important;
+  }
+
+  [data-print-area] {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  /* The kitchen slip is cut off the bottom, so keep it whole. */
+  [data-print="prep"] {
+    break-inside: avoid;
+  }
+
+  @page {
+    margin: 10mm;
+  }
+
   :root {
     --canvas: #ffffff;
     --surface: #ffffff;

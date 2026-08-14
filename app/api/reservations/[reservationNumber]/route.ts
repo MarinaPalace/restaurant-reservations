@@ -9,6 +9,7 @@ import { validateReservationRequest } from "@/lib/services/booking-rules";
 import { isAdminAuthenticated } from "@/lib/auth/session";
 import { canGuestModify } from "@/lib/reservation-policy";
 import { roomNumbersMatch } from "@/lib/room";
+import { canonicalizeSelections } from "@/lib/menu-selection";
 import { updateSelectionsSchema } from "@/lib/validation/booking";
 import type { ReservationRecord } from "@/types/booking";
 
@@ -113,7 +114,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ re
       return NextResponse.json({ error: validation.error }, { status: 400 });
     }
 
-    const updated = await updateReservationSelections(reservation.reservationNumber, validation.selections);
+    const updated = await updateReservationSelections(
+      reservation.reservationNumber,
+      canonicalizeSelections(validation.selections, menu),
+    );
     if (!updated) {
       return NextResponse.json(NOT_FOUND, { status: 404 });
     }

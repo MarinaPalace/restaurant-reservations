@@ -59,12 +59,20 @@ UTF-8 BOM so accented and Cyrillic dish names survive the open.
 
 - *Per guest* — the plating list: Table, Room, Guest, a column per course naming the dish, and a
   Comment column carrying allergies and requests.
-- *Per room* — the prep sheet: Table, Room, Guests, then a column for **every option**, grouped
-  under its course, with counts in the cells and a **Total to prepare** row at the bottom. That
-  bottom row is how many of each dish the kitchen makes. Cancelled bookings are excluded from it.
+- *Per table* (the default) — the prep sheet: Table, Room, Guests, then a column for **every
+  option**, grouped under its course, with counts in the cells. Rooms dining together are grouped
+  with a **"Table N together"** subtotal row summing each dish across the table, and a **Total to
+  prepare** row closes the sheet. Cancelled bookings are excluded from both. Cells showing zero are
+  left blank so the counts that matter stand out.
 
-Rooms sharing a table sort together and are shaded as one block. Cells showing zero are left blank
-so the counts that matter stand out.
+**Printing.** Print gives you only the sheet — no calendar, no navigation — followed by a dashed
+cut line and a compact slip listing every dish with its quantity, total plates, and any allergy
+notes. Cut it off and hand it to the kitchen; it carries no tables or room numbers.
+
+**One language for staff.** Guests may book in any translated language, but the course and option
+names stored on a reservation are always the master English wording, resolved from the catalogue
+by id rather than trusted from the client. Bookings taken before this are resolved the same way
+when the sheet is drawn, so old records read in English too.
 
 **Calendar reminders.** The confirmation screen offers Google Calendar and an `.ics` download for
 Apple Calendar and Outlook, including the per-guest menu choices and an alarm three hours before

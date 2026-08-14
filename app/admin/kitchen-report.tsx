@@ -13,13 +13,16 @@ import {
   buildKitchenFileName,
   buildOptionColumns,
   buildOptionTotals,
+  buildPrepList,
   buildRoomCsv,
   buildRoomRows,
   countDeclined,
   countPlates,
   groupOptionColumns,
+  groupRoomRowsByTable,
   type KitchenLayout,
 } from "@/lib/kitchen-report";
+import { canonicalizeReservations } from "@/lib/menu-selection";
 import { formatLongDate } from "@/lib/date";
 import { cx } from "@/components/ui/utils";
 import type { MenuCourse, ReservationRecord } from "@/types/booking";
@@ -27,7 +30,7 @@ import type { MenuCourse, ReservationRecord } from "@/types/booking";
 export function KitchenReport({
   date,
   serviceTime,
-  reservations,
+  reservations: storedReservations,
   menu,
   onAssignTable,
   onCancel,
@@ -43,8 +46,18 @@ export function KitchenReport({
   onDelete: (reservationNumber: string) => Promise<void>;
   busyReservationNumber: string | null;
 }) {
-  const [layout, setLayout] = useState<KitchenLayout>("guest");
+  const [layout, setLayout] = useState<KitchenLayout>("room");
   const [editing, setEditing] = useState<{ reservationNumber: string; value: string } | null>(null);
+
+  /**
+   * Names are resolved against the English menu before anything is rendered,
+   * so a booking taken in Bulgarian or Romanian still reads in English here —
+   * including bookings taken before names were stored canonically.
+   */
+  const reservations = useMemo(
+    () => canonicalizeReservations(storedReservations, menu),
+    [storedReservations, menu],
+  );
 
   const courseColumns = useMemo(() => buildCourseColumns(reservations, menu), [reservations, menu]);
   const optionColumns = useMemo(() => buildOptionColumns(reservations, menu), [reservations, menu]);
@@ -52,7 +65,9 @@ export function KitchenReport({
 
   const guestRows = useMemo(() => buildGuestRows(reservations, courseColumns), [reservations, courseColumns]);
   const roomRows = useMemo(() => buildRoomRows(reservations, optionColumns), [reservations, optionColumns]);
+  const tableGroups = useMemo(() => groupRoomRowsByTable(roomRows, optionColumns), [roomRows, optionColumns]);
   const totals = useMemo(() => buildOptionTotals(roomRows, optionColumns), [roomRows, optionColumns]);
+  const prepList = useMemo(() => buildPrepList(optionColumns, totals), [optionColumns, totals]);
 
   const covers = reservations
     .filter((reservation) => reservation.status === "confirmed")
@@ -78,24 +93,6 @@ export function KitchenReport({
 
     return first;
   }, [guestRows]);
-
-  /** Alternating shading so rooms sharing a table read as one block. */
-  const groupShade = useMemo(() => {
-    const shades = new Map<string, boolean>();
-    let toggle = false;
-    let previous = "";
-
-    for (const row of layout === "guest" ? guestRows : roomRows) {
-      const group = row.tableGroupId ?? row.reservationNumber;
-      if (group !== previous) {
-        toggle = !toggle;
-        previous = group;
-      }
-      shades.set(row.key, toggle);
-    }
-
-    return shades;
-  }, [layout, guestRows, roomRows]);
 
   const hasRows = (layout === "guest" ? guestRows : roomRows).length > 0;
 
@@ -151,8 +148,39 @@ export function KitchenReport({
     );
   };
 
+  const actionsCell = (reservationNumber: string, cancelled: boolean) => (
+    <div className="flex items-center gap-2">
+      <Link
+        href={`/admin/reservation/${reservationNumber}`}
+        className="text-xs underline underline-offset-2 hover:text-accent"
+      >
+        {reservationNumber}
+      </Link>
+      {!cancelled ? (
+        <Button
+          variant="danger"
+          onClick={() => onCancel(reservationNumber)}
+          loading={busyReservationNumber === reservationNumber}
+          loadingLabel="…"
+        >
+          Cancel
+        </Button>
+      ) : (
+        <Badge tone="info">cancelled</Badge>
+      )}
+      <button
+        type="button"
+        onClick={() => onDelete(reservationNumber)}
+        className="text-xs text-ink-subtle underline underline-offset-2 hover:text-danger"
+      >
+        Delete
+      </button>
+    </div>
+  );
+
   return (
-    <Card className="p-5 sm:p-6" as="section">
+    <div data-print-area="">
+      <Card className="p-5 sm:p-6" as="section">
       <CardHeader
         eyebrow="Kitchen report"
         title={formatLongDate(date)}
@@ -166,7 +194,7 @@ export function KitchenReport({
         actions={
           <div className="flex flex-wrap items-center gap-2" data-print="hide">
             <div role="group" aria-label="Sheet layout" className="flex rounded-control border border-line-strong">
-              {(["guest", "room"] as const).map((option) => (
+              {(["room", "guest"] as const).map((option) => (
                 <button
                   key={option}
                   type="button"
@@ -177,7 +205,7 @@ export function KitchenReport({
                     layout === option ? "bg-primary text-primary-fg" : "bg-surface text-ink hover:bg-surface-sunken",
                   )}
                 >
-                  {option === "guest" ? "Per guest" : "Per room"}
+                  {option === "guest" ? "Per guest" : "Per table"}
                 </button>
               ))}
             </div>
@@ -192,7 +220,7 @@ export function KitchenReport({
       />
 
       {!serviceTime ? (
-        <Alert tone="warning" className="mt-4">
+        <Alert tone="warning" className="mt-4" >
           No arrival time is set for this evening. Guests were not told when to arrive.
         </Alert>
       ) : null}
@@ -203,9 +231,7 @@ export function KitchenReport({
         ) : layout === "guest" ? (
           <div className="overflow-x-auto">
             <table className="min-w-full border-collapse text-left text-sm">
-              <caption className="sr-only">
-                Plating list for {formatLongDate(date)}, one row per guest
-              </caption>
+              <caption className="sr-only">Plating list for {formatLongDate(date)}, one row per guest</caption>
               <thead className="bg-surface-sunken text-ink-muted">
                 <tr>
                   <th scope="col" className="whitespace-nowrap px-3 py-2 font-semibold">Table</th>
@@ -227,14 +253,10 @@ export function KitchenReport({
                 {guestRows.map((row) => (
                   <tr
                     key={row.key}
-                    className={cx(
-                      "border-t border-line align-top",
-                      groupShade.get(row.key) && "bg-surface-muted",
-                      row.cancelled && "opacity-50 line-through",
-                    )}
+                    className={cx("border-t border-line align-top", row.cancelled && "opacity-50 line-through")}
                   >
                     <td className="px-3 py-2">{tableCell(row.reservationNumber, row.table)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 font-medium tabular-nums text-ink">{row.room}</td>
+                    <td className="whitespace-nowrap px-3 py-2 font-medium text-ink">{row.room}</td>
                     <td className="whitespace-nowrap px-3 py-2 tabular-nums">{row.guests}</td>
                     {courseColumns.map((column) => (
                       <td key={column.id} className="px-3 py-2">
@@ -254,33 +276,7 @@ export function KitchenReport({
                       ) : null}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2" data-print="hide">
-                      <div className={cx("flex items-center gap-2", !firstRowOfBooking.has(row.key) && "invisible")}>
-                        <Link
-                          href={`/admin/reservation/${row.reservationNumber}`}
-                          className="text-xs underline underline-offset-2 hover:text-accent"
-                        >
-                          {row.reservationNumber}
-                        </Link>
-                        {!row.cancelled ? (
-                          <Button
-                            variant="danger"
-                            onClick={() => onCancel(row.reservationNumber)}
-                            loading={busyReservationNumber === row.reservationNumber}
-                            loadingLabel="…"
-                          >
-                            Cancel
-                          </Button>
-                        ) : (
-                          <Badge tone="info">cancelled</Badge>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => onDelete(row.reservationNumber)}
-                          className="text-xs text-ink-subtle underline underline-offset-2 hover:text-danger"
-                        >
-                          Delete
-                        </button>
-                      </div>
+                      {firstRowOfBooking.has(row.key) ? actionsCell(row.reservationNumber, row.cancelled) : null}
                     </td>
                   </tr>
                 ))}
@@ -291,15 +287,15 @@ export function KitchenReport({
           <div className="overflow-x-auto">
             <table className="min-w-full border-collapse text-left text-sm">
               <caption className="sr-only">
-                Prep counts for {formatLongDate(date)}, one row per room with a column per dish
+                Prep counts for {formatLongDate(date)}, grouped by table with a column per dish
               </caption>
               <thead className="bg-surface-sunken text-ink-muted">
                 {/* Course names span their options, so the sheet reads in
                     groups rather than as one long run of dish names. */}
                 <tr>
-                  <th scope="col" rowSpan={2} className="whitespace-nowrap border-r border-line px-3 py-2 font-semibold align-bottom">Table</th>
-                  <th scope="col" rowSpan={2} className="whitespace-nowrap border-r border-line px-3 py-2 font-semibold align-bottom">Room</th>
-                  <th scope="col" rowSpan={2} className="whitespace-nowrap border-r border-line px-3 py-2 font-semibold align-bottom">Guests</th>
+                  <th scope="col" rowSpan={2} className="whitespace-nowrap border-r border-line px-3 py-2 align-bottom font-semibold">Table</th>
+                  <th scope="col" rowSpan={2} className="whitespace-nowrap border-r border-line px-3 py-2 align-bottom font-semibold">Room</th>
+                  <th scope="col" rowSpan={2} className="whitespace-nowrap border-r border-line px-3 py-2 align-bottom font-semibold">Guests</th>
                   {optionGroups.map((group) => (
                     <th
                       key={group.courseId}
@@ -310,8 +306,8 @@ export function KitchenReport({
                       {group.courseName}
                     </th>
                   ))}
-                  <th scope="col" rowSpan={2} className="px-3 py-2 font-semibold align-bottom">Comment</th>
-                  <th scope="col" rowSpan={2} className="px-3 py-2 font-semibold align-bottom" data-print="hide">
+                  <th scope="col" rowSpan={2} className="px-3 py-2 align-bottom font-semibold">Comment</th>
+                  <th scope="col" rowSpan={2} className="px-3 py-2 align-bottom font-semibold" data-print="hide">
                     <span className="sr-only">Actions</span>
                   </th>
                 </tr>
@@ -330,70 +326,64 @@ export function KitchenReport({
                   ))}
                 </tr>
               </thead>
-              <tbody>
-                {roomRows.map((row) => (
-                  <tr
-                    key={row.key}
-                    className={cx(
-                      "border-t border-line",
-                      groupShade.get(row.key) && "bg-surface-muted",
-                      row.cancelled && "opacity-50 line-through",
-                    )}
-                  >
-                    <td className="border-r border-line px-3 py-2">{tableCell(row.reservationNumber, row.table)}</td>
-                    <td className="whitespace-nowrap border-r border-line px-3 py-2 font-medium tabular-nums text-ink">
-                      {row.room}
-                    </td>
-                    <td className="border-r border-line px-3 py-2 tabular-nums">{row.guests}</td>
-                    {optionColumns.map((column, index) => (
-                      <td
-                        key={column.id}
-                        className={cx(
-                          "px-2 py-2 text-center tabular-nums",
-                          optionColumns[index + 1]?.courseId !== column.courseId && "border-r border-line",
-                          row.counts[column.id] ? "font-semibold text-ink" : "text-ink-subtle",
-                        )}
-                      >
-                        {/* Blank rather than 0, so the counts that matter stand out. */}
-                        {row.counts[column.id] || ""}
+
+              {tableGroups.map((group) => (
+                <tbody key={group.key} className="border-t-2 border-line-strong">
+                  {group.rows.map((row) => (
+                    <tr key={row.key} className={cx("border-t border-line", row.cancelled && "opacity-50 line-through")}>
+                      <td className="border-r border-line px-3 py-2">{tableCell(row.reservationNumber, row.table)}</td>
+                      <td className="whitespace-nowrap border-r border-line px-3 py-2 font-medium text-ink">
+                        {row.room}
                       </td>
-                    ))}
-                    <td className="px-3 py-2">
-                      {row.comment ? <span className="font-medium text-danger">{row.comment}</span> : null}
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-2" data-print="hide">
-                      <div className="flex items-center gap-2">
-                        <Link
-                          href={`/admin/reservation/${row.reservationNumber}`}
-                          className="text-xs underline underline-offset-2 hover:text-accent"
+                      <td className="border-r border-line px-3 py-2 tabular-nums">{row.guests}</td>
+                      {optionColumns.map((column, index) => (
+                        <td
+                          key={column.id}
+                          className={cx(
+                            "px-2 py-2 text-center tabular-nums",
+                            optionColumns[index + 1]?.courseId !== column.courseId && "border-r border-line",
+                            row.counts[column.id] ? "font-semibold text-ink" : "text-ink-subtle",
+                          )}
                         >
-                          {row.reservationNumber}
-                        </Link>
-                        {!row.cancelled ? (
-                          <Button
-                            variant="danger"
-                            onClick={() => onCancel(row.reservationNumber)}
-                            loading={busyReservationNumber === row.reservationNumber}
-                            loadingLabel="…"
-                          >
-                            Cancel
-                          </Button>
-                        ) : (
-                          <Badge tone="info">cancelled</Badge>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => onDelete(row.reservationNumber)}
-                          className="text-xs text-ink-subtle underline underline-offset-2 hover:text-danger"
+                          {/* Blank rather than 0, so the counts that matter stand out. */}
+                          {row.counts[column.id] || ""}
+                        </td>
+                      ))}
+                      <td className="px-3 py-2">
+                        {row.comment ? <span className="font-medium text-danger">{row.comment}</span> : null}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2" data-print="hide">
+                        {actionsCell(row.reservationNumber, row.cancelled)}
+                      </td>
+                    </tr>
+                  ))}
+
+                  {/* Rooms dining together are plated as one table, so the
+                      waiter needs the combined count, not each room's. */}
+                  {group.isShared ? (
+                    <tr className="border-t border-line bg-accent-soft font-semibold text-accent-ink">
+                      <th scope="row" colSpan={2} className="border-r border-line px-3 py-2 text-left">
+                        Table {group.table || "—"} together
+                      </th>
+                      <td className="border-r border-line px-3 py-2 tabular-nums">{group.guests}</td>
+                      {optionColumns.map((column, index) => (
+                        <td
+                          key={column.id}
+                          className={cx(
+                            "px-2 py-2 text-center tabular-nums",
+                            optionColumns[index + 1]?.courseId !== column.courseId && "border-r border-line",
+                          )}
                         >
-                          Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              {/* The prep list: what the kitchen actually has to cook. */}
+                          {group.subtotals[column.id] || ""}
+                        </td>
+                      ))}
+                      <td className="px-3 py-2" />
+                      <td className="px-3 py-2" data-print="hide" />
+                    </tr>
+                  ) : null}
+                </tbody>
+              ))}
+
               <tfoot className="border-t-2 border-line-strong bg-surface-sunken font-semibold text-ink">
                 <tr>
                   <th scope="row" colSpan={2} className="border-r border-line px-3 py-3 text-left">
@@ -422,6 +412,73 @@ export function KitchenReport({
           </div>
         )}
       </div>
-    </Card>
+
+      {/* The slip the kitchen actually gets: no tables, no rooms, just how
+          many of each dish to make. Printed below a cut line. */}
+      {prepList.length > 0 ? (
+        <div data-print="prep" className="mt-10">
+          <div
+            aria-hidden="true"
+            className="flex items-center gap-2 text-xs text-ink-subtle"
+            style={{ borderTop: "1px dashed currentColor", paddingTop: "0.75rem" }}
+          >
+            <span>✂</span>
+            <span className="uppercase tracking-widest">cut here — for the kitchen</span>
+          </div>
+
+          <h3 className="mt-4 text-base font-semibold text-ink">
+            To prepare · {formatLongDate(date)}
+            {serviceTime ? ` · ${serviceTime}` : ""}
+          </h3>
+
+          <table className="mt-2 border-collapse text-left text-sm">
+            <caption className="sr-only">Quantities of each dish for the kitchen</caption>
+            <thead>
+              <tr className="border-b border-line-strong text-ink-muted">
+                <th scope="col" className="py-1 pr-6 font-semibold">Course</th>
+                <th scope="col" className="py-1 pr-6 font-semibold">Dish</th>
+                <th scope="col" className="py-1 text-right font-semibold">Qty</th>
+              </tr>
+            </thead>
+            <tbody>
+              {prepList.map((line) => (
+                <tr key={`${line.courseName}-${line.optionName}`} className="border-b border-line">
+                  <td className="py-1 pr-6 text-ink-muted">{line.courseName}</td>
+                  <td className="py-1 pr-6 font-medium text-ink">{line.optionName}</td>
+                  <td className="py-1 text-right text-base font-semibold tabular-nums text-ink">{line.quantity}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-line-strong">
+                <th scope="row" colSpan={2} className="py-1 pr-6 text-left font-semibold">
+                  Total plates
+                </th>
+                <td className="py-1 text-right text-base font-semibold tabular-nums">{plates}</td>
+              </tr>
+            </tfoot>
+          </table>
+
+          {reservations.some((reservation) => reservation.notes && reservation.status === "confirmed") ? (
+            <div className="mt-4">
+              <h4 className="text-sm font-semibold text-ink">Allergies and requests</h4>
+              <ul className="mt-1 space-y-0.5 text-sm">
+                {reservations
+                  .filter((reservation) => reservation.notes && reservation.status === "confirmed")
+                  .map((reservation) => (
+                    <li key={reservation.reservationNumber}>
+                      <span className="font-medium text-ink">
+                        Table {reservation.tableNumber || "—"} (room {reservation.roomNumber}):
+                      </span>{" "}
+                      <span className="text-danger">{reservation.notes}</span>
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      </Card>
+    </div>
   );
 }

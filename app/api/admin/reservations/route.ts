@@ -5,6 +5,7 @@ import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
 import { BOOKING_MESSAGES, validateReservationRequest } from "@/lib/services/booking-rules";
 import { staffReservationSchema } from "@/lib/validation/booking";
 import { normalizeContact } from "@/lib/contact";
+import { canonicalizeSelections } from "@/lib/menu-selection";
 
 /** Takes a booking on a guest's behalf — at the desk or over the phone. */
 export async function POST(request: Request) {
@@ -45,7 +46,7 @@ export async function POST(request: Request) {
       roomNumber: parsed.data.roomNumber,
       guestCount: parsed.data.guestCount,
       date: parsed.data.date,
-      selections: validation.selections,
+      selections: canonicalizeSelections(validation.selections, menu),
       contact: parsed.data.contact ? normalizeContact(parsed.data.contact) : undefined,
       notes: parsed.data.notes,
       tableNumber: parsed.data.tableNumber,

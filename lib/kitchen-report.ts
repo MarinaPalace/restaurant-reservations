@@ -221,6 +221,71 @@ export function buildOptionTotals(rows: RoomRow[], columns: OptionColumn[]) {
   return totals;
 }
 
+/**
+ * The per-room sheet grouped by table.
+ *
+ * Rooms dining together share a table, and the kitchen plates per table — so
+ * each group carries its own subtotal of every dish, which is what a waiter
+ * carries out in one trip.
+ */
+export type TableGroup = {
+  key: string;
+  /** Blank when no table has been assigned yet. */
+  table: string;
+  rows: RoomRow[];
+  /** Option id -> how many of it this table needs. */
+  subtotals: Record<string, number>;
+  guests: number;
+  /** More than one room sitting together. */
+  isShared: boolean;
+};
+
+export function groupRoomRowsByTable(rows: RoomRow[], columns: OptionColumn[]): TableGroup[] {
+  const groups: TableGroup[] = [];
+
+  for (const row of rows) {
+    // Rooms are one table when they share a number, or asked to sit together
+    // before a number was assigned.
+    const key = row.table || row.tableGroupId || row.reservationNumber;
+    const last = groups[groups.length - 1];
+
+    if (last && last.key === key) {
+      last.rows.push(row);
+    } else {
+      groups.push({ key, table: row.table, rows: [row], subtotals: {}, guests: 0, isShared: false });
+    }
+  }
+
+  for (const group of groups) {
+    const live = group.rows.filter((row) => !row.cancelled);
+
+    group.isShared = group.rows.length > 1;
+    group.guests = live.reduce((sum, row) => sum + row.guests, 0);
+
+    for (const column of columns) {
+      group.subtotals[column.id] = live.reduce((sum, row) => sum + (row.counts[column.id] ?? 0), 0);
+    }
+  }
+
+  return groups;
+}
+
+/**
+ * The cut-off slip for the kitchen: every dish with something to make, and how
+ * many. No tables, no rooms — just the prep list.
+ */
+export type PrepLine = { courseName: string; optionName: string; quantity: number };
+
+export function buildPrepList(columns: OptionColumn[], totals: Record<string, number>): PrepLine[] {
+  return columns
+    .filter((column) => (totals[column.id] ?? 0) > 0)
+    .map((column) => ({
+      courseName: column.courseName,
+      optionName: column.label,
+      quantity: totals[column.id],
+    }));
+}
+
 export function countPlates(totals: Record<string, number>) {
   return Object.values(totals).reduce((sum, count) => sum + count, 0);
 }

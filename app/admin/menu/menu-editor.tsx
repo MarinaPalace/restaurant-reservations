@@ -314,6 +314,16 @@ export function MenuEditor({ initialCourses }: { initialCourses: MenuCourse[] })
               ) : null}
             </div>
 
+            {!isDefaultLanguage ? (
+              <div className="mt-5 rounded-control border border-line bg-surface-muted p-3">
+                <p className="text-xs font-medium uppercase tracking-wide text-ink-subtle">English (master)</p>
+                <p className="mt-1 font-semibold text-ink">{course.name || "Untitled course"}</p>
+                {course.description ? (
+                  <p className="mt-1 text-sm text-ink-muted">{course.description}</p>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="mt-5 grid gap-4 md:grid-cols-2">
               <Field label={`Name (${activeLanguage.toUpperCase()})`}>
                 {(fieldProps) => (
@@ -399,6 +409,18 @@ export function MenuEditor({ initialCourses }: { initialCourses: MenuCourse[] })
                 <div className="space-y-4">
                   {course.options.map((option) => (
                     <div key={option.id} className="rounded-control border border-line bg-surface-muted p-4">
+                      {!isDefaultLanguage ? (
+                        <div className="mb-4 rounded-control border border-line bg-surface p-3">
+                          <p className="text-xs font-medium uppercase tracking-wide text-ink-subtle">
+                            English (master)
+                          </p>
+                          <p className="mt-1 font-semibold text-ink">{option.name || "Untitled option"}</p>
+                          {option.description ? (
+                            <p className="mt-1 text-sm text-ink-muted">{option.description}</p>
+                          ) : null}
+                        </div>
+                      ) : null}
+
                       <div className="grid gap-4 md:grid-cols-2">
                         <Field label={`Option name (${activeLanguage.toUpperCase()})`}>
                           {(fieldProps) => (

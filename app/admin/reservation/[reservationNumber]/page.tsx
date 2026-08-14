@@ -7,6 +7,8 @@ import { Badge } from "@/components/ui/feedback";
 import { ContactLink } from "@/components/contact-link";
 import { isAdminAuthenticated } from "@/lib/auth/session";
 import { getReservationByNumber } from "@/lib/services/reservations";
+import { getMenuCatalog } from "@/lib/services/restaurant";
+import { canonicalizeSelections } from "@/lib/menu-selection";
 import { formatLongDate } from "@/lib/date";
 
 export const metadata: Metadata = { title: "Reservation" };
@@ -21,12 +23,16 @@ export default async function ReservationDetailPage({
   }
 
   const { reservationNumber } = await params;
-  const reservation = await getReservationByNumber(reservationNumber);
+  const [stored, menu] = await Promise.all([getReservationByNumber(reservationNumber), getMenuCatalog()]);
 
-  if (!reservation) {
+  if (!stored) {
     // A missing reservation is a 404, not a silent bounce to the dashboard.
     notFound();
   }
+
+  // Resolved against the English menu, so a booking taken in another language
+  // still reads in English for staff.
+  const reservation = { ...stored, selections: canonicalizeSelections(stored.selections, menu) };
 
   const guestGroups = Array.from({ length: Math.max(reservation.guestCount, 1) }, (_, guestIndex) => ({
     guestIndex,

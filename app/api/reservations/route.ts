@@ -4,6 +4,7 @@ import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
 import { BOOKING_MESSAGES, validateReservationRequest } from "@/lib/services/booking-rules";
 import { createReservationSchema } from "@/lib/validation/booking";
 import { describeContactProblem, normalizeContact } from "@/lib/contact";
+import { canonicalizeSelections } from "@/lib/menu-selection";
 
 const GENERIC_ERROR = "Something went wrong while creating your reservation. Please try again.";
 
@@ -60,7 +61,9 @@ export async function POST(request: Request) {
       roomNumber: parsed.data.roomNumber,
       guestCount: parsed.data.guestCount,
       date: parsed.data.date,
-      selections: validation.selections,
+      // Stored in the master English wording, whatever language the guest
+      // booked in, so the kitchen always reads one language.
+      selections: canonicalizeSelections(validation.selections, menu),
       contact: normalizeContact(parsed.data.contact!),
       notes: parsed.data.notes,
       joinReservationNumber: parsed.data.joinReservationNumber,

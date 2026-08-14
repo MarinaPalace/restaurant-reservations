@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { canonicalizeSelections } from "@/lib/menu-selection";
 import {
   buildCourseColumns,
+  buildPrepList,
+  groupRoomRowsByTable,
   buildGuestCsv,
   buildGuestRows,
   buildOptionColumns,
@@ -269,5 +272,98 @@ describe("csv export", () => {
     const columns = buildCourseColumns([cancelled], menu);
 
     expect(buildGuestCsv(columns, buildGuestRows([cancelled], columns))).toContain("CANCELLED");
+  });
+});
+
+describe("dish names for staff", () => {
+  /**
+   * A guest booking in Bulgarian sends Bulgarian labels. The kitchen sheet has
+   * to read in one language, so names are resolved from the English menu.
+   */
+  it("rewrites names booked in another language to English", () => {
+    const bookedInBulgarian = [
+      { guestIndex: 0, courseId: "c1", courseName: "Предястие", optionId: "o1", optionName: "Сьомга" },
+      { guestIndex: 0, courseId: "c2", courseName: "Основно", optionId: "o3", optionName: "Патица" },
+    ];
+
+    const resolved = canonicalizeSelections(bookedInBulgarian, menu);
+
+    expect(resolved.map((entry) => entry.courseName)).toEqual(["Starter", "Main"]);
+    expect(resolved.map((entry) => entry.optionName)).toEqual(["Salmon", "Duck"]);
+  });
+
+  it("keeps the booked name for a dish no longer on the menu", () => {
+    const retired = [{ guestIndex: 0, courseId: "c9", courseName: "Cheese", optionId: "o9", optionName: "Stilton" }];
+
+    expect(canonicalizeSelections(retired, menu)[0].optionName).toBe("Stilton");
+  });
+
+  it("always calls a declined course None", () => {
+    const declined = [
+      { guestIndex: 0, courseId: "c1", courseName: "Предястие", optionId: NONE_OPTION_ID, optionName: "Няма" },
+    ];
+
+    expect(canonicalizeSelections(declined, menu)[0].optionName).toBe(NONE_OPTION_NAME);
+  });
+});
+
+describe("tables dining together", () => {
+  const reservations = [roomWithTwo, roomSharingTable, roomDecliningACourse];
+  const columns = buildOptionColumns(reservations, menu);
+  const rows = buildRoomRows(reservations, columns);
+  const groups = groupRoomRowsByTable(rows, columns);
+
+  it("puts rooms at the same table in one group", () => {
+    expect(groups).toHaveLength(2);
+    expect(groups[0].rows.map((row) => row.room)).toEqual(["118", "402"]);
+    expect(groups[0].isShared).toBe(true);
+    expect(groups[1].isShared).toBe(false);
+  });
+
+  /** What the waiter carries to that table in one trip. */
+  it("sums each dish across the rooms sharing a table", () => {
+    const shared = groups[0].subtotals;
+
+    expect(shared.o1).toBe(2); // 402's Salmon plus 118's
+    expect(shared.o2).toBe(1);
+    expect(shared.o3).toBe(2); // both of 402's Duck mains
+    expect(shared.o4).toBe(1); // 118's Sea bream
+    expect(groups[0].guests).toBe(3);
+  });
+
+  it("leaves a cancelled room out of the table subtotal", () => {
+    const withCancelled = [{ ...roomWithTwo, status: "cancelled" as const }, roomSharingTable];
+    const cancelledGroups = groupRoomRowsByTable(buildRoomRows(withCancelled, columns), columns);
+
+    expect(cancelledGroups[0].subtotals.o3).toBe(0);
+    expect(cancelledGroups[0].guests).toBe(1);
+  });
+});
+
+describe("kitchen prep slip", () => {
+  const reservations = [roomWithTwo, roomSharingTable, roomDecliningACourse];
+  const columns = buildOptionColumns(reservations, menu);
+  const totals = buildOptionTotals(buildRoomRows(reservations, columns), columns);
+
+  it("lists every dish that has to be made, with its count", () => {
+    expect(buildPrepList(columns, totals)).toEqual([
+      { courseName: "Starter", optionName: "Salmon", quantity: 2 },
+      { courseName: "Starter", optionName: "Velouté", quantity: 1 },
+      { courseName: "Main", optionName: "Duck", quantity: 3 },
+      { courseName: "Main", optionName: "Sea bream", quantity: 1 },
+    ]);
+  });
+
+  /** Nothing to cook means nothing on the slip. */
+  it("omits dishes nobody ordered", () => {
+    const onlySalmon = [
+      { ...roomSharingTable, selections: [pick(0, "c1", "Starter", "o1", "Salmon")], guestCount: 1 },
+    ];
+    const onlyColumns = buildOptionColumns(onlySalmon, menu);
+    const onlyTotals = buildOptionTotals(buildRoomRows(onlySalmon, onlyColumns), onlyColumns);
+
+    expect(buildPrepList(onlyColumns, onlyTotals)).toEqual([
+      { courseName: "Starter", optionName: "Salmon", quantity: 1 },
+    ]);
   });
 });

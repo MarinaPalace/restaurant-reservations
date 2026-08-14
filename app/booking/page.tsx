@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { PageShell } from "@/components/page-shell";
 import { BookingSteps } from "@/components/booking-steps";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -71,7 +72,14 @@ export default function BookingPage() {
           </Button>
         </form>
 
-        <p className="mt-6 rounded-control border border-line bg-surface-muted p-3 text-sm text-ink-muted">
+        <p className="mt-6 text-center text-sm text-ink-muted">
+          Already booked?{" "}
+          <Link href="/booking/manage" className="font-medium text-accent underline underline-offset-2">
+            Change or cancel your reservation
+          </Link>
+        </p>
+
+        <p className="mt-4 rounded-control border border-line bg-surface-muted p-3 text-sm text-ink-muted">
           Need help? Dial <span className="font-semibold text-ink">9</span> from your room to reach guest services.
         </p>
       </Card>

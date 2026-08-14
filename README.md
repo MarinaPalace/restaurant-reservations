@@ -18,10 +18,20 @@ browsers cache each picture. External image addresses are passed through untouch
 guest on the confirmation step. A phone number also picks a preferred app — phone/SMS, WhatsApp,
 Viber or Telegram — and staff see a one-click link that opens the right one.
 
-**Arrival times.** Each evening has a strict arrival time, set per date in the dashboard. It is
-shown to guests when they pick the date and again on their confirmation, copied onto the booking
-as it is made (so moving a later sitting does not rewrite existing bookings), and used for the
-calendar reminder. `NEXT_PUBLIC_DINNER_TIME` is only the fallback for dates with no time set.
+**Arrival times.** Each evening has a strict arrival time and an end time, set per date in the
+dashboard. They are shown to guests when they pick the date and again on their confirmation,
+copied onto the booking as it is made (so moving a later sitting does not rewrite existing
+bookings), and used for the calendar reminder — which also asks the guest to arrive ten minutes
+early and carries a short-notice alarm to that effect. `NEXT_PUBLIC_DINNER_TIME` is only the
+fallback for dates with no time set.
+
+**Changing a booking.** Guests reach `/booking/manage` from the confirmation or the first booking
+step, identify themselves with their reservation number *and* room number, and can then swap
+courses or cancel. Self-service closes **12 hours before the sitting**, after which they are asked
+to speak to reception — the kitchen is already prepping against the counts by then. The cutoff is
+enforced on the server for both edits and cancellations; an admin session bypasses it, so staff
+can fix anything at the desk. Staff can also delete a booking outright, which releases its seats;
+cancelling instead keeps it on the night's record.
 
 **Shared tables.** Two or three rooms can eat together: the first room books as usual and passes
 its reservation number to the others, who tick "we are dining with another room" and enter it.

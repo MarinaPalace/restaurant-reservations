@@ -37,6 +37,8 @@ export type StoredRestaurantDate = {
   reservedSeats: number;
   /** Strict arrival time for the sitting, "HH:MM" in the restaurant's timezone. */
   serviceTime?: string;
+  /** When the sitting ends. Falls back to a fixed length when unset. */
+  serviceEndTime?: string;
 };
 
 export type RestaurantDateAvailability = StoredRestaurantDate & {
@@ -74,6 +76,8 @@ export type ReservationRecord = {
   contact?: ReservationContact;
   /** Arrival time copied from the date when the booking was made. */
   time?: string;
+  /** End of the sitting, copied from the date alongside `time`. */
+  endTime?: string;
   /** Allergies or anything else the kitchen should know. */
   notes?: string;
   /**

@@ -34,6 +34,7 @@ const reservationSchema = new Schema(
     // Optional so reservations taken before contact details existed still load.
     contact: { type: contactSchema, required: false },
     time: { type: String },
+    endTime: { type: String },
     notes: { type: String },
     // Shared by rooms dining together; indexed so a group loads in one query.
     tableGroupId: { type: String, index: true },

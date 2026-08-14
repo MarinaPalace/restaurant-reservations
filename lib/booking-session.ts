@@ -107,14 +107,19 @@ export function readStoredConfirmation(storage: Storage | null | undefined): Res
     return null;
   }
 
+  /**
+   * Spread first, then normalise. Whitelisting each field meant anything added
+   * later was silently dropped — which is how the arrival time went missing
+   * and calendar reminders fell back to the default sitting.
+   */
   return {
+    ...record,
     reservationNumber: String(record.reservationNumber),
     roomNumber: Number(record.roomNumber ?? 0),
     guestCount: Number(record.guestCount ?? 1),
     date: String(record.date ?? ""),
     selections: normalizeSelections(record.selections),
     status: record.status === "cancelled" ? "cancelled" : "confirmed",
-    createdAt: record.createdAt,
   };
 }
 

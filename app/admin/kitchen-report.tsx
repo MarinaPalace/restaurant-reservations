@@ -31,6 +31,7 @@ export function KitchenReport({
   menu,
   onAssignTable,
   onCancel,
+  onDelete,
   busyReservationNumber,
 }: {
   date: string;
@@ -39,6 +40,7 @@ export function KitchenReport({
   menu: MenuCourse[];
   onAssignTable: (reservationNumber: string, tableNumber: string) => Promise<void>;
   onCancel: (reservationNumber: string) => Promise<void>;
+  onDelete: (reservationNumber: string) => Promise<void>;
   busyReservationNumber: string | null;
 }) {
   const [layout, setLayout] = useState<KitchenLayout>("guest");
@@ -271,6 +273,13 @@ export function KitchenReport({
                         ) : (
                           <Badge tone="info">cancelled</Badge>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => onDelete(row.reservationNumber)}
+                          className="text-xs text-ink-subtle underline underline-offset-2 hover:text-danger"
+                        >
+                          Delete
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -372,6 +381,13 @@ export function KitchenReport({
                         ) : (
                           <Badge tone="info">cancelled</Badge>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => onDelete(row.reservationNumber)}
+                          className="text-xs text-ink-subtle underline underline-offset-2 hover:text-danger"
+                        >
+                          Delete
+                        </button>
                       </div>
                     </td>
                   </tr>

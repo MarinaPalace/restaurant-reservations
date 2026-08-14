@@ -8,8 +8,10 @@ import {
   getLocalReservation,
   listLocalReservations,
   reservationNumberExists,
+  deleteLocalReservation,
   setLocalReservationGroup,
   setLocalReservationTable,
+  updateLocalReservationSelections,
   upsertLocalDate,
 } from "@/lib/db/local-store";
 import { getRestaurantDate } from "@/lib/services/restaurant";
@@ -53,6 +55,7 @@ type MongoReservationDocument = {
   selections?: unknown;
   contact?: unknown;
   time?: unknown;
+  endTime?: unknown;
   notes?: unknown;
   tableGroupId?: unknown;
   tableNumber?: unknown;
@@ -71,6 +74,7 @@ function toReservationRecord(document: MongoReservationDocument): ReservationRec
     selections: Array.isArray(document.selections) ? (document.selections as ReservationSelection[]) : [],
     contact: (document.contact as ReservationContact | undefined) ?? undefined,
     time: document.time ? String(document.time) : undefined,
+    endTime: document.endTime ? String(document.endTime) : undefined,
     notes: document.notes ? String(document.notes) : undefined,
     tableGroupId: document.tableGroupId ? String(document.tableGroupId) : undefined,
     tableNumber: document.tableNumber ? String(document.tableNumber) : undefined,
@@ -201,6 +205,8 @@ export async function createReservationEntry(input: {
     throw new BookingError(!existing || !existing.isOpen ? "DATE_CLOSED" : "DATE_FULL");
   }
 
+  const bookedDate = await getRestaurantDate(input.date);
+
   try {
     const created = await ReservationModel.create({
       reservationNumber,
@@ -209,8 +215,9 @@ export async function createReservationEntry(input: {
       date: input.date,
       selections: input.selections,
       contact: input.contact,
-      // Copied from the date so the booking keeps the time it was made for.
-      time: (await getRestaurantDate(input.date))?.serviceTime,
+      // Copied from the date so the booking keeps the times it was made for.
+      time: bookedDate?.serviceTime,
+      endTime: bookedDate?.serviceEndTime,
       notes: input.notes,
       tableGroupId,
       status: "confirmed",
@@ -263,6 +270,49 @@ export async function cancelReservation(reservationNumber: string): Promise<Rese
   return record;
 }
 
+/** Replaces the menu choices on a booking. Seats are unaffected. */
+export async function updateReservationSelections(
+  reservationNumber: string,
+  selections: ReservationSelection[],
+): Promise<ReservationRecord | null> {
+  if (!isMongoConfigured()) {
+    return updateLocalReservationSelections(reservationNumber, selections);
+  }
+
+  await connectToDatabase();
+  const updated = await ReservationModel.findOneAndUpdate(
+    { reservationNumber },
+    { $set: { selections } },
+    { returnDocument: "after" },
+  ).lean();
+
+  return updated ? toReservationRecord(updated as MongoReservationDocument) : null;
+}
+
+/**
+ * Removes a booking outright. Seats are released only when it was still
+ * confirmed, since a cancelled booking already gave them back.
+ */
+export async function deleteReservation(reservationNumber: string): Promise<ReservationRecord | null> {
+  if (!isMongoConfigured()) {
+    return deleteLocalReservation(reservationNumber);
+  }
+
+  await connectToDatabase();
+  const removed = await ReservationModel.findOneAndDelete({ reservationNumber }).lean();
+  if (!removed) {
+    return null;
+  }
+
+  const record = toReservationRecord(removed as MongoReservationDocument);
+
+  if (record.status === "confirmed") {
+    await RestaurantDateModel.updateOne({ date: record.date }, { $inc: { reservedSeats: -record.guestCount } });
+  }
+
+  return record;
+}
+
 export async function getReservationsList(): Promise<ReservationRecord[]> {
   if (!isMongoConfigured()) {
     return listLocalReservations();
@@ -278,6 +328,7 @@ export async function updateRestaurantDate(input: {
   isOpen: boolean;
   capacity: number;
   serviceTime?: string;
+  serviceEndTime?: string;
 }) {
   if (!isMongoConfigured()) {
     return upsertLocalDate(input);
@@ -288,7 +339,12 @@ export async function updateRestaurantDate(input: {
   const updated = await RestaurantDateModel.findOneAndUpdate(
     { date: input.date },
     {
-      $set: { isOpen: input.isOpen, capacity: input.capacity, serviceTime: input.serviceTime ?? null },
+      $set: {
+        isOpen: input.isOpen,
+        capacity: input.capacity,
+        serviceTime: input.serviceTime ?? null,
+        serviceEndTime: input.serviceEndTime ?? null,
+      },
       $setOnInsert: { reservedSeats: 0 },
     },
     { returnDocument: "after", upsert: true },
@@ -300,5 +356,6 @@ export async function updateRestaurantDate(input: {
     capacity: Number(updated.capacity),
     reservedSeats: Number(updated.reservedSeats),
     serviceTime: updated.serviceTime ? String(updated.serviceTime) : undefined,
+    serviceEndTime: updated.serviceEndTime ? String(updated.serviceEndTime) : undefined,
   });
 }

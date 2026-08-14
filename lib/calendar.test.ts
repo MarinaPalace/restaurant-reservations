@@ -1,6 +1,18 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { buildGoogleCalendarUrl, buildIcsFile, getReservationWindow } from "@/lib/calendar";
+import {
+  ARRIVE_EARLY_MINUTES,
+  buildGoogleCalendarUrl,
+  buildIcsFile,
+  getReservationWindow,
+} from "@/lib/calendar";
 import type { ReservationRecord } from "@/types/booking";
+
+/** Turns a YYYYMMDDTHHMMSSZ stamp back into a Date. */
+function stampToDate(stamp: string) {
+  const [, y, mo, d, h, mi, sec] = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp)!;
+  return new Date(Date.UTC(+y, +mo - 1, +d, +h, +mi, +sec));
+}
+
 
 const reservation: ReservationRecord = {
   reservationNumber: "ALC-ABC123",
@@ -43,6 +55,56 @@ describe("reservation window", () => {
   it("ignores a malformed time rather than producing an invalid date", () => {
     process.env.NEXT_PUBLIC_DINNER_TIME = "not-a-time";
     expect(getReservationWindow("2026-08-18").start.getHours()).toBe(19);
+  });
+});
+
+describe("explicit end time", () => {
+  /**
+   * Regression test: an arrival time of 19:30 produced a 19:00-21:00 event,
+   * because the stored time was being dropped before the link was built.
+   */
+  it("runs from the arrival time to the end time staff set", () => {
+    const { start, end } = getReservationWindow("2026-08-18", "19:30", "21:00");
+
+    expect([start.getHours(), start.getMinutes()]).toEqual([19, 30]);
+    expect([end.getHours(), end.getMinutes()]).toEqual([21, 0]);
+  });
+
+  it("uses the booking's own times in the calendar link", () => {
+    const url = new URL(buildGoogleCalendarUrl({ ...reservation, time: "19:30", endTime: "21:00" }));
+    const [from, to] = (url.searchParams.get("dates") ?? "").split("/");
+
+    // Compared as local wall-clock times, since the stamps are UTC.
+    expect(new Date(reservation.date + "T19:30").getTime()).toBe(stampToDate(from).getTime());
+    expect(new Date(reservation.date + "T21:00").getTime()).toBe(stampToDate(to).getTime());
+  });
+
+  it("carries the sitting past midnight when the end is earlier than the start", () => {
+    const { start, end } = getReservationWindow("2026-08-18", "22:00", "00:30");
+
+    expect(end.getTime()).toBeGreaterThan(start.getTime());
+    expect(end.getDate()).toBe(19);
+  });
+
+  it("falls back to the fixed length when no end time is set", () => {
+    const { start, end } = getReservationWindow("2026-08-18", "19:30");
+    expect(end.getTime() - start.getTime()).toBe(120 * 60 * 1000);
+  });
+});
+
+describe("arriving on time", () => {
+  it("tells the guest to arrive early in the reminder itself", () => {
+    const details = new URL(buildGoogleCalendarUrl({ ...reservation, time: "19:30" })).searchParams.get("details");
+
+    expect(details).toContain("seated at 19:30");
+    expect(details).toContain("minutes early");
+  });
+
+  it("adds a short-notice alarm as well as the evening reminder", () => {
+    const ics = buildIcsFile({ ...reservation, time: "19:30" });
+
+    expect(ics).toContain("TRIGGER:-PT3H");
+    expect(ics).toContain(`TRIGGER:-PT${ARRIVE_EARLY_MINUTES + 5}M`);
   });
 });
 

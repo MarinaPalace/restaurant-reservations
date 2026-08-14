@@ -44,6 +44,12 @@ export const restaurantDateSchema = z.object({
   isOpen: z.boolean(),
   capacity: z.number().int().min(0).max(10_000),
   serviceTime: timeSchema.optional(),
+  serviceEndTime: timeSchema.optional(),
+});
+
+export const updateSelectionsSchema = z.object({
+  roomNumber: z.coerce.number().int().positive(),
+  selections: z.array(reservationSelectionSchema).min(1),
 });
 
 export const tableAssignmentSchema = z.object({

@@ -128,7 +128,7 @@ export default function ConfirmationPage() {
 
         <div className="mt-5 rounded-control border border-line bg-surface-muted p-4" data-print="hide">
           <p className="text-sm font-medium text-ink">Add a reminder</p>
-          <p className="mt-1 text-sm text-ink-muted">{describeReservationTime(reservation.date, reservation.time)}</p>
+          <p className="mt-1 text-sm text-ink-muted">{describeReservationTime(reservation.date, reservation.time, reservation.endTime)}</p>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
             <a
               href={buildGoogleCalendarUrl(reservation)}
@@ -165,11 +165,18 @@ export default function ConfirmationPage() {
 
         {/* No "book another" action: a guest may reserve dinner once per
             stay, so offering it would invite a booking we would refuse. */}
-        <div className="mt-6" data-print="hide">
-          <Button variant="secondary" size="lg" className="w-full" onClick={() => window.print()}>
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row" data-print="hide">
+          <Button variant="secondary" size="lg" className="flex-1" onClick={() => window.print()}>
             Print
           </Button>
+          <ButtonLink href="/booking/manage" size="lg" className="flex-1">
+            Change or cancel
+          </ButtonLink>
         </div>
+
+        <p className="mt-3 text-center text-xs text-ink-subtle" data-print="hide">
+          Keep your reservation number — you will need it, with your room number, to make changes.
+        </p>
       </Card>
     </PageShell>
   );

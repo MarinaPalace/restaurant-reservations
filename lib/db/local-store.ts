@@ -100,6 +100,7 @@ export async function upsertLocalDate(input: {
   isOpen: boolean;
   capacity: number;
   serviceTime?: string;
+  serviceEndTime?: string;
 }): Promise<RestaurantDateAvailability> {
   return withStoreLock(async () => {
     const dates = await readDates();
@@ -113,12 +114,14 @@ export async function upsertLocalDate(input: {
             capacity: input.capacity,
             reservedSeats: 0,
             serviceTime: input.serviceTime,
+            serviceEndTime: input.serviceEndTime,
           }
         : {
             ...dates[index],
             isOpen: input.isOpen,
             capacity: input.capacity,
             serviceTime: input.serviceTime,
+            serviceEndTime: input.serviceEndTime,
           };
 
     if (index === -1) {
@@ -185,6 +188,7 @@ export async function createLocalReservation(input: {
       // Copied from the date so the booking keeps the time it was made for,
       // even if staff later move the sitting.
       time: dateEntry.serviceTime,
+      endTime: dateEntry.serviceEndTime,
       notes: input.notes,
       tableGroupId: input.tableGroupId,
       status: "confirmed",
@@ -283,6 +287,56 @@ export async function setLocalReservationTable(reservationNumber: string, tableN
 
     await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
     return updated;
+  });
+}
+
+/** Replaces the menu choices on a booking, leaving everything else alone. */
+export async function updateLocalReservationSelections(
+  reservationNumber: string,
+  selections: ReservationRecord["selections"],
+) {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    const index = reservations.findIndex((entry) => entry.reservationNumber === reservationNumber);
+    if (index === -1) {
+      return null;
+    }
+
+    reservations[index] = { ...reservations[index], selections, updatedAt: new Date().toISOString() };
+    await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    return reservations[index];
+  });
+}
+
+/**
+ * Removes a booking outright, releasing its seats if it was still live. A
+ * cancelled booking already gave its seats back, so they are not released
+ * a second time.
+ */
+export async function deleteLocalReservation(reservationNumber: string) {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    const index = reservations.findIndex((entry) => entry.reservationNumber === reservationNumber);
+    if (index === -1) {
+      return null;
+    }
+
+    const [removed] = reservations.splice(index, 1);
+
+    if (removed.status === "confirmed") {
+      const dates = await readDates();
+      const dateIndex = dates.findIndex((entry) => entry.date === removed.date);
+      if (dateIndex !== -1) {
+        dates[dateIndex] = {
+          ...dates[dateIndex],
+          reservedSeats: Math.max(dates[dateIndex].reservedSeats - removed.guestCount, 0),
+        };
+        await writeJsonFile(getDataFilePath(DATES_FILE), dates);
+      }
+    }
+
+    await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    return removed;
   });
 }
 

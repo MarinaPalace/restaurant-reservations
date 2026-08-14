@@ -120,6 +120,7 @@ export function AdminDateManager({
           isOpen: selectedEntry.isOpen,
           capacity: Number(selectedEntry.capacity),
           serviceTime: selectedEntry.serviceTime || undefined,
+          serviceEndTime: selectedEntry.serviceEndTime || undefined,
         }),
       });
 
@@ -135,6 +136,55 @@ export function AdminDateManager({
       setError(saveError instanceof Error ? saveError.message : "Unable to save the availability for this date.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  /** Removes a booking for good, releasing its seats. */
+  const deleteReservation = async (reservationNumber: string) => {
+    const confirmed = window.confirm(
+      `Delete reservation ${reservationNumber} permanently? Cancel it instead if you want to keep it on the night's record.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setBusyNumber(reservationNumber);
+    setError("");
+    setNotice("");
+
+    try {
+      const response = await fetch(`/api/admin/reservations/${encodeURIComponent(reservationNumber)}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        throw new Error("Unable to delete this reservation.");
+      }
+
+      const { reservation: removed }: { reservation: ReservationRecord } = await response.json();
+
+      setReservations((current) =>
+        current.filter((reservation) => reservation.reservationNumber !== reservationNumber),
+      );
+
+      if (removed.status === "confirmed") {
+        setDates((current) =>
+          current.map((entry) =>
+            entry.date === removed.date
+              ? withRemainingSeats({
+                  ...entry,
+                  reservedSeats: Math.max(entry.reservedSeats - removed.guestCount, 0),
+                })
+              : entry,
+          ),
+        );
+      }
+
+      setNotice(`Reservation ${reservationNumber} deleted.`);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete this reservation.");
+    } finally {
+      setBusyNumber(null);
     }
   };
 
@@ -301,19 +351,28 @@ export function AdminDateManager({
                     )}
                   </Field>
 
-                  <Field
-                    label="Arrival time"
-                    hint="Everyone is seated at this time. Shown to guests and used for calendar reminders."
-                  >
-                    {(fieldProps) => (
-                      <Input
-                        {...fieldProps}
-                        type="time"
-                        value={selectedEntry.serviceTime ?? ""}
-                        onChange={(event) => patchSelected({ serviceTime: event.target.value })}
-                      />
-                    )}
-                  </Field>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Field label="Arrival time" hint="Everyone is seated at this time.">
+                      {(fieldProps) => (
+                        <Input
+                          {...fieldProps}
+                          type="time"
+                          value={selectedEntry.serviceTime ?? ""}
+                          onChange={(event) => patchSelected({ serviceTime: event.target.value })}
+                        />
+                      )}
+                    </Field>
+                    <Field label="Service ends" hint="Used for the calendar reminder.">
+                      {(fieldProps) => (
+                        <Input
+                          {...fieldProps}
+                          type="time"
+                          value={selectedEntry.serviceEndTime ?? ""}
+                          onChange={(event) => patchSelected({ serviceEndTime: event.target.value })}
+                        />
+                      )}
+                    </Field>
+                  </div>
 
                   <div className="flex flex-wrap gap-2">
                     <Badge tone={selectedEntry.isOpen ? "success" : "info"}>
@@ -355,6 +414,7 @@ export function AdminDateManager({
         menu={menu}
         onAssignTable={assignTable}
         onCancel={cancelReservation}
+        onDelete={deleteReservation}
         busyReservationNumber={busyNumber}
       />
     </div>

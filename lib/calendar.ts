@@ -4,13 +4,16 @@ import type { ReservationRecord } from "@/types/booking";
 /**
  * Calendar reminders for a confirmed reservation.
  *
- * A reservation stores a date but no time, so the sitting time comes from
- * configuration. Set NEXT_PUBLIC_DINNER_TIME (24-hour "HH:MM") and
- * NEXT_PUBLIC_DINNER_DURATION_MINUTES to match the restaurant's service.
+ * The arrival and end times staff set for that evening are copied onto the
+ * booking. NEXT_PUBLIC_DINNER_TIME / NEXT_PUBLIC_DINNER_DURATION_MINUTES are
+ * only fallbacks for dates configured before those existed.
  */
 
 const DEFAULT_TIME = "19:00";
 const DEFAULT_DURATION_MINUTES = 120;
+
+/** Guests should be seated a few minutes before service starts. */
+export const ARRIVE_EARLY_MINUTES = 10;
 
 function getServiceTime(preferred?: string) {
   // The time staff set for that evening wins; the env value is only a
@@ -31,13 +34,28 @@ function getDurationMinutes() {
   return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_DURATION_MINUTES;
 }
 
-export function getReservationWindow(dateKey: string, serviceTime?: string) {
+function parseTime(value: string | undefined) {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(value?.trim() ?? "");
+  return match ? { hour: Number(match[1]), minute: Number(match[2]) } : null;
+}
+
+export function getReservationWindow(dateKey: string, serviceTime?: string, serviceEndTime?: string) {
   const { hour, minute } = getServiceTime(serviceTime);
   const start = fromDateKey(dateKey);
   start.setHours(hour, minute, 0, 0);
 
   const end = new Date(start);
-  end.setMinutes(end.getMinutes() + getDurationMinutes());
+  const explicitEnd = parseTime(serviceEndTime);
+
+  if (explicitEnd) {
+    end.setHours(explicitEnd.hour, explicitEnd.minute, 0, 0);
+    // An end before the start means the sitting runs past midnight.
+    if (end <= start) {
+      end.setDate(end.getDate() + 1);
+    }
+  } else {
+    end.setMinutes(end.getMinutes() + getDurationMinutes());
+  }
 
   return { start, end };
 }
@@ -48,9 +66,14 @@ function toCalendarStamp(date: Date) {
 }
 
 function buildDescription(reservation: ReservationRecord) {
+  const { start } = getReservationWindow(reservation.date, reservation.time, reservation.endTime);
+  const arrival = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(start);
+
   const lines = [
     `Reservation ${reservation.reservationNumber}`,
     `Room ${reservation.roomNumber} · ${reservation.guestCount} ${reservation.guestCount === 1 ? "guest" : "guests"}`,
+    "",
+    `Everyone is seated at ${arrival}. Please arrive ${ARRIVE_EARLY_MINUTES} minutes early so you can be shown to your table.`,
   ];
 
   const byGuest = new Map<number, string[]>();
@@ -71,7 +94,7 @@ export function buildEventTitle(reservation: ReservationRecord) {
 }
 
 export function buildGoogleCalendarUrl(reservation: ReservationRecord, locationName = "À la carte restaurant") {
-  const { start, end } = getReservationWindow(reservation.date, reservation.time);
+  const { start, end } = getReservationWindow(reservation.date, reservation.time, reservation.endTime);
 
   const params = new URLSearchParams({
     action: "TEMPLATE",
@@ -91,7 +114,7 @@ function escapeIcsText(value: string) {
 
 /** An .ics file, for Apple Calendar, Outlook and everything that is not Google. */
 export function buildIcsFile(reservation: ReservationRecord, locationName = "À la carte restaurant") {
-  const { start, end } = getReservationWindow(reservation.date, reservation.time);
+  const { start, end } = getReservationWindow(reservation.date, reservation.time, reservation.endTime);
 
   return [
     "BEGIN:VCALENDAR",
@@ -108,18 +131,23 @@ export function buildIcsFile(reservation: ReservationRecord, locationName = "À 
     `DESCRIPTION:${escapeIcsText(buildDescription(reservation))}`,
     `LOCATION:${escapeIcsText(locationName)}`,
     "BEGIN:VALARM",
-    // Nudge the guest three hours before the sitting.
+    // A nudge the evening of, and again in time to walk down.
     "TRIGGER:-PT3H",
     "ACTION:DISPLAY",
     `DESCRIPTION:${escapeIcsText(buildEventTitle(reservation))}`,
+    "END:VALARM",
+    "BEGIN:VALARM",
+    `TRIGGER:-PT${ARRIVE_EARLY_MINUTES + 5}M`,
+    "ACTION:DISPLAY",
+    `DESCRIPTION:${escapeIcsText(`Time to head down — please arrive a few minutes early.`)}`,
     "END:VALARM",
     "END:VEVENT",
     "END:VCALENDAR",
   ].join("\r\n");
 }
 
-export function describeReservationTime(dateKey: string, serviceTime?: string) {
-  const { start, end } = getReservationWindow(dateKey, serviceTime);
+export function describeReservationTime(dateKey: string, serviceTime?: string, serviceEndTime?: string) {
+  const { start, end } = getReservationWindow(dateKey, serviceTime, serviceEndTime);
   const time = (date: Date) =>
     new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
 

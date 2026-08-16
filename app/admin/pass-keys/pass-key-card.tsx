@@ -25,23 +25,24 @@ const GOLD = "#a8842c";
 export function PassKeyCard({
   passKey,
   bookingUrl,
+  qrDataUri,
   restaurantName,
 }: {
   passKey: PassKeyRecord;
-  /** Where the QR points, and what is printed under it. */
+  /** The address printed on the card, and what the QR encodes. */
   bookingUrl: string;
+  /**
+   * The QR code, already drawn on the server and inlined. Passed in rather
+   * than fetched: there is then no request to fail while a card is printing,
+   * and no authentication in the path of an image. `null` only if drawing it
+   * failed, in which case the card still works — the code is printed beside
+   * it — so the square is simply left empty.
+   */
+  qrDataUri: string | null;
   restaurantName: string;
 }) {
   const dinners = passKey.maxUses > 1 ? `${passKey.maxUses} dinners` : "One dinner";
   const isInvitation = passKey.kind === "premium";
-
-  const target = bookingUrl.startsWith("http") ? bookingUrl : `https://${bookingUrl}`;
-  /**
-   * Drawn by the server rather than in the browser: the Node build of `qrcode`
-   * is the one certain to work, and an image the browser has already fetched
-   * prints far more reliably than markup injected after hydration.
-   */
-  const qrSrc = `/api/admin/pass-keys/qr?data=${encodeURIComponent(target)}`;
 
   return (
     <article
@@ -112,11 +113,18 @@ export function PassKeyCard({
       <div className="relative flex w-[26mm] shrink-0 flex-col items-center justify-center gap-[1mm] p-[3mm]">
         {/* White behind the code, so a camera reads it off the tinted stock. */}
         <span
-          className="flex size-[20mm] items-center justify-center rounded-[1.2mm] p-[1mm]"
+          className="block rounded-[1.2mm] p-[1mm]"
           style={{ backgroundColor: "#ffffff", border: `0.2mm solid ${GOLD}55` }}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={qrSrc} alt="" width={72} height={72} className="size-full" />
+          {qrDataUri ? (
+            // Sized in millimetres rather than by a percentage: an image whose
+            // height depends on its flex parent is exactly how this ended up
+            // collapsing to nothing once already.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={qrDataUri} alt="" style={{ display: "block", width: "18mm", height: "18mm" }} />
+          ) : (
+            <span style={{ display: "block", width: "18mm", height: "18mm" }} />
+          )}
         </span>
         <p className="text-[1.8mm] uppercase tracking-[0.14em]" style={{ color: GOLD }}>
           Scan to book

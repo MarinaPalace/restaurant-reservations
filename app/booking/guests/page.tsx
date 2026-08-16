@@ -6,10 +6,9 @@ import { PageShell } from "@/components/page-shell";
 import { BookingSteps } from "@/components/booking-steps";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Button, ButtonLink } from "@/components/ui/button";
-import { Alert } from "@/components/ui/feedback";
+import { Alert, Skeleton } from "@/components/ui/feedback";
 import { useBookingGuard, writeBookingSession } from "@/hooks/use-booking-session";
-import { pruneSelectionsToGuestCount } from "@/lib/booking-session";
-import { MAX_GUESTS_PER_RESERVATION } from "@/lib/validation/booking";
+import { allowedGuestCount, pruneSelectionsToGuestCount } from "@/lib/booking-session";
 import { cx } from "@/components/ui/utils";
 
 export default function GuestsPage() {
@@ -25,10 +24,7 @@ export default function GuestsPage() {
    * them regardless; this only stops the guest choosing something that would
    * be rejected at the end.
    */
-  const allowed = session.passKeyMaxGuests > 0
-    ? Math.min(session.passKeyMaxGuests, MAX_GUESTS_PER_RESERVATION)
-    : MAX_GUESTS_PER_RESERVATION;
-
+  const allowed = allowedGuestCount(session);
   const guestOptions = Array.from({ length: allowed }, (_, index) => index + 1);
 
   // A party size left over from a previous key could exceed this one.
@@ -40,6 +36,17 @@ export default function GuestsPage() {
 
     if (!selected) {
       setError("Please choose how many guests will be dining.");
+      return;
+    }
+
+    /**
+     * Checked again here, not just when the buttons were drawn. Before the
+     * session has loaded the limit is unknown, and a choice made in that
+     * moment must not survive into the booking.
+     */
+    if (selected > allowed) {
+      setChoice(null);
+      setError(`This pass-key is for up to ${allowed} ${allowed === 1 ? "guest" : "guests"}.`);
       return;
     }
 
@@ -76,6 +83,18 @@ export default function GuestsPage() {
           </p>
         ) : null}
 
+        {/*
+          The picker waits for the session. Rendering the full six and shrinking
+          them a moment later both looks wrong and, for the fastest tapper,
+          offers a number the key does not allow.
+        */}
+        {!ready ? (
+          <div className="mt-6 grid grid-cols-3 gap-3" aria-hidden="true">
+            {[0, 1, 2, 3, 4, 5].map((placeholder) => (
+              <Skeleton key={placeholder} className="h-[4.75rem]" />
+            ))}
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="mt-6">
           <fieldset>
             <legend className="sr-only">Number of guests</legend>
@@ -127,6 +146,7 @@ export default function GuestsPage() {
             </Button>
           </div>
         </form>
+        )}
       </Card>
     </PageShell>
   );

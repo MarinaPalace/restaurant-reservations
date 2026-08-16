@@ -7,6 +7,7 @@ import { Alert, Badge, EmptyState } from "@/components/ui/feedback";
 import { Field, Input, Textarea } from "@/components/ui/field";
 import { PassKeyCard } from "@/app/admin/pass-keys/pass-key-card";
 import { formatPassKey } from "@/lib/pass-key";
+import { passKeyTargetUrl } from "@/lib/pass-key-links";
 import { formatShortDate, todayKey } from "@/lib/date";
 import { cx } from "@/components/ui/utils";
 import { MAX_GUESTS_PER_RESERVATION } from "@/lib/validation/booking";
@@ -33,6 +34,8 @@ type Props = {
   /** The invitation address; the key is appended so the link opens directly. */
   invitationUrl: string;
   restaurantName: string;
+  /** QR codes for the keys already issued, drawn on the server, by key id. */
+  initialQrCodes: Record<string, string>;
   /** Deleting a key outright is an administrator's action. */
   canDelete: boolean;
 };
@@ -92,6 +95,7 @@ export function PassKeyManager({
   bookingUrl,
   invitationUrl,
   restaurantName,
+  initialQrCodes,
   canDelete,
 }: Props) {
   const today = todayKey();
@@ -106,18 +110,16 @@ export function PassKeyManager({
   const [editing, setEditing] = useState<PassKeyRecord | null>(null);
   const [filter, setFilter] = useState<Status>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Newly issued keys arrive with their codes from the API; the rest came with
+  // the page. Either way the card never draws its own.
+  const [qrCodes, setQrCodes] = useState<Record<string, string>>(initialQrCodes);
 
   const visible = useMemo(
     () => (filter === "all" ? passKeys : passKeys.filter((key) => key.status === filter)),
     [passKeys, filter],
   );
 
-  const cardUrl = (key: PassKeyRecord) =>
-    key.kind === "premium"
-      ? `${invitationUrl}/${formatPassKey(key.code)}`
-      : // The QR carries the key, so scanning lands on the entry step with it
-        // already filled in and only the room left to confirm.
-        `${bookingUrl}?k=${formatPassKey(key.code)}`;
+  const cardUrl = (key: PassKeyRecord) => passKeyTargetUrl(key, { bookingUrl, invitationUrl });
 
   /**
    * Printing cards and printing the list are different page setups, so the
@@ -185,6 +187,7 @@ export function PassKeyManager({
       }
 
       const created: PassKeyRecord[] = data.passKeys ?? [data.passKey];
+      setQrCodes((current) => ({ ...current, ...(data.qrCodes ?? {}) }));
       setPassKeys((current) => [...created, ...current]);
       setIssued(created);
       setRows([blankRow(today)]);
@@ -573,7 +576,12 @@ export function PassKeyManager({
           <div data-print-cards="" className="mt-6 flex flex-wrap gap-4">
             {cardsToPrint.map((key) => (
               <div key={key.id} data-card-cut="">
-                <PassKeyCard passKey={key} bookingUrl={cardUrl(key)} restaurantName={restaurantName} />
+                <PassKeyCard
+                  passKey={key}
+                  bookingUrl={cardUrl(key)}
+                  qrDataUri={qrCodes[key.id] ?? null}
+                  restaurantName={restaurantName}
+                />
               </div>
             ))}
           </div>

@@ -21,7 +21,7 @@ A reservation app for **Vista Del Mar**, a hotel's à la carte restaurant.
 Stack: Next.js 16 (App Router, Turbopack), React 19, TypeScript, Tailwind v4, Mongoose 9, Zod 4,
 Vitest. Deployed on Vercel.
 
-**299 tests, 19 files. Lint, types and build are clean. Keep them that way.**
+**314 tests, 20 files. Lint, types and build are clean. Keep them that way.**
 
 ---
 
@@ -337,9 +337,25 @@ Keys are identified by the **hotel's booking reference**, not the room: a guest 
 room keeps the same booking number, and the room on the key is only a note — guests confirm their
 own room when they book.
 
-Cards carry a **QR code**, generated inline with `qrcode`. No external host: the desk may have no
-internet, and nothing in this app may depend on one. It points at `/booking?k=<key>` or
-`/premium/<key>`, so scanning lands on the entry step with the key already in the box. Cards print
+Cards carry a **QR code**, and getting it to appear took three attempts, each of which is worth
+knowing about because each looked right:
+
+1. Generated in the browser inside an effect, with the failure caught and swallowed — so a card
+   printed a blank square and nothing anywhere said why.
+2. Fetched from a guarded API route as an `<img src>`. The route worked and returned valid SVG, but
+   that SVG carried only a `viewBox` and **no `width` or `height`**, so the image had no intrinsic
+   size and collapsed to nothing as a flex item.
+3. Both still depended on a request succeeding at the moment somebody pressed print.
+
+It is now drawn on the server by `lib/qr.ts`, with explicit dimensions, and handed to the card as a
+base64 data URI — through the page props for existing keys, and in the issue response for new ones.
+There is no request to fail, nothing to load before printing, and no authentication in the path of
+an image. `lib/qr.test.ts` asserts the width and height attributes specifically, because that is the
+part that was silently missing.
+
+No external host either: the desk may have no internet, and nothing in this app may depend on one.
+The code points at `/booking?k=<key>` or `/premium/<key>` — worked out by `passKeyTargetUrl`, shared
+so a reprinted card and a fresh one always agree. Cards print
 in house colour — they need `print-color-adjust: exact`, because browsers drop backgrounds to save
 toner — while every other print in the app stays ink on white.
 
@@ -419,7 +435,7 @@ Roughly in the order I would tackle them for beta.
 
 ```bash
 npm run dev          # local, JSON store, admin/admin123
-npm test             # 299 tests; the Mongo suite runs an in-memory mongod
+npm test             # 314 tests; the Mongo suite runs an in-memory mongod
 npm run typecheck
 npm run lint
 npm run build

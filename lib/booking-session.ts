@@ -174,6 +174,20 @@ export function pruneSelectionsToGuestCount(selections: ReservationSelection[], 
   return selections.filter((selection) => (selection.guestIndex ?? 0) < guestCount);
 }
 
+/**
+ * The largest party this session may book for.
+ *
+ * The pass-key carries the party size from the hotel booking; the guest may
+ * come with fewer but never more. A key with nothing recorded — every key
+ * issued before that was captured — is bound only by the restaurant's own
+ * maximum.
+ */
+export function allowedGuestCount(session: Pick<BookingSession, "passKeyMaxGuests">): number {
+  const limit = session.passKeyMaxGuests;
+
+  return limit > 0 ? Math.min(limit, MAX_GUESTS_PER_RESERVATION) : MAX_GUESTS_PER_RESERVATION;
+}
+
 export type BookingStepRequirement = "room" | "guests" | "date" | "selections";
 
 /** The first prerequisite this session is missing, if any. */

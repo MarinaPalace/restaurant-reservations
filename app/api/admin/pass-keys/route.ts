@@ -3,7 +3,10 @@ import { isDenied, requireStaff } from "@/lib/auth/guard";
 import { ShortStayError, issuePassKey, listPassKeys } from "@/lib/services/pass-keys";
 import { recordAuditEntry } from "@/lib/services/audit-log";
 import { issuePassKeyBatchSchema, issuePassKeySchema } from "@/lib/validation/booking";
+import { headers } from "next/headers";
 import { formatPassKey } from "@/lib/pass-key";
+import { absoluteUrl, passKeyTargetUrl } from "@/lib/pass-key-links";
+import { qrDataUris } from "@/lib/qr";
 import { MINIMUM_STAY_NIGHTS } from "@/types/booking";
 
 export async function GET() {
@@ -85,9 +88,26 @@ export async function POST(request: Request) {
       });
     }
 
+    /**
+     * The QR codes come back with the keys, drawn here rather than in the
+     * browser. The card is printed seconds after this response arrives, and an
+     * image that still has to be generated or fetched at that moment is an
+     * image that prints as an empty square.
+     */
+    const headerList = await headers();
+    const host = headerList.get("x-forwarded-host") ?? headerList.get("host") ?? "";
+    const qrCodes = await qrDataUris(
+      passKeys.map((passKey) => ({
+        id: passKey.id,
+        value: absoluteUrl(
+          passKeyTargetUrl(passKey, { bookingUrl: `${host}/booking`, invitationUrl: `${host}/premium` }),
+        ),
+      })),
+    );
+
     // `passKey` is kept alongside the list so a caller expecting one still
     // works; the UI reads `passKeys`.
-    return NextResponse.json({ passKeys, passKey: passKeys[0] }, { status: 201 });
+    return NextResponse.json({ passKeys, passKey: passKeys[0], qrCodes }, { status: 201 });
   } catch (error) {
     if (error instanceof ShortStayError) {
       return NextResponse.json(

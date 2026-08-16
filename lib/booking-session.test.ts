@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { MAX_GUESTS_PER_RESERVATION } from "@/lib/validation/booking";
 import {
   BOOKING_STORAGE_KEYS,
   EMPTY_BOOKING_SESSION,
+  allowedGuestCount,
   findMissingRequirement,
   normalizeSelections,
   parseGuestCount,
@@ -169,5 +171,42 @@ describe("stored confirmation", () => {
 
     expect(confirmation?.reservationNumber).toBe("ALC-ABC123");
     expect(confirmation?.roomNumber).toBe("402");
+  });
+});
+
+/**
+ * The pass-key carries the party size from the hotel booking. The guests step
+ * offers no more than that, and the server refuses more regardless.
+ */
+describe("allowedGuestCount", () => {
+  it("caps at the number recorded on the key", () => {
+    expect(allowedGuestCount({ passKeyMaxGuests: 2 })).toBe(2);
+    expect(allowedGuestCount({ passKeyMaxGuests: 4 })).toBe(4);
+  });
+
+  it("falls back to the house maximum when the key records nothing", () => {
+    expect(allowedGuestCount({ passKeyMaxGuests: 0 })).toBe(MAX_GUESTS_PER_RESERVATION);
+  });
+
+  /** A stored number can never let a party exceed the restaurant's own limit. */
+  it("never exceeds the house maximum", () => {
+    expect(allowedGuestCount({ passKeyMaxGuests: 99 })).toBe(MAX_GUESTS_PER_RESERVATION);
+  });
+});
+
+describe("reading the party size back", () => {
+  it("reads the limit the entry step stored", () => {
+    const session = readBookingSession(fakeStorage({ [BOOKING_STORAGE_KEYS.passKeyMaxGuests]: "2" }));
+    expect(session.passKeyMaxGuests).toBe(2);
+    expect(allowedGuestCount(session)).toBe(2);
+  });
+
+  it("ignores a tampered or nonsensical limit rather than trusting it", () => {
+    for (const value of ["0", "-3", "99", "two", ""]) {
+      const session = readBookingSession(fakeStorage({ [BOOKING_STORAGE_KEYS.passKeyMaxGuests]: value }));
+      expect(session.passKeyMaxGuests).toBe(0);
+      // Which leaves the house maximum, never something larger.
+      expect(allowedGuestCount(session)).toBe(MAX_GUESTS_PER_RESERVATION);
+    }
   });
 });

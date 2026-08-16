@@ -980,9 +980,24 @@ describe("pass-keys against MongoDB", () => {
 
   const actor = { kind: "staff" as const, id: "u1", name: "Maria Petrova" };
 
+  /**
+   * A stay of N nights, expressed the way reception enters it: two dates. The
+   * night count and the number of dinners are derived from them.
+   */
+  function stay(nights: number) {
+    const key = (offset: number) => {
+      const date = new Date(2027, 5, 1 + offset, 12);
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+        date.getDate(),
+      ).padStart(2, "0")}`;
+    };
+
+    return { checkInOn: key(0), expiresOn: key(nights) };
+  }
+
   it("issues a key that can be found by however the guest types it", async () => {
     const passKeys = await loadPassKeys();
-    const issued = await passKeys.issuePassKey({ roomNumber: "402", nights: 7, actor });
+    const issued = await passKeys.issuePassKey({ roomNumber: "402", ...stay(7), actor });
 
     const { formatPassKey } = await import("@/lib/pass-key");
     const printed = formatPassKey(issued.code);
@@ -995,11 +1010,11 @@ describe("pass-keys against MongoDB", () => {
   it("refuses a stay shorter than the entitlement unless overridden", async () => {
     const passKeys = await loadPassKeys();
 
-    await expect(passKeys.issuePassKey({ roomNumber: "402", nights: 2, actor })).rejects.toThrow();
+    await expect(passKeys.issuePassKey({ roomNumber: "402", ...stay(2), actor })).rejects.toThrow();
 
     const exception = await passKeys.issuePassKey({
       roomNumber: "402",
-      nights: 2,
+      ...stay(2),
       allowShortStay: true,
       actor,
     });
@@ -1014,7 +1029,7 @@ describe("pass-keys against MongoDB", () => {
    */
   it("cannot be spent twice, even by simultaneous requests", async () => {
     const passKeys = await loadPassKeys();
-    const issued = await passKeys.issuePassKey({ roomNumber: "402", nights: 6, actor });
+    const issued = await passKeys.issuePassKey({ roomNumber: "402", ...stay(6), actor });
 
     const results = await Promise.all([
       passKeys.consumePassKey(issued.code, "VDM-AAA111"),
@@ -1031,7 +1046,7 @@ describe("pass-keys against MongoDB", () => {
    */
   it("hands out no more dinners than a multi-use key carries, under contention", async () => {
     const passKeys = await loadPassKeys();
-    const issued = await passKeys.issuePassKey({ roomNumber: "708", nights: 12, maxUses: 2, actor });
+    const issued = await passKeys.issuePassKey({ roomNumber: "708", ...stay(12), maxUses: 2, actor });
 
     expect(issued.maxUses).toBe(2);
 
@@ -1053,15 +1068,15 @@ describe("pass-keys against MongoDB", () => {
     const passKeys = await loadPassKeys();
 
     // 5 nights earns one dinner, 10 earns two, 15 and beyond earn three.
-    expect((await passKeys.issuePassKey({ nights: 6, actor })).maxUses).toBe(1);
-    expect((await passKeys.issuePassKey({ nights: 10, actor })).maxUses).toBe(2);
-    expect((await passKeys.issuePassKey({ nights: 15, actor })).maxUses).toBe(3);
-    expect((await passKeys.issuePassKey({ nights: 40, actor })).maxUses).toBe(3);
+    expect((await passKeys.issuePassKey({ ...stay(6), actor })).maxUses).toBe(1);
+    expect((await passKeys.issuePassKey({ ...stay(10), actor })).maxUses).toBe(2);
+    expect((await passKeys.issuePassKey({ ...stay(15), actor })).maxUses).toBe(3);
+    expect((await passKeys.issuePassKey({ ...stay(40), actor })).maxUses).toBe(3);
   });
 
   it("gives a use back on cancellation and takes it again on restore", async () => {
     const passKeys = await loadPassKeys();
-    const issued = await passKeys.issuePassKey({ nights: 10, actor });
+    const issued = await passKeys.issuePassKey({ ...stay(10), actor });
 
     await passKeys.consumePassKey(issued.code, "VDM-A");
     await passKeys.consumePassKey(issued.code, "VDM-B");
@@ -1073,7 +1088,7 @@ describe("pass-keys against MongoDB", () => {
 
   it("is handed back on cancellation and only for its own booking", async () => {
     const passKeys = await loadPassKeys();
-    const issued = await passKeys.issuePassKey({ roomNumber: "402", nights: 6, actor });
+    const issued = await passKeys.issuePassKey({ roomNumber: "402", ...stay(6), actor });
 
     await passKeys.consumePassKey(issued.code, "VDM-AAA111");
 
@@ -1089,7 +1104,7 @@ describe("pass-keys against MongoDB", () => {
   it("keeps invitation keys and in-house keys in their own flows", async () => {
     const passKeys = await loadPassKeys();
 
-    const inHouse = await passKeys.issuePassKey({ roomNumber: "402", nights: 7, actor });
+    const inHouse = await passKeys.issuePassKey({ roomNumber: "402", ...stay(7), actor });
     const invitation = await passKeys.issuePassKey({ kind: "premium", guestName: "Dimitrov", actor });
 
     expect(inHouse.kind).toBe("standard");
@@ -1100,14 +1115,14 @@ describe("pass-keys against MongoDB", () => {
   it("does not hold an invitation key to the five-night rule", async () => {
     const passKeys = await loadPassKeys();
 
-    await expect(passKeys.issuePassKey({ nights: 2, actor })).rejects.toThrow();
-    const invitation = await passKeys.issuePassKey({ kind: "premium", nights: 2, actor });
+    await expect(passKeys.issuePassKey({ ...stay(2), actor })).rejects.toThrow();
+    const invitation = await passKeys.issuePassKey({ kind: "premium", ...stay(2), actor });
     expect(invitation.status).toBe("active");
   });
 
   it("stops working once revoked", async () => {
     const passKeys = await loadPassKeys();
-    const issued = await passKeys.issuePassKey({ roomNumber: "402", nights: 6, actor });
+    const issued = await passKeys.issuePassKey({ roomNumber: "402", ...stay(6), actor });
 
     await passKeys.revokePassKey(issued.id);
 
@@ -1120,7 +1135,7 @@ describe("pass-keys against MongoDB", () => {
     const passKeys = await loadPassKeys();
     await openDate("2027-02-01", 20);
 
-    const issued = await passKeys.issuePassKey({ roomNumber: "402", nights: 6, actor });
+    const issued = await passKeys.issuePassKey({ roomNumber: "402", ...stay(6), actor });
     const number = await reservations.reserveReservationNumber();
     await passKeys.consumePassKey(issued.code, number);
 

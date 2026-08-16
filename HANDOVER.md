@@ -21,7 +21,7 @@ A reservation app for **Vista Del Mar**, a hotel's à la carte restaurant.
 Stack: Next.js 16 (App Router, Turbopack), React 19, TypeScript, Tailwind v4, Mongoose 9, Zod 4,
 Vitest. Deployed on Vercel.
 
-**287 tests, 18 files. Lint, types and build are clean. Keep them that way.**
+**295 tests, 19 files. Lint, types and build are clean. Keep them that way.**
 
 ---
 
@@ -145,13 +145,22 @@ hands its claimed seats straight back.
 Never "just flip the status back to confirmed". That was the obvious implementation and it is
 wrong.
 
-### 2.11 A key belongs to exactly one flow
+### 2.11 A key belongs to one flow, and every gate must know it
 
-`kind` is `standard` or `premium`, and **both** routes check it: an invitation
-key is refused at `/api/reservations`, an in-house key at
-`/api/premium/reservations`. Only one side was guarded at first, and a premium
-key happily booked an everyday evening from the everyday menu — spending itself
-in the process, so the invitation link it had been emailed on then 404'd.
+`kind` is `standard` or `premium`. **Three** places check it, and each was
+found the hard way:
+
+- `/api/reservations` refuses an invitation key. Without this, a premium key
+  booked an everyday evening from the everyday menu and spent itself doing it,
+  so the invitation link it had been emailed on then 404'd.
+- `/api/premium/reservations` refuses an in-house key.
+- `/api/booking/pass-key` — the check on the *first* screen — reports the kind
+  and offers only that kind's evenings. It was written without a kind check, so
+  an invitation key sailed through the early check and was refused only at the
+  very end: exactly the wasted journey that endpoint exists to prevent.
+
+Adding a gate is not enough. Every gate in front of it has to learn the rule
+too, or the new one only moves where the failure happens.
 
 ### 2.12 No `setState` synchronously inside an effect
 
@@ -274,6 +283,16 @@ marked `noindex`, and an unusable or unknown key gets the same 404 as one that n
 does put the key in browser history and any Referer the page sends, which is an accepted trade for a
 single-dinner invitation and would not be for anything carrying money.
 
+**There is one front door.** `/booking` takes a key, works out from its `kind` which flow the guest
+belongs in, and sends an invitation on to `/premium/<key>`. Bare `/premium` redirects there: it used
+to render the premium menu and every invitation-only evening to anyone who found the address — the
+booking itself was refused without a key, but the whole offer was on display, which defeated the
+point of holding those evenings back.
+
+**Booking a second table on an evening the key already has is allowed** — a guest with dinners to
+spare often books for a room that has none — but the entry step and the date step both say so first,
+because far more often the guest meant to change what they already booked.
+
 **The key is checked before the guest chooses anything.** `/api/booking/pass-key` answers "will this
 work, until when, how many dinners left, and which evenings may I pick" on the first screen. It used
 to be judged only when the finished booking was submitted, so somebody with a spent key picked a
@@ -299,6 +318,28 @@ and admin sign-in. It counts in memory, so on serverless each instance keeps its
 limit is the configured one times the number of warm instances. That is a deliberate scope: it stops
 a script hammering one endpoint, and is not a defence against a distributed attacker. Move the
 counters to Redis if that ever matters — the call sites do not change.
+
+**The front desk screen.** `/admin/pass-keys` is shaped like the morning's arrivals list: one row
+per guest — hotel reservation number, name, room, check-in, check-out — and one press issues them
+all and puts the cards on screen to print. Rows are distinct guests, never copies of one; issuing
+twenty identical keys for one room was never the job.
+
+Reception types **dates, never night counts**. The nights and the number of dinners follow from
+check-in and check-out (`nightsBetween`, `suggestedUsesForNights`), so the card and the record cannot
+disagree. Check-in has Today/Tomorrow buttons, because keys are usually written a day or two ahead.
+
+Keys are identified by the **hotel's booking reference**, not the room: a guest moved to another
+room keeps the same booking number, and the room on the key is only a note — guests confirm their
+own room when they book.
+
+Cards carry a **QR code**, generated inline with `qrcode`. No external host: the desk may have no
+internet, and nothing in this app may depend on one. It points at `/booking?k=<key>` or
+`/premium/<key>`, so scanning lands on the entry step with the key already in the box. Cards print
+in house colour — they need `print-color-adjust: exact`, because browsers drop backgrounds to save
+toner — while every other print in the app stays ink on white.
+
+Already-issued keys can be ticked and reprinted. **Deleting** one is an administrator's action, like
+deleting a reservation; revoking is the everyday one and keeps the record.
 
 **Staff accounts.** `/admin/users`. Each person signs in as themselves and holds a named set of
 permissions — take, edit, cancel and restore reservations; edit the menus; manage evenings; issue
@@ -373,7 +414,7 @@ Roughly in the order I would tackle them for beta.
 
 ```bash
 npm run dev          # local, JSON store, admin/admin123
-npm test             # 287 tests; the Mongo suite runs an in-memory mongod
+npm test             # 295 tests; the Mongo suite runs an in-memory mongod
 npm run typecheck
 npm run lint
 npm run build

@@ -316,6 +316,20 @@ export async function updateLocalPassKey(
   });
 }
 
+export async function deleteLocalPassKey(id: string): Promise<PassKeyRecord | null> {
+  return withStoreLock(async () => {
+    const keys = await readPassKeys();
+    const index = keys.findIndex((entry) => entry.id === id);
+    if (index === -1) {
+      return null;
+    }
+
+    const [removed] = keys.splice(index, 1);
+    await writeJsonFile(getDataFilePath(PASS_KEYS_FILE), keys);
+    return withCounts(removed);
+  });
+}
+
 export async function revokeLocalPassKey(id: string): Promise<PassKeyRecord | null> {
   return withStoreLock(async () => {
     const keys = await readPassKeys();

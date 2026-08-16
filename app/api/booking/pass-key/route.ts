@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getRestaurantDates } from "@/lib/services/restaurant";
+import { getReservationsByPassKey } from "@/lib/services/reservations";
 import {
   PASS_KEY_MESSAGES,
   describePassKeyProblem,
@@ -64,17 +65,24 @@ export async function POST(request: Request) {
     }
 
     const today = todayKey();
-    const dates = await getRestaurantDates();
+    const [dates, booked] = await Promise.all([
+      getRestaurantDates(),
+      getReservationsByPassKey(passKey.id),
+    ]);
 
     /**
-     * Only what this key could actually book: open, not held for invited
-     * guests, still ahead of us, with room, and within the stay.
+     * An invitation key and an in-house key see different evenings entirely,
+     * so the kind decides which set is offered — and it is returned, so the
+     * entry screen can send the guest to the right flow instead of letting
+     * them fill in a whole booking the key was never valid for.
      */
+    const isInvitation = passKey.kind === "premium";
+
     const bookableDates = dates
       .filter(
         (entry) =>
           entry.isOpen &&
-          !entry.premium &&
+          Boolean(entry.premium) === isInvitation &&
           entry.date >= today &&
           entry.remainingSeats > 0 &&
           isDateWithinStay(passKey, entry.date),
@@ -83,10 +91,20 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       ok: true,
+      kind: isInvitation ? "premium" : "standard",
       expiresOn: passKey.expiresOn ?? null,
       usesRemaining: Math.max(passKey.maxUses - passKey.usedCount, 0),
       maxUses: passKey.maxUses,
       bookableDates,
+      /**
+       * Evenings this key already has a live booking on. Booking a second
+       * table on the same night is allowed — a guest with dinners to spare
+       * often books for another room — but the guest is warned first, because
+       * far more often they meant to change the booking they already have.
+       */
+      bookedDates: booked
+        .filter((reservation) => reservation.status === "confirmed")
+        .map((reservation) => reservation.date),
       // Named so the guest can see the key is theirs before going further.
       roomNumber: passKey.roomNumber ?? null,
     });

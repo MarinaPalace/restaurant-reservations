@@ -242,6 +242,23 @@ export const MINIMUM_STAY_NIGHTS = 5;
  */
 export const MAX_USES_CAP = 3;
 
+/** Whole nights between two local date keys, or undefined if either is missing. */
+export function nightsBetween(checkIn?: string, checkOut?: string): number | undefined {
+  if (!checkIn || !checkOut) {
+    return undefined;
+  }
+
+  // Parsed at midday so a daylight-saving shift cannot move the count.
+  const from = new Date(`${checkIn}T12:00:00`).getTime();
+  const to = new Date(`${checkOut}T12:00:00`).getTime();
+
+  if (Number.isNaN(from) || Number.isNaN(to) || to <= from) {
+    return undefined;
+  }
+
+  return Math.round((to - from) / 86_400_000);
+}
+
 export function suggestedUsesForNights(nights: number | undefined): number {
   if (!nights || nights < MINIMUM_STAY_NIGHTS) {
     return 1;
@@ -272,13 +289,24 @@ export type PassKeyRecord = {
    * own keys are unaffected.
    */
   kind?: MenuKind;
+  /**
+   * The hotel's own booking reference — five digits, and the thing that does
+   * *not* change when a guest is moved to another room. This is how reception
+   * finds a key again, which is why it is asked for rather than the room.
+   */
+  reservationRef?: string;
   /** The room at check-in. A note for reception — guests confirm their own
    * room when booking, because they may since have been moved. */
   roomNumber?: string;
   guestName?: string;
-  /** Nights booked at the hotel, which is what earns the key. */
+  /** Arrival. Keys are often written a day or two before the guest lands. */
+  checkInOn?: string;
+  /**
+   * Nights booked at the hotel, which is what earns the key. Derived from
+   * check-in and check-out rather than typed, so the two cannot disagree.
+   */
   nights?: number;
-  /** Last date the key works, normally check-out. Absent means no expiry. */
+  /** Last date the key works — check-out. Absent means no expiry. */
   expiresOn?: string;
   /**
    * How many dinners this key may book, and how many it has. Both are absent

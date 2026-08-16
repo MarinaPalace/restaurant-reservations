@@ -39,6 +39,7 @@ export default async function AdminPassKeysPage() {
         initialPassKeys={passKeys}
         bookingUrl={`${host}/booking`}
         invitationUrl={`${host}/premium`}
+        canDelete={hasPermission(user, "reservations:delete")}
         restaurantName={RESTAURANT_NAME}
       />
     </PageShell>

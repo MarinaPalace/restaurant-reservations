@@ -3,6 +3,7 @@ import { PassKeyModel } from "@/lib/models/pass-key";
 import {
   consumeLocalPassKey,
   createLocalPassKey,
+  deleteLocalPassKey,
   getLocalPassKey,
   getLocalPassKeyByCode,
   listLocalPassKeys,
@@ -17,6 +18,7 @@ import { normalizeRoomNumber } from "@/lib/room";
 import {
   MAX_USES_CAP,
   MINIMUM_STAY_NIGHTS,
+  nightsBetween,
   suggestedUsesForNights,
   type Actor,
   type MenuKind,
@@ -106,8 +108,10 @@ function toPassKeyRecord(document: MongoPassKeyDocument): PassKeyRecord {
     id: String(document._id),
     code: String(document.code),
     kind: document.kind === "premium" ? "premium" : "standard",
+    reservationRef: document.reservationRef ? String(document.reservationRef) : undefined,
     roomNumber: document.roomNumber ? String(document.roomNumber) : undefined,
     guestName: document.guestName ? String(document.guestName) : undefined,
+    checkInOn: document.checkInOn ? String(document.checkInOn) : undefined,
     nights: typeof document.nights === "number" ? document.nights : undefined,
     expiresOn: document.expiresOn ? String(document.expiresOn) : undefined,
     ...normalizePassKeyCounts(document),
@@ -225,9 +229,10 @@ export class ShortStayError extends Error {
 export async function issuePassKey(input: {
   /** `premium` issues an invitation key rather than an in-house one. */
   kind?: MenuKind;
+  reservationRef?: string;
   roomNumber?: string;
   guestName?: string;
-  nights?: number;
+  checkInOn?: string;
   expiresOn?: string;
   /** Dinners this key may book. Defaults to what the stay length earns. */
   maxUses?: number;
@@ -235,7 +240,8 @@ export async function issuePassKey(input: {
   allowShortStay?: boolean;
   actor: Actor;
 }): Promise<PassKeyRecord> {
-  const nights = input.nights;
+  // Worked out from the dates rather than typed, so they cannot disagree.
+  const nights = nightsBetween(input.checkInOn, input.expiresOn);
 
   /**
    * The five-night rule is about earning dinner as part of a stay, so it does
@@ -257,8 +263,10 @@ export async function issuePassKey(input: {
 
   const base = {
     kind: input.kind ?? ("standard" as const),
+    reservationRef: input.reservationRef?.trim() || undefined,
     roomNumber: input.roomNumber ? normalizeRoomNumber(input.roomNumber) : undefined,
     guestName: input.guestName?.trim() || undefined,
+    checkInOn: input.checkInOn,
     nights,
     expiresOn: input.expiresOn,
     maxUses,
@@ -528,6 +536,31 @@ export async function updatePassKey(
   }
 
   return { before, after: toPassKeyRecord(saved as MongoPassKeyDocument) };
+}
+
+/**
+ * Erases a key outright.
+ *
+ * Revoking is the everyday action and keeps the record; this is for keys that
+ * should never have existed — a misprint, a test row. Administrators only, for
+ * the same reason deleting a reservation is: it cannot be undone.
+ *
+ * Any booking already made with it keeps its own record. The reservation loses
+ * the key it pointed at, which means that guest can no longer self-serve it —
+ * reception handles them, exactly as for a booking taken at the desk.
+ */
+export async function deletePassKey(id: string): Promise<PassKeyRecord | null> {
+  if (!isMongoConfigured()) {
+    return deleteLocalPassKey(id);
+  }
+
+  if (!/^[a-f\d]{24}$/i.test(id)) {
+    return null;
+  }
+
+  await connectToDatabase();
+  const removed = await PassKeyModel.findByIdAndDelete(id).lean();
+  return removed ? toPassKeyRecord(removed as MongoPassKeyDocument) : null;
 }
 
 export async function revokePassKey(id: string): Promise<PassKeyRecord | null> {

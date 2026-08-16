@@ -8,39 +8,66 @@ import { Field, Input, Textarea } from "@/components/ui/field";
 import { PassKeyCard } from "@/app/admin/pass-keys/pass-key-card";
 import { formatPassKey } from "@/lib/pass-key";
 import { formatShortDate, todayKey } from "@/lib/date";
+import { cx } from "@/components/ui/utils";
 import {
   MAX_USES_CAP,
   MINIMUM_STAY_NIGHTS,
+  nightsBetween,
   suggestedUsesForNights,
   type PassKeyRecord,
 } from "@/types/booking";
 
 /**
- * Reception's screen: issue keys to arriving guests, print them as cards, and
- * see what has been handed out.
+ * Reception's screen.
  *
- * Freshly issued keys are shown as the cards they will be printed as — that is
- * the moment they get handed over. They stay in the list afterwards, because
- * guests lose cards and reception has to be able to read one back.
+ * The shape follows the morning's work: a list of arrivals goes into a table,
+ * one row per guest, and one press issues the lot and puts the cards on screen
+ * ready to print. Issuing twenty copies of the same room was never the job.
  */
 
 type Props = {
   initialPassKeys: PassKeyRecord[];
-  /** Where in-house guests go to redeem one. Printed on the card. */
+  /** Where in-house guests go. The QR points here with the key attached. */
   bookingUrl: string;
   /** The invitation address; the key is appended so the link opens directly. */
   invitationUrl: string;
   restaurantName: string;
+  /** Deleting a key outright is an administrator's action. */
+  canDelete: boolean;
 };
 
 type Status = "all" | "active" | "used" | "revoked";
 
-/** Check-out, worked out from tonight plus the number of nights booked. */
-function checkoutFrom(nights: number, from = new Date()) {
-  const checkout = new Date(from.getFullYear(), from.getMonth(), from.getDate() + nights, 12);
-  return `${checkout.getFullYear()}-${String(checkout.getMonth() + 1).padStart(2, "0")}-${String(
-    checkout.getDate(),
+/** One arrival, as reception types it. */
+type Row = {
+  id: string;
+  reservationRef: string;
+  guestName: string;
+  roomNumber: string;
+  checkInOn: string;
+  checkOutOn: string;
+  maxUses: string;
+  allowShortStay: boolean;
+};
+
+function shiftDate(days: number, from = new Date()) {
+  const date = new Date(from.getFullYear(), from.getMonth(), from.getDate() + days, 12);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate(),
   ).padStart(2, "0")}`;
+}
+
+function blankRow(checkInOn: string): Row {
+  return {
+    id: Math.random().toString(36).slice(2),
+    reservationRef: "",
+    guestName: "",
+    roomNumber: "",
+    checkInOn,
+    checkOutOn: "",
+    maxUses: "",
+    allowShortStay: false,
+  };
 }
 
 function statusTone(key: PassKeyRecord, today: string) {
@@ -57,36 +84,37 @@ function statusLabel(key: PassKeyRecord, today: string) {
   return "active";
 }
 
-export function PassKeyManager({ initialPassKeys, bookingUrl, invitationUrl, restaurantName }: Props) {
+export function PassKeyManager({
+  initialPassKeys,
+  bookingUrl,
+  invitationUrl,
+  restaurantName,
+  canDelete,
+}: Props) {
+  const today = todayKey();
+
   const [passKeys, setPassKeys] = useState(initialPassKeys);
   const [kind, setKind] = useState<"standard" | "premium">("standard");
-  const [roomNumber, setRoomNumber] = useState("");
-  const [guestName, setGuestName] = useState("");
-  const [nights, setNights] = useState("");
-  const [expiresOn, setExpiresOn] = useState("");
-  const [maxUses, setMaxUses] = useState("");
-  const [quantity, setQuantity] = useState("1");
+  const [rows, setRows] = useState<Row[]>([blankRow(today)]);
   const [note, setNote] = useState("");
-  const [allowShortStay, setAllowShortStay] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [issued, setIssued] = useState<PassKeyRecord[]>([]);
   const [editing, setEditing] = useState<PassKeyRecord | null>(null);
   const [filter, setFilter] = useState<Status>("all");
-
-  const today = todayKey();
-  const nightCount = Number(nights);
-  const hasNights = Number.isInteger(nightCount) && nightCount > 0;
-  const isShortStay = hasNights && nightCount < MINIMUM_STAY_NIGHTS;
-
-  // Both fields follow the stay until reception overrides them.
-  const effectiveExpiry = expiresOn || (hasNights ? checkoutFrom(nightCount) : "");
-  const effectiveUses = maxUses || String(suggestedUsesForNights(hasNights ? nightCount : undefined));
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const visible = useMemo(
     () => (filter === "all" ? passKeys : passKeys.filter((key) => key.status === filter)),
     [passKeys, filter],
   );
+
+  const cardUrl = (key: PassKeyRecord) =>
+    key.kind === "premium"
+      ? `${invitationUrl}/${formatPassKey(key.code)}`
+      : // The QR carries the key, so scanning lands on the entry step with it
+        // already filled in and only the room left to confirm.
+        `${bookingUrl}?k=${formatPassKey(key.code)}`;
 
   /**
    * Printing cards and printing the list are different page setups, so the
@@ -102,9 +130,24 @@ export function PassKeyManager({ initialPassKeys, bookingUrl, invitationUrl, res
     window.print();
   };
 
+  const updateRow = (id: string, patch: Partial<Row>) => {
+    setRows((current) => current.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+    setError("");
+  };
+
   const issue = async (event: React.FormEvent) => {
     event.preventDefault();
     if (busy) {
+      return;
+    }
+
+    // A row with nothing in it is somebody who tabbed too far, not an arrival.
+    const filled = rows.filter(
+      (row) => row.reservationRef.trim() || row.guestName.trim() || row.roomNumber.trim() || row.checkOutOn,
+    );
+
+    if (filled.length === 0) {
+      setError("Add at least one arrival before issuing.");
       return;
     }
 
@@ -116,37 +159,32 @@ export function PassKeyManager({ initialPassKeys, bookingUrl, invitationUrl, res
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          kind,
-          roomNumber: roomNumber.trim() || undefined,
-          guestName: guestName.trim() || undefined,
-          nights: hasNights ? nightCount : undefined,
-          expiresOn: effectiveExpiry || undefined,
-          maxUses: Number(effectiveUses) || undefined,
-          quantity: Number(quantity) || 1,
-          note: note.trim() || undefined,
-          allowShortStay: allowShortStay || undefined,
+          rows: filled.map((row) => ({
+            kind,
+            reservationRef: row.reservationRef.trim() || undefined,
+            guestName: row.guestName.trim() || undefined,
+            roomNumber: row.roomNumber.trim() || undefined,
+            checkInOn: row.checkInOn || undefined,
+            expiresOn: row.checkOutOn || undefined,
+            maxUses: Number(row.maxUses) || undefined,
+            note: note.trim() || undefined,
+            allowShortStay: row.allowShortStay || undefined,
+          })),
         }),
       });
 
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        setError(data.error ?? "Unable to issue a pass-key.");
+        setError(data.error ?? "Unable to issue pass-keys.");
         return;
       }
 
       const created: PassKeyRecord[] = data.passKeys ?? [data.passKey];
       setPassKeys((current) => [...created, ...current]);
       setIssued(created);
-      setKind("standard");
-      setRoomNumber("");
-      setGuestName("");
-      setNights("");
-      setExpiresOn("");
-      setMaxUses("");
-      setQuantity("1");
+      setRows([blankRow(today)]);
       setNote("");
-      setAllowShortStay(false);
     } catch {
       setError("We could not reach the server. Please try again.");
     } finally {
@@ -181,18 +219,22 @@ export function PassKeyManager({ initialPassKeys, bookingUrl, invitationUrl, res
     }
   };
 
-  const revoke = async (key: PassKeyRecord) => {
+  const act = async (key: PassKeyRecord, action: "revoke" | "delete") => {
     if (busy) {
       return;
     }
 
     const booked = key.reservationNumbers ?? [];
+    const consequences = booked.length
+      ? `${booked.length === 1 ? "Reservation" : "Reservations"} ${booked.join(", ")} ` +
+        `${booked.length === 1 ? "is" : "are"} NOT cancelled — cancel separately if that is what you want.`
+      : "No reservation has been made with it.";
+
     const confirmed = window.confirm(
-      `Revoke ${formatPassKey(key.code)}? It will stop working immediately. ` +
-        (booked.length
-          ? `${booked.length === 1 ? "Reservation" : "Reservations"} ${booked.join(", ")} ` +
-            `${booked.length === 1 ? "is" : "are"} NOT cancelled — cancel separately if that is what you want.`
-          : "No reservation has been made with it."),
+      action === "revoke"
+        ? `Revoke ${formatPassKey(key.code)}? It will stop working immediately. ${consequences}`
+        : `Delete ${formatPassKey(key.code)} permanently? This cannot be undone — revoke it instead ` +
+          `if you want to keep the record. ${consequences}`,
     );
     if (!confirmed) {
       return;
@@ -202,23 +244,43 @@ export function PassKeyManager({ initialPassKeys, bookingUrl, invitationUrl, res
     setError("");
 
     try {
-      const response = await fetch(`/api/admin/pass-keys/${encodeURIComponent(key.id)}/revoke`, {
+      const response = await fetch(`/api/admin/pass-keys/${encodeURIComponent(key.id)}/${action}`, {
         method: "POST",
       });
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        setError(data.error ?? "Unable to revoke this pass-key.");
+        setError(data.error ?? `Unable to ${action} this pass-key.`);
         return;
       }
 
-      setPassKeys((current) => current.map((entry) => (entry.id === key.id ? data.passKey : entry)));
+      setPassKeys((current) =>
+        action === "delete"
+          ? current.filter((entry) => entry.id !== key.id)
+          : current.map((entry) => (entry.id === key.id ? data.passKey : entry)),
+      );
     } catch {
       setError("We could not reach the server. Please try again.");
     } finally {
       setBusy(false);
     }
   };
+
+  const toggleSelected = (id: string) =>
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+
+  // What the print will contain: a fresh batch, or whatever is ticked below.
+  const cardsToPrint = issued.length
+    ? issued
+    : passKeys.filter((key) => selected.has(key.id));
 
   return (
     <>
@@ -227,128 +289,204 @@ export function PassKeyManager({ initialPassKeys, bookingUrl, invitationUrl, res
           as="h1"
           eyebrow="Front desk"
           title="Pass-keys"
-          description={`Issued at check-in for a stay of ${MINIMUM_STAY_NIGHTS} nights or more. A stay earns one dinner per ${MINIMUM_STAY_NIGHTS} nights, up to ${MAX_USES_CAP}.`}
+          description={`One row per arrival. A stay earns a dinner per ${MINIMUM_STAY_NIGHTS} nights, up to ${MAX_USES_CAP}.`}
           actions={<ButtonLink href="/admin">Dashboard</ButtonLink>}
         />
 
-        <form onSubmit={issue} className="mt-6 grid gap-4 sm:grid-cols-2">
-          <div className="sm:col-span-2">
-            <p id="key-kind-label" className="text-sm font-medium text-ink">
-              What kind of key
-            </p>
-            <div role="group" aria-labelledby="key-kind-label" className="mt-2 flex flex-wrap gap-2">
-              {(
-                [
-                  { id: "standard", label: "In-house guest", hint: "Staying with us now" },
-                  { id: "premium", label: "Invitation", hint: "Not staying — booking from the premium menu" },
-                ] as const
-              ).map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  aria-pressed={kind === option.id}
-                  onClick={() => setKind(option.id)}
-                  className={
-                    kind === option.id
-                      ? "rounded-control border border-primary bg-primary px-4 py-2 text-sm font-semibold text-primary-fg"
-                      : "rounded-control border border-line-strong bg-surface px-4 py-2 text-sm font-medium text-ink hover:border-accent"
-                  }
-                >
-                  {option.label}
-                  <span className="block text-xs font-normal opacity-80">{option.hint}</span>
-                </button>
-              ))}
-            </div>
+        <form onSubmit={issue} className="mt-6">
+          <div role="group" aria-label="What kind of key" className="flex flex-wrap gap-2">
+            {(
+              [
+                { id: "standard", label: "In-house guests", hint: "Staying with us" },
+                { id: "premium", label: "Invitations", hint: "Not staying — premium menu" },
+              ] as const
+            ).map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                aria-pressed={kind === option.id}
+                onClick={() => setKind(option.id)}
+                className={cx(
+                  "rounded-control border px-4 py-2 text-left text-sm transition-colors",
+                  kind === option.id
+                    ? "border-primary bg-primary font-semibold text-primary-fg"
+                    : "border-line-strong bg-surface font-medium text-ink hover:border-accent",
+                )}
+              >
+                {option.label}
+                <span className="block text-xs font-normal opacity-80">{option.hint}</span>
+              </button>
+            ))}
           </div>
 
-          <Field label="Room number" hint="For your own reference — guests confirm their room when booking.">
-            {(fieldProps) => (
-              <Input
-                {...fieldProps}
-                maxLength={10}
-                placeholder="402 or L10"
-                value={roomNumber}
-                onChange={(event) =>
-                  setRoomNumber(event.target.value.replace(/[^A-Za-z0-9-]/g, "").toUpperCase())
-                }
-              />
-            )}
-          </Field>
+          <div data-print-scroll="" className="mt-5 overflow-x-auto">
+            <table className="w-full min-w-[54rem] text-left text-sm">
+              <thead className="border-b border-line text-xs uppercase tracking-wide text-ink-subtle">
+                <tr>
+                  <th scope="col" className="py-2 pr-3">Reservation №</th>
+                  <th scope="col" className="py-2 pr-3">Guest name</th>
+                  <th scope="col" className="py-2 pr-3">Room</th>
+                  <th scope="col" className="py-2 pr-3">Check-in</th>
+                  <th scope="col" className="py-2 pr-3">Check-out</th>
+                  <th scope="col" className="py-2 pr-3">Dinners</th>
+                  <th scope="col" className="py-2">
+                    <span className="sr-only">Remove</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line align-top">
+                {rows.map((row) => {
+                  const nights = nightsBetween(row.checkInOn, row.checkOutOn);
+                  const suggested = suggestedUsesForNights(nights);
+                  const short =
+                    kind === "standard" && nights !== undefined && nights < MINIMUM_STAY_NIGHTS;
 
-          <Field label="Guest name (optional)">
-            {(fieldProps) => (
-              <Input
-                {...fieldProps}
-                maxLength={120}
-                placeholder="e.g. Petrova"
-                value={guestName}
-                onChange={(event) => setGuestName(event.target.value)}
-              />
-            )}
-          </Field>
+                  return (
+                    <tr key={row.id}>
+                      <td className="py-2 pr-3">
+                        <Input
+                          aria-label="Hotel reservation number"
+                          inputMode="numeric"
+                          maxLength={20}
+                          placeholder="e.g. 40218"
+                          value={row.reservationRef}
+                          onChange={(event) => updateRow(row.id, { reservationRef: event.target.value })}
+                          className="px-2 py-1.5"
+                        />
+                      </td>
+                      <td className="py-2 pr-3">
+                        <Input
+                          aria-label="Guest name"
+                          maxLength={120}
+                          placeholder="Petrova"
+                          value={row.guestName}
+                          onChange={(event) => updateRow(row.id, { guestName: event.target.value })}
+                          className="px-2 py-1.5"
+                        />
+                      </td>
+                      <td className="py-2 pr-3">
+                        <Input
+                          aria-label="Room number"
+                          maxLength={10}
+                          placeholder="402"
+                          value={row.roomNumber}
+                          onChange={(event) =>
+                            updateRow(row.id, {
+                              roomNumber: event.target.value.replace(/[^A-Za-z0-9-]/g, "").toUpperCase(),
+                            })
+                          }
+                          className="px-2 py-1.5"
+                        />
+                      </td>
+                      <td className="py-2 pr-3">
+                        <Input
+                          aria-label="Check-in date"
+                          type="date"
+                          value={row.checkInOn}
+                          onChange={(event) => updateRow(row.id, { checkInOn: event.target.value })}
+                          className="px-2 py-1.5"
+                        />
+                        {/* Most keys are written for today or tomorrow. */}
+                        <div className="mt-1 flex gap-1">
+                          {(
+                            [
+                              { label: "Today", value: shiftDate(0) },
+                              { label: "Tomorrow", value: shiftDate(1) },
+                            ] as const
+                          ).map((quick) => (
+                            <button
+                              key={quick.label}
+                              type="button"
+                              aria-pressed={row.checkInOn === quick.value}
+                              onClick={() => updateRow(row.id, { checkInOn: quick.value })}
+                              className={cx(
+                                "rounded-full border px-2 py-0.5 text-xs transition-colors",
+                                row.checkInOn === quick.value
+                                  ? "border-primary bg-primary text-primary-fg"
+                                  : "border-line-strong text-ink-muted hover:border-accent",
+                              )}
+                            >
+                              {quick.label}
+                            </button>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="py-2 pr-3">
+                        <Input
+                          aria-label="Check-out date"
+                          type="date"
+                          min={row.checkInOn || undefined}
+                          value={row.checkOutOn}
+                          onChange={(event) => updateRow(row.id, { checkOutOn: event.target.value })}
+                          className="px-2 py-1.5"
+                        />
+                        {/* Nights are shown, never typed — they follow the dates. */}
+                        <p className="mt-1 text-xs text-ink-muted">
+                          {nights === undefined
+                            ? "—"
+                            : `${nights} night${nights === 1 ? "" : "s"}${short ? " · short stay" : ""}`}
+                        </p>
+                      </td>
+                      <td className="py-2 pr-3">
+                        <Input
+                          aria-label="Dinners on this key"
+                          inputMode="numeric"
+                          maxLength={1}
+                          value={row.maxUses || String(suggested)}
+                          onChange={(event) =>
+                            updateRow(row.id, { maxUses: event.target.value.replace(/[^1-9]/g, "").slice(0, 1) })
+                          }
+                          className="w-16 px-2 py-1.5"
+                        />
+                        {short ? (
+                          <label className="mt-1 flex items-start gap-1 text-xs text-warning">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 size-3"
+                              checked={row.allowShortStay}
+                              onChange={(event) =>
+                                updateRow(row.id, { allowShortStay: event.target.checked })
+                              }
+                            />
+                            <span>Allow anyway</span>
+                          </label>
+                        ) : null}
+                      </td>
+                      <td className="py-2">
+                        {rows.length > 1 ? (
+                          <button
+                            type="button"
+                            onClick={() => setRows((current) => current.filter((entry) => entry.id !== row.id))}
+                            className="text-xs text-ink-subtle underline underline-offset-2 hover:text-danger"
+                          >
+                            Remove
+                          </button>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
 
-          <Field label="Nights staying" hint="Sets the suggested expiry and number of dinners.">
-            {(fieldProps) => (
-              <Input
-                {...fieldProps}
-                inputMode="numeric"
-                maxLength={3}
-                placeholder={String(MINIMUM_STAY_NIGHTS)}
-                value={nights}
-                onChange={(event) => {
-                  setNights(event.target.value.replace(/[^0-9]/g, ""));
-                  setError("");
-                }}
-              />
-            )}
-          </Field>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Button
+              variant="secondary"
+              onClick={() => setRows((current) => [...current, blankRow(today)])}
+            >
+              Add another arrival
+            </Button>
+            <span className="text-sm text-ink-muted">{rows.length} row(s)</span>
+          </div>
 
-          <Field label="Valid until" hint="Check-out. The key stops working after this date.">
-            {(fieldProps) => (
-              <Input
-                {...fieldProps}
-                type="date"
-                min={today}
-                value={effectiveExpiry}
-                onChange={(event) => setExpiresOn(event.target.value)}
-              />
-            )}
-          </Field>
-
-          <Field label="Dinners on this key" hint={`One per ${MINIMUM_STAY_NIGHTS} nights, up to ${MAX_USES_CAP}.`}>
-            {(fieldProps) => (
-              <Input
-                {...fieldProps}
-                inputMode="numeric"
-                maxLength={1}
-                value={effectiveUses}
-                onChange={(event) =>
-                  setMaxUses(event.target.value.replace(/[^1-9]/g, "").slice(0, 1))
-                }
-              />
-            )}
-          </Field>
-
-          <Field label="How many keys" hint="For a family or a group arriving together.">
-            {(fieldProps) => (
-              <Input
-                {...fieldProps}
-                inputMode="numeric"
-                maxLength={2}
-                value={quantity}
-                onChange={(event) => setQuantity(event.target.value.replace(/[^0-9]/g, ""))}
-              />
-            )}
-          </Field>
-
-          <div className="sm:col-span-2">
-            <Field label="Note (optional)">
+          <div className="mt-4 max-w-md">
+            <Field label="Note on every key in this batch (optional)">
               {(fieldProps) => (
                 <Textarea
                   {...fieldProps}
                   rows={2}
                   maxLength={200}
-                  placeholder="Anything worth recording"
                   value={note}
                   onChange={(event) => setNote(event.target.value)}
                 />
@@ -356,58 +494,49 @@ export function PassKeyManager({ initialPassKeys, bookingUrl, invitationUrl, res
             </Field>
           </div>
 
-          {isShortStay ? (
-            <div className="sm:col-span-2">
-              <Alert tone="warning">
-                <label className="flex items-start gap-3">
-                  <input
-                    type="checkbox"
-                    className="mt-1 size-4"
-                    checked={allowShortStay}
-                    onChange={(event) => setAllowShortStay(event.target.checked)}
-                  />
-                  <span>
-                    This stay is under {MINIMUM_STAY_NIGHTS} nights. Tick to issue anyway — the exception is recorded
-                    against your account in the log.
-                  </span>
-                </label>
-              </Alert>
-            </div>
-          ) : null}
-
           {error ? (
-            <div className="sm:col-span-2">
-              <Alert tone="danger">{error}</Alert>
-            </div>
+            <Alert tone="danger" className="mt-4">
+              {error}
+            </Alert>
           ) : null}
 
-          <div className="sm:col-span-2">
-            <Button type="submit" size="lg" loading={busy} loadingLabel="Issuing…">
-              {Number(quantity) > 1 ? `Issue ${quantity} pass-keys` : "Issue a pass-key"}
-            </Button>
-          </div>
+          <Button type="submit" size="lg" className="mt-5" loading={busy} loadingLabel="Issuing…">
+            Issue and print
+          </Button>
         </form>
       </Card>
 
       {/* The cards themselves — what gets printed and handed over. */}
-      {issued.length > 0 ? (
+      {cardsToPrint.length > 0 ? (
         <Card className="mt-6 p-5 sm:p-6" data-print="hide">
           <CardHeader
             as="h2"
-            title={issued.length > 1 ? `${issued.length} pass-keys ready` : "Pass-key ready"}
-            description="Print, cut along the dashed lines, and hand them over. Nine to a sheet."
+            title={
+              issued.length
+                ? `${issued.length} pass-key${issued.length === 1 ? "" : "s"} ready`
+                : `${cardsToPrint.length} selected to print`
+            }
+            description="Print, cut along the dashed lines, and hand them over."
             actions={
               <div className="flex flex-wrap gap-3">
                 <Button onClick={printCards}>Print the cards</Button>
                 <Button
                   variant="secondary"
                   onClick={() =>
-                    navigator.clipboard?.writeText(issued.map((key) => formatPassKey(key.code)).join("\n"))
+                    navigator.clipboard?.writeText(
+                      cardsToPrint.map((key) => formatPassKey(key.code)).join("\n"),
+                    )
                   }
                 >
                   Copy the codes
                 </Button>
-                <Button variant="ghost" onClick={() => setIssued([])}>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setIssued([]);
+                    setSelected(new Set());
+                  }}
+                >
                   Done
                 </Button>
               </div>
@@ -415,15 +544,10 @@ export function PassKeyManager({ initialPassKeys, bookingUrl, invitationUrl, res
           />
 
           <div data-print-cards="" className="mt-6 flex flex-wrap gap-4">
-            {issued.map((key) => (
-              <PassKeyCard
-                key={key.id}
-                passKey={key}
-                bookingUrl={
-                  key.kind === "premium" ? `${invitationUrl}/${formatPassKey(key.code)}` : bookingUrl
-                }
-                restaurantName={restaurantName}
-              />
+            {cardsToPrint.map((key) => (
+              <div key={key.id} data-card-cut="">
+                <PassKeyCard passKey={key} bookingUrl={cardUrl(key)} restaurantName={restaurantName} />
+              </div>
             ))}
           </div>
         </Card>
@@ -433,7 +557,7 @@ export function PassKeyManager({ initialPassKeys, bookingUrl, invitationUrl, res
         <CardHeader
           as="h2"
           title="Issued keys"
-          description={`${passKeys.length} in total.`}
+          description={`${passKeys.length} in total. Tick any to print them again.`}
           actions={
             <div role="group" aria-label="Filter by status" className="flex flex-wrap gap-2">
               {(["all", "active", "used", "revoked"] as const).map((option) => (
@@ -461,12 +585,16 @@ export function PassKeyManager({ initialPassKeys, bookingUrl, invitationUrl, res
           </div>
         ) : (
           <div data-print-scroll="" className="mt-6 overflow-x-auto">
-            <table className="w-full min-w-[52rem] text-left text-sm">
+            <table className="w-full min-w-[58rem] text-left text-sm">
               <thead className="border-b border-line text-xs uppercase tracking-wide text-ink-subtle">
                 <tr>
+                  <th scope="col" className="py-2 pr-3">
+                    <span className="sr-only">Print</span>
+                  </th>
                   <th scope="col" className="py-2 pr-4">Key</th>
+                  <th scope="col" className="py-2 pr-4">Reservation №</th>
                   <th scope="col" className="py-2 pr-4">Room / guest</th>
-                  <th scope="col" className="py-2 pr-4">Valid until</th>
+                  <th scope="col" className="py-2 pr-4">Stay</th>
                   <th scope="col" className="py-2 pr-4">Dinners</th>
                   <th scope="col" className="py-2 pr-4">Status</th>
                   <th scope="col" className="py-2 pr-4">Bookings</th>
@@ -478,7 +606,17 @@ export function PassKeyManager({ initialPassKeys, bookingUrl, invitationUrl, res
               <tbody className="divide-y divide-line">
                 {visible.map((key) => (
                   <tr key={key.id}>
+                    <td className="py-3 pr-3">
+                      <input
+                        type="checkbox"
+                        aria-label={`Print ${formatPassKey(key.code)} again`}
+                        className="size-4"
+                        checked={selected.has(key.id)}
+                        onChange={() => toggleSelected(key.id)}
+                      />
+                    </td>
                     <td className="py-3 pr-4 font-mono font-semibold text-ink">{formatPassKey(key.code)}</td>
+                    <td className="py-3 pr-4 tabular-nums text-ink">{key.reservationRef || "—"}</td>
                     <td className="py-3 pr-4 text-ink">
                       {key.roomNumber || "—"}
                       {key.guestName ? <span className="block text-ink-muted">{key.guestName}</span> : null}
@@ -487,7 +625,7 @@ export function PassKeyManager({ initialPassKeys, bookingUrl, invitationUrl, res
                       ) : null}
                     </td>
                     <td className="py-3 pr-4 text-ink-muted">
-                      {key.expiresOn ? formatShortDate(key.expiresOn) : "no expiry"}
+                      {key.expiresOn ? `to ${formatShortDate(key.expiresOn)}` : "no expiry"}
                       {key.nights ? <span className="block text-xs">{key.nights} night(s)</span> : null}
                     </td>
                     <td className="py-3 pr-4 tabular-nums text-ink">
@@ -508,10 +646,19 @@ export function PassKeyManager({ initialPassKeys, bookingUrl, invitationUrl, res
                           {editing?.id === key.id ? "Close" : "Edit"}
                         </Button>
                         {key.status === "revoked" ? null : (
-                          <Button variant="danger" onClick={() => revoke(key)} disabled={busy}>
+                          <Button variant="danger" onClick={() => act(key, "revoke")} disabled={busy}>
                             Revoke
                           </Button>
                         )}
+                        {canDelete ? (
+                          <button
+                            type="button"
+                            onClick={() => act(key, "delete")}
+                            className="text-xs text-ink-subtle underline underline-offset-2 hover:text-danger"
+                          >
+                            Delete
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
@@ -537,8 +684,8 @@ export function PassKeyManager({ initialPassKeys, bookingUrl, invitationUrl, res
 }
 
 /**
- * Extending a stay: move the expiry, and add a dinner if the longer stay now
- * earns one. The guest keeps the card they were given.
+ * Extending a stay: move the check-out date, and the dinners follow. The guest
+ * keeps the card they were already given.
  */
 function EditPassKey({
   passKey,
@@ -556,6 +703,8 @@ function EditPassKey({
   const [expiresOn, setExpiresOn] = useState(passKey.expiresOn ?? "");
   const [maxUses, setMaxUses] = useState(String(passKey.maxUses));
 
+  const nights = nightsBetween(passKey.checkInOn, expiresOn);
+
   return (
     <div className="mt-6 rounded-control border border-accent bg-surface-muted p-4">
       <h3 className="font-semibold text-ink">
@@ -566,22 +715,30 @@ function EditPassKey({
       </p>
 
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
-        <Field label="Valid until">
+        <Field
+          label="Check-out"
+          hint={nights === undefined ? undefined : `${nights} night${nights === 1 ? "" : "s"}`}
+        >
           {(fieldProps) => (
             <Input
               {...fieldProps}
               type="date"
               min={today}
               value={expiresOn}
-              onChange={(event) => setExpiresOn(event.target.value)}
+              onChange={(event) => {
+                setExpiresOn(event.target.value);
+                // Extending a stay usually earns another dinner; reception can
+                // still overrule the suggestion below.
+                const next = nightsBetween(passKey.checkInOn, event.target.value);
+                if (next !== undefined) {
+                  setMaxUses(String(Math.max(suggestedUsesForNights(next), passKey.usedCount || 1)));
+                }
+              }}
             />
           )}
         </Field>
 
-        <Field
-          label="Dinners on this key"
-          hint={`Cannot go below the ${passKey.usedCount} already booked.`}
-        >
+        <Field label="Dinners on this key" hint={`Cannot go below the ${passKey.usedCount} already booked.`}>
           {(fieldProps) => (
             <Input
               {...fieldProps}

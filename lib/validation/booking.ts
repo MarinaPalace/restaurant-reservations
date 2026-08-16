@@ -238,9 +238,12 @@ export const updateStaffUserSchema = z.object({
 export const issuePassKeySchema = z.object({
   /** `premium` issues an invitation key instead of an in-house one. */
   kind: menuKindSchema.optional(),
+  /** The hotel's own booking reference — stable when a guest changes room. */
+  reservationRef: z.string().trim().max(20).optional(),
   roomNumber: z.string().trim().max(10).optional(),
   guestName: z.string().trim().max(120).optional(),
-  nights: z.number().int().min(1).max(365).optional(),
+  /** Arrival. The nights, and so the dinners, follow from this and expiry. */
+  checkInOn: dateKeySchema.optional(),
   /**
    * Normally check-out: the key stops working after this evening. Set
    * explicitly by reception rather than derived, so an unusual stay can be
@@ -249,17 +252,24 @@ export const issuePassKeySchema = z.object({
   expiresOn: dateKeySchema.optional(),
   /** Dinners the key may book. Defaults to what the stay length earns. */
   maxUses: z.number().int().min(1).max(MAX_USES_CAP).optional(),
-  /**
-   * How many identical keys to issue in one go, for a family arriving
-   * together or a coach party at the desk.
-   */
-  quantity: z.number().int().min(1).max(20).optional(),
+
   note: z.string().trim().max(200).optional(),
   /**
    * Deliberately giving a key to a guest whose stay is too short. Recorded on
    * the key and in the audit log, so an exception is always traceable.
    */
   allowShortStay: z.boolean().optional(),
+});
+
+/**
+ * A morning's check-ins, one row each.
+ *
+ * Reception works from a list of arrivals, and every row is a different guest
+ * — so this is a list of distinct keys, not a count of identical ones. Issuing
+ * twenty copies of the same room was never what anybody wanted.
+ */
+export const issuePassKeyBatchSchema = z.object({
+  rows: z.array(issuePassKeySchema).min(1).max(40),
 });
 
 /**

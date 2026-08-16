@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { isDenied, requireStaff } from "@/lib/auth/guard";
 import { ShortStayError, issuePassKey, listPassKeys } from "@/lib/services/pass-keys";
 import { recordAuditEntry } from "@/lib/services/audit-log";
-import { issuePassKeySchema } from "@/lib/validation/booking";
+import { issuePassKeyBatchSchema, issuePassKeySchema } from "@/lib/validation/booking";
 import { formatPassKey } from "@/lib/pass-key";
 import { MINIMUM_STAY_NIGHTS } from "@/types/booking";
 
@@ -28,16 +28,24 @@ export async function POST(request: Request) {
   }
 
   try {
-    const parsed = issuePassKeySchema.safeParse(await request.json());
+    const body = await request.json();
 
-    if (!parsed.success) {
+    /**
+     * Either a whole morning's arrivals or a single walk-in. The batch shape
+     * is tried first; a lone key is the same thing with one row.
+     */
+    const batch = issuePassKeyBatchSchema.safeParse(body);
+    const single = batch.success ? null : issuePassKeySchema.safeParse(body);
+
+    if (!batch.success && !single?.success) {
+      const issues = (single ?? batch).error?.issues;
       return NextResponse.json(
-        { error: parsed.error.issues[0]?.message ?? "Please check the pass-key details." },
+        { error: issues?.[0]?.message ?? "Please check the pass-key details." },
         { status: 400 },
       );
     }
 
-    const { quantity = 1, ...details } = parsed.data;
+    const rows = batch.success ? batch.data.rows : [single!.data!];
 
     /**
      * Issued one at a time rather than in a bulk write: each key needs its own
@@ -45,14 +53,24 @@ export async function POST(request: Request) {
      * a batch is not one anonymous entry.
      */
     const passKeys = [];
-    for (let issued = 0; issued < quantity; issued += 1) {
-      passKeys.push(await issuePassKey({ ...details, actor: auth.actor }));
+    for (const row of rows) {
+      passKeys.push(await issuePassKey({ ...row, actor: auth.actor }));
     }
 
-    const exception = details.allowShortStay && (details.nights ?? 0) < MINIMUM_STAY_NIGHTS;
+    for (const [index, passKey] of passKeys.entries()) {
+      const exception =
+        rows[index].allowShortStay &&
+        (passKey.nights ?? 0) < MINIMUM_STAY_NIGHTS &&
+        passKey.kind !== "premium";
 
-    for (const passKey of passKeys) {
-      const whom = passKey.roomNumber ? `room ${passKey.roomNumber}` : (passKey.guestName ?? "a guest");
+      // Named by the hotel's booking reference where there is one: it is what
+      // survives a guest being moved to another room.
+      const whom =
+        passKey.reservationRef
+          ? `booking ${passKey.reservationRef}`
+          : passKey.roomNumber
+            ? `room ${passKey.roomNumber}`
+            : (passKey.guestName ?? "a guest");
 
       await recordAuditEntry({
         action: "passkey:issue",

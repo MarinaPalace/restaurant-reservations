@@ -7,6 +7,7 @@ import type { ReservationRecord, ReservationSelection } from "@/types/booking";
 export const BOOKING_STORAGE_KEYS = {
   passKey: "booking-pass-key",
   passKeyExpiresOn: "booking-pass-key-expires",
+  passKeyBookedDates: "booking-pass-key-booked-dates",
   roomNumber: "booking-room-number",
   guestCount: "booking-guest-count",
   date: "booking-date",
@@ -28,6 +29,12 @@ export type BookingSession = {
    * guest pick one and be refused at the end.
    */
   passKeyExpiresOn: string;
+  /**
+   * Evenings this key already has a live booking on. Held so the date step can
+   * say so before the guest books a second table by mistake — which is what
+   * usually happens when somebody means to change an existing booking.
+   */
+  passKeyBookedDates: string[];
   roomNumber: string;
   /** 0 means "not chosen yet", which is different from a party of one. */
   guestCount: number;
@@ -39,6 +46,7 @@ export type BookingSession = {
 export const EMPTY_BOOKING_SESSION: BookingSession = {
   passKey: "",
   passKeyExpiresOn: "",
+  passKeyBookedDates: [],
   roomNumber: "",
   guestCount: 0,
   date: "",
@@ -102,8 +110,10 @@ export function readBookingSession(storage: Storage | null | undefined): Booking
   const passKey = storage.getItem(BOOKING_STORAGE_KEYS.passKey) ?? "";
 
   const passKeyExpiresOn = storage.getItem(BOOKING_STORAGE_KEYS.passKeyExpiresOn) ?? "";
+  const bookedDates = parseJson(storage.getItem(BOOKING_STORAGE_KEYS.passKeyBookedDates));
 
   return {
+    passKeyBookedDates: Array.isArray(bookedDates) ? bookedDates.filter(isValidDateKey) : [],
     passKey: isValidPassKeyFormat(passKey) ? normalizePassKey(passKey) : "",
     passKeyExpiresOn: isValidDateKey(passKeyExpiresOn) ? passKeyExpiresOn : "",
     roomNumber: isValidRoomNumber(roomNumber) ? normalizeRoomNumber(roomNumber) : "",

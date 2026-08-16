@@ -77,7 +77,14 @@ function getServerSnapshot() {
 type SessionPatch = Partial<
   Pick<
     BookingSession,
-    "passKey" | "passKeyExpiresOn" | "roomNumber" | "guestCount" | "date" | "selections" | "language"
+    | "passKey"
+    | "passKeyExpiresOn"
+    | "passKeyBookedDates"
+    | "roomNumber"
+    | "guestCount"
+    | "date"
+    | "selections"
+    | "language"
   >
 >;
 
@@ -91,6 +98,9 @@ export function writeBookingSession(patch: SessionPatch) {
   if (patch.passKey !== undefined) storage.setItem(BOOKING_STORAGE_KEYS.passKey, patch.passKey);
   if (patch.passKeyExpiresOn !== undefined) {
     storage.setItem(BOOKING_STORAGE_KEYS.passKeyExpiresOn, patch.passKeyExpiresOn);
+  }
+  if (patch.passKeyBookedDates !== undefined) {
+    storage.setItem(BOOKING_STORAGE_KEYS.passKeyBookedDates, JSON.stringify(patch.passKeyBookedDates));
   }
   if (patch.roomNumber !== undefined) storage.setItem(BOOKING_STORAGE_KEYS.roomNumber, patch.roomNumber);
   if (patch.guestCount !== undefined) storage.setItem(BOOKING_STORAGE_KEYS.guestCount, String(patch.guestCount));

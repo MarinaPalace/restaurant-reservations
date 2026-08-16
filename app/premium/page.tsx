@@ -1,30 +1,17 @@
-import type { Metadata } from "next";
-import { PageShell } from "@/components/page-shell";
-import { PremiumBooking } from "@/app/premium/premium-booking";
-import { getMenuCatalog, getRestaurantDates } from "@/lib/services/restaurant";
-import { todayKey } from "@/lib/date";
+import { redirect } from "next/navigation";
 
-export const metadata: Metadata = {
-  title: "An invitation",
-  robots: { index: false, follow: false },
-};
-
-export const dynamic = "force-dynamic";
-
-export default async function PremiumPage() {
-  const [menu, dates] = await Promise.all([getMenuCatalog("en", "premium"), getRestaurantDates()]);
-  const today = todayKey();
-
-  /**
-   * Only evenings the restaurant has opened for invited guests. Everything
-   * else stays locked, which is the point: these guests are choosing months
-   * ahead, from a fixed set of dates.
-   */
-  const available = dates.filter((entry) => entry.premium && entry.isOpen && entry.date >= today);
-
-  return (
-    <PageShell width="lg">
-      <PremiumBooking menu={menu} dates={available} />
-    </PageShell>
-  );
+/**
+ * The invitation flow has no open front door any more.
+ *
+ * This page used to show the premium menu and every evening held for invited
+ * guests to anyone who found the address — the booking itself was refused
+ * without a key, but the whole offer was on display, which was the point of
+ * keeping those evenings private in the first place.
+ *
+ * An invitation now arrives as `/premium/<pass-key>`, and anyone arriving here
+ * without one is sent to the single entry step, which works out from the key
+ * itself whether they belong in this flow or the everyday one.
+ */
+export default function PremiumIndexPage() {
+  redirect("/booking");
 }

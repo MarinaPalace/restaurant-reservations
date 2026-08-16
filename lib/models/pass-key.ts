@@ -7,8 +7,11 @@ const passKeySchema = new Schema(
     code: { type: String, required: true, unique: true, index: true },
     // Absent reads as "standard", so keys issued before this are unaffected.
     kind: { type: String, enum: ["standard", "premium"], default: "standard" },
+    // The hotel's booking reference: stable when a guest changes room.
+    reservationRef: { type: String, index: true },
     roomNumber: { type: String },
     guestName: { type: String },
+    checkInOn: { type: String },
     nights: { type: Number },
     // A local date key, never an instant — see lib/date.ts.
     expiresOn: { type: String },

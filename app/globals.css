@@ -421,13 +421,28 @@ body {
   }
 
   [data-printing-cards] [data-pass-key-card] {
-    /* Cut lines. A dashed hairline is easier to follow than a solid rule. */
-    border: 0.3mm dashed #666 !important;
-    border-radius: 0 !important;
-    box-shadow: none !important;
-    background: #ffffff !important;
-    color: #000000 !important;
+    /*
+     * Cards keep their colour. Everything else in this app prints as ink on
+     * white — a service sheet is a working document — but a card is handed to
+     * a guest, so `print-color-adjust: exact` overrides the browser's habit of
+     * dropping backgrounds to save toner.
+     */
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
     break-inside: avoid;
+  }
+
+  /* The wash and the rule are backgrounds and borders, so they need saying too. */
+  [data-printing-cards] [data-card-wash],
+  [data-printing-cards] [data-card-rule] {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* A dashed hairline between cards is easier to cut along than a solid rule. */
+  [data-printing-cards] [data-card-cut] {
+    outline: 0.3mm dashed #999;
+    outline-offset: 1.5mm;
   }
 
   /* Everything that is not a card goes away while cards are printing. */

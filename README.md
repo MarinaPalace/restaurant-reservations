@@ -28,14 +28,20 @@ case-insensitive; dashes and spaces ignored; and the characters people type when
 `VDMK7QP3M2XR4` are the same key. The `VDM-` prefix is already in the box, so guests only type the
 part that varies.
 
-**A long stay earns more than one dinner** — one per five nights, up to three. Reception sets the
-number and the expiry date when issuing, can issue a batch in one go for a family arriving together,
-and can edit both later when a stay is extended. A key expires when the stay does, so a table cannot
-be held for an evening after check-out, and a stay under five nights is refused unless somebody
-deliberately overrides it, which is recorded on the key and in the log.
+**A long stay earns more than one dinner** — one per five nights, up to three. A key expires when
+the stay does, so a table cannot be held for an evening after check-out, and a stay under five
+nights is refused unless somebody deliberately overrides it, which is recorded on the key and in the
+log.
 
-Keys print as **credit-card-sized cards** with the code, the address to book at, the expiry and how
-many dinners are on it — several to a sheet with dashed cut lines.
+**Reception works from an arrivals table.** One row per guest — hotel reservation number, name,
+room, check-in, check-out — and one press issues them all and puts the cards on screen to print.
+Nights and dinners are worked out from the two dates rather than typed, so nothing can disagree, and
+check-in has Today/Tomorrow buttons because keys are usually written a day ahead. Keys are
+identified by the hotel's booking reference rather than the room, because guests get moved.
+
+Keys print as **credit-card-sized cards** in house colour, carrying a **QR code**: the guest scans
+it and lands on the booking step with the key already filled in. Already-issued keys can be ticked
+and reprinted, and administrators can delete one outright.
 
 **The key is checked on the first screen**, not when the finished booking is submitted, so nobody
 picks a date and a full menu for four people only to be told the key was spent. The date calendar
@@ -49,9 +55,16 @@ rather than losing dinner over one tap.
 
 **Invitations.** Guests who are not staying get the same kind of key, marked as an invitation, and
 receive it as a link — `/premium/<pass-key>` — so they go from the email straight into the booking
-without typing anything. Invitation keys only work on the invitation flow and in-house keys only
-work on the everyday one; each is refused on the other. This closes the old hole where anyone who
-came across the `/premium` address could take a seat held for an invited guest.
+without typing anything. Invitation keys only work on the invitation flow and in-house keys only on
+the everyday one; each is refused on the other, at every step.
+
+**There is one front door.** Everyone starts at `/booking` and enters a key; the app works out from
+the key which flow they belong in and sends them there. Bare `/premium` now redirects — it used to
+show the premium menu and every invitation-only evening to anyone who found the address.
+
+**Booking twice on one evening** is allowed, because a guest with dinners to spare often books for a
+room that has none — but the app says so first, since usually the guest meant to change the booking
+they already have.
 
 **Staff accounts.** Each member of staff signs in as themselves at `/admin/users`, with their own
 permissions: take, edit, cancel and restore reservations; edit the menus; manage evenings; issue

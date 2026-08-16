@@ -98,7 +98,8 @@ export function PassKeyCard({
           </p>
           <p className="mt-[0.5mm]">
             {dinners}
-            {passKey.expiresOn ? ` · valid until ${formatShortDate(passKey.expiresOn)}` : ""}
+            {passKey.maxGuests ? ` · table for up to ${passKey.maxGuests}` : ""}
+            {passKey.expiresOn ? ` · until ${formatShortDate(passKey.expiresOn)}` : ""}
           </p>
           {passKey.roomNumber || passKey.guestName ? (
             <p className="truncate" style={{ color: GOLD }}>

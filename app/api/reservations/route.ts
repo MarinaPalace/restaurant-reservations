@@ -10,6 +10,7 @@ import { BOOKING_MESSAGES, validateReservationRequest } from "@/lib/services/boo
 import {
   PASS_KEY_MESSAGES,
   consumePassKey,
+  describeGuestCountProblem,
   describePassKeyProblem,
   getPassKeyByCode,
   isDateWithinStay,
@@ -95,6 +96,15 @@ export async function POST(request: Request) {
         { error: keyProblem?.message ?? PASS_KEY_MESSAGES.invalid, code: `PASS_KEY_${keyProblem?.code ?? "INVALID"}` },
         { status: 403 },
       );
+    }
+
+    /**
+     * The party may shrink but never grow: the seats were held for the number
+     * on the hotel booking, and no more.
+     */
+    const guestProblem = describeGuestCountProblem(passKey, parsed.data.guestCount);
+    if (guestProblem) {
+      return NextResponse.json({ error: guestProblem, code: "PASS_KEY_TOO_MANY_GUESTS" }, { status: 409 });
     }
 
     if (!isDateWithinStay(passKey, parsed.data.date)) {

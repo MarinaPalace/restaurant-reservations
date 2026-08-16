@@ -13,6 +13,8 @@ const passKeySchema = new Schema(
     guestName: { type: String },
     checkInOn: { type: String },
     nights: { type: Number },
+    // The party size on the hotel booking. Absent reads as no extra limit.
+    maxGuests: { type: Number, min: 1 },
     // A local date key, never an instant — see lib/date.ts.
     expiresOn: { type: String },
     // Added with multi-use keys. Absent reads as a single use already spent or

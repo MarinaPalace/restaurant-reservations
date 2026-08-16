@@ -8,6 +8,7 @@ export const BOOKING_STORAGE_KEYS = {
   passKey: "booking-pass-key",
   passKeyExpiresOn: "booking-pass-key-expires",
   passKeyBookedDates: "booking-pass-key-booked-dates",
+  passKeyMaxGuests: "booking-pass-key-max-guests",
   roomNumber: "booking-room-number",
   guestCount: "booking-guest-count",
   date: "booking-date",
@@ -35,6 +36,12 @@ export type BookingSession = {
    * usually happens when somebody means to change an existing booking.
    */
   passKeyBookedDates: string[];
+  /**
+   * How many people the hotel booking is for. The guests step offers no more
+   * than this, and the server refuses more regardless. 0 means the key carries
+   * no limit, which is how every key issued before this reads.
+   */
+  passKeyMaxGuests: number;
   roomNumber: string;
   /** 0 means "not chosen yet", which is different from a party of one. */
   guestCount: number;
@@ -47,6 +54,7 @@ export const EMPTY_BOOKING_SESSION: BookingSession = {
   passKey: "",
   passKeyExpiresOn: "",
   passKeyBookedDates: [],
+  passKeyMaxGuests: 0,
   roomNumber: "",
   guestCount: 0,
   date: "",
@@ -112,8 +120,14 @@ export function readBookingSession(storage: Storage | null | undefined): Booking
   const passKeyExpiresOn = storage.getItem(BOOKING_STORAGE_KEYS.passKeyExpiresOn) ?? "";
   const bookedDates = parseJson(storage.getItem(BOOKING_STORAGE_KEYS.passKeyBookedDates));
 
+  const maxGuests = Number(storage.getItem(BOOKING_STORAGE_KEYS.passKeyMaxGuests));
+
   return {
     passKeyBookedDates: Array.isArray(bookedDates) ? bookedDates.filter(isValidDateKey) : [],
+    passKeyMaxGuests:
+      Number.isInteger(maxGuests) && maxGuests > 0 && maxGuests <= MAX_GUESTS_PER_RESERVATION
+        ? maxGuests
+        : 0,
     passKey: isValidPassKeyFormat(passKey) ? normalizePassKey(passKey) : "",
     passKeyExpiresOn: isValidDateKey(passKeyExpiresOn) ? passKeyExpiresOn : "",
     roomNumber: isValidRoomNumber(roomNumber) ? normalizeRoomNumber(roomNumber) : "",

@@ -80,6 +80,7 @@ type SessionPatch = Partial<
     | "passKey"
     | "passKeyExpiresOn"
     | "passKeyBookedDates"
+    | "passKeyMaxGuests"
     | "roomNumber"
     | "guestCount"
     | "date"
@@ -101,6 +102,9 @@ export function writeBookingSession(patch: SessionPatch) {
   }
   if (patch.passKeyBookedDates !== undefined) {
     storage.setItem(BOOKING_STORAGE_KEYS.passKeyBookedDates, JSON.stringify(patch.passKeyBookedDates));
+  }
+  if (patch.passKeyMaxGuests !== undefined) {
+    storage.setItem(BOOKING_STORAGE_KEYS.passKeyMaxGuests, String(patch.passKeyMaxGuests));
   }
   if (patch.roomNumber !== undefined) storage.setItem(BOOKING_STORAGE_KEYS.roomNumber, patch.roomNumber);
   if (patch.guestCount !== undefined) storage.setItem(BOOKING_STORAGE_KEYS.guestCount, String(patch.guestCount));

@@ -245,6 +245,12 @@ export const issuePassKeySchema = z.object({
   /** Arrival. The nights, and so the dinners, follow from this and expiry. */
   checkInOn: dateKeySchema.optional(),
   /**
+   * The party size on the hotel booking. Capped at the restaurant's own limit
+   * because a larger number could not be booked anyway — a bigger group needs
+   * a second key.
+   */
+  maxGuests: z.number().int().min(1).max(MAX_GUESTS_PER_RESERVATION).optional(),
+  /**
    * Normally check-out: the key stops working after this evening. Set
    * explicitly by reception rather than derived, so an unusual stay can be
    * described accurately.
@@ -279,6 +285,8 @@ export const issuePassKeyBatchSchema = z.object({
 export const updatePassKeySchema = z.object({
   expiresOn: dateKeySchema.nullable().optional(),
   maxUses: z.number().int().min(1).max(MAX_USES_CAP).optional(),
+  /** Party sizes change before arrival, so this stays editable. */
+  maxGuests: z.number().int().min(1).max(MAX_GUESTS_PER_RESERVATION).nullable().optional(),
   note: z.string().trim().max(200).optional(),
 });
 

@@ -112,6 +112,7 @@ function toPassKeyRecord(document: MongoPassKeyDocument): PassKeyRecord {
     roomNumber: document.roomNumber ? String(document.roomNumber) : undefined,
     guestName: document.guestName ? String(document.guestName) : undefined,
     checkInOn: document.checkInOn ? String(document.checkInOn) : undefined,
+    maxGuests: typeof document.maxGuests === "number" ? document.maxGuests : undefined,
     nights: typeof document.nights === "number" ? document.nights : undefined,
     expiresOn: document.expiresOn ? String(document.expiresOn) : undefined,
     ...normalizePassKeyCounts(document),
@@ -157,6 +158,30 @@ export function describePassKeyProblem(
 /** Whether a key may still be spent. */
 export function isPassKeyUsable(key: PassKeyRecord | null, now = new Date()) {
   return describePassKeyProblem(key, now) === null;
+}
+
+/**
+ * A party may shrink but never grow.
+ *
+ * Reception records the party size from the hotel booking when the key is
+ * issued. Coming with fewer is ordinary — people drop out of dinner — but the
+ * seats were never held for more, so a larger table is refused. A key with no
+ * limit recorded (every key issued before this existed) is only bound by the
+ * restaurant's own maximum.
+ */
+export function describeGuestCountProblem(
+  key: Pick<PassKeyRecord, "maxGuests">,
+  guestCount: number,
+): string | null {
+  if (!key.maxGuests || guestCount <= key.maxGuests) {
+    return null;
+  }
+
+  return (
+    `Your booking with us is for ${key.maxGuests} ` +
+    `${key.maxGuests === 1 ? "guest" : "guests"}, so dinner can be booked for up to ${key.maxGuests}. ` +
+    "Please speak to reception if your party has grown."
+  );
 }
 
 /**
@@ -234,6 +259,7 @@ export async function issuePassKey(input: {
   guestName?: string;
   checkInOn?: string;
   expiresOn?: string;
+  maxGuests?: number;
   /** Dinners this key may book. Defaults to what the stay length earns. */
   maxUses?: number;
   note?: string;
@@ -269,6 +295,7 @@ export async function issuePassKey(input: {
     checkInOn: input.checkInOn,
     nights,
     expiresOn: input.expiresOn,
+    maxGuests: input.maxGuests,
     maxUses,
     usedCount: 0,
     status: "active" as const,
@@ -479,7 +506,7 @@ export class UpdatePassKeyError extends Error {
  */
 export async function updatePassKey(
   id: string,
-  patch: { expiresOn?: string | null; maxUses?: number; note?: string },
+  patch: { expiresOn?: string | null; maxUses?: number; maxGuests?: number | null; note?: string },
 ): Promise<{ before: PassKeyRecord; after: PassKeyRecord }> {
   const before = await getPassKeyById(id);
   if (!before) {
@@ -494,6 +521,7 @@ export async function updatePassKey(
     ...before,
     expiresOn: patch.expiresOn === undefined ? before.expiresOn : (patch.expiresOn ?? undefined),
     maxUses: patch.maxUses ?? before.maxUses,
+    maxGuests: patch.maxGuests === undefined ? before.maxGuests : (patch.maxGuests ?? undefined),
     note: patch.note === undefined ? before.note : patch.note || undefined,
   };
 
@@ -505,6 +533,7 @@ export async function updatePassKey(
     const saved = await updateLocalPassKey(id, {
       expiresOn: next.expiresOn,
       maxUses: next.maxUses,
+      maxGuests: next.maxGuests,
       note: next.note,
       status: next.status,
     });
@@ -525,6 +554,7 @@ export async function updatePassKey(
         maxUses: next.maxUses,
         status: next.status,
         ...(patch.expiresOn === undefined ? {} : { expiresOn: patch.expiresOn ?? null }),
+        ...(patch.maxGuests === undefined ? {} : { maxGuests: patch.maxGuests ?? null }),
         ...(patch.note === undefined ? {} : { note: patch.note || null }),
       },
     },

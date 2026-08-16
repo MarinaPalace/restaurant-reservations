@@ -95,6 +95,8 @@ export async function POST(request: Request) {
       expiresOn: passKey.expiresOn ?? null,
       usesRemaining: Math.max(passKey.maxUses - passKey.usedCount, 0),
       maxUses: passKey.maxUses,
+      /** The party size on the hotel booking; the guest step will not exceed it. */
+      maxGuests: passKey.maxGuests ?? null,
       bookableDates,
       /**
        * Evenings this key already has a live booking on. Booking a second

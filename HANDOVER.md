@@ -21,7 +21,7 @@ A reservation app for **Vista Del Mar**, a hotel's à la carte restaurant.
 Stack: Next.js 16 (App Router, Turbopack), React 19, TypeScript, Tailwind v4, Mongoose 9, Zod 4,
 Vitest. Deployed on Vercel.
 
-**295 tests, 19 files. Lint, types and build are clean. Keep them that way.**
+**299 tests, 19 files. Lint, types and build are clean. Keep them that way.**
 
 ---
 
@@ -324,6 +324,11 @@ per guest — hotel reservation number, name, room, check-in, check-out — and 
 all and puts the cards on screen to print. Rows are distinct guests, never copies of one; issuing
 twenty identical keys for one room was never the job.
 
+Reception also records the **party size from the hotel booking**, which it knows before the guest
+arrives. Dinner can then be booked for that many or fewer, never more — the seats were never held
+for more. It is editable, because parties change before arrival, and blank on every key issued
+before this, which reads as "no limit beyond the restaurant's own maximum of six".
+
 Reception types **dates, never night counts**. The nights and the number of dinners follow from
 check-in and check-out (`nightsBetween`, `suggestedUsesForNights`), so the card and the record cannot
 disagree. Check-in has Today/Tomorrow buttons, because keys are usually written a day or two ahead.
@@ -414,7 +419,7 @@ Roughly in the order I would tackle them for beta.
 
 ```bash
 npm run dev          # local, JSON store, admin/admin123
-npm test             # 295 tests; the Mongo suite runs an in-memory mongod
+npm test             # 299 tests; the Mongo suite runs an in-memory mongod
 npm run typecheck
 npm run lint
 npm run build

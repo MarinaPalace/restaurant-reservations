@@ -28,13 +28,19 @@ case-insensitive; dashes and spaces ignored; and the characters people type when
 `VDMK7QP3M2XR4` are the same key. The `VDM-` prefix is already in the box, so guests only type the
 part that varies.
 
+**The party size comes from the hotel booking.** Reception knows it before the guest arrives, so the
+key carries it: the booking flow offers no larger a table, and the server refuses one regardless.
+Fewer is always fine — people drop out of dinner — and the number stays editable, because parties
+change. A key with no size recorded is bound only by the restaurant's maximum of six.
+
 **A long stay earns more than one dinner** — one per five nights, up to three. A key expires when
 the stay does, so a table cannot be held for an evening after check-out, and a stay under five
 nights is refused unless somebody deliberately overrides it, which is recorded on the key and in the
 log.
 
 **Reception works from an arrivals table.** One row per guest — hotel reservation number, name,
-room, check-in, check-out — and one press issues them all and puts the cards on screen to print.
+room, check-in, check-out, party size — and one press issues them all and puts the cards on screen
+to print.
 Nights and dinners are worked out from the two dates rather than typed, so nothing can disagree, and
 check-in has Today/Tomorrow buttons because keys are usually written a day ahead. Keys are
 identified by the hotel's booking reference rather than the room, because guests get moved.

@@ -9,6 +9,7 @@ import { PassKeyCard } from "@/app/admin/pass-keys/pass-key-card";
 import { formatPassKey } from "@/lib/pass-key";
 import { formatShortDate, todayKey } from "@/lib/date";
 import { cx } from "@/components/ui/utils";
+import { MAX_GUESTS_PER_RESERVATION } from "@/lib/validation/booking";
 import {
   MAX_USES_CAP,
   MINIMUM_STAY_NIGHTS,
@@ -46,6 +47,7 @@ type Row = {
   roomNumber: string;
   checkInOn: string;
   checkOutOn: string;
+  maxGuests: string;
   maxUses: string;
   allowShortStay: boolean;
 };
@@ -65,6 +67,7 @@ function blankRow(checkInOn: string): Row {
     roomNumber: "",
     checkInOn,
     checkOutOn: "",
+    maxGuests: "",
     maxUses: "",
     allowShortStay: false,
   };
@@ -166,6 +169,7 @@ export function PassKeyManager({
             roomNumber: row.roomNumber.trim() || undefined,
             checkInOn: row.checkInOn || undefined,
             expiresOn: row.checkOutOn || undefined,
+            maxGuests: Number(row.maxGuests) || undefined,
             maxUses: Number(row.maxUses) || undefined,
             note: note.trim() || undefined,
             allowShortStay: row.allowShortStay || undefined,
@@ -192,7 +196,10 @@ export function PassKeyManager({
     }
   };
 
-  const saveEdit = async (key: PassKeyRecord, patch: { expiresOn?: string | null; maxUses?: number }) => {
+  const saveEdit = async (
+    key: PassKeyRecord,
+    patch: { expiresOn?: string | null; maxUses?: number; maxGuests?: number | null },
+  ) => {
     setBusy(true);
     setError("");
 
@@ -328,6 +335,7 @@ export function PassKeyManager({
                   <th scope="col" className="py-2 pr-3">Room</th>
                   <th scope="col" className="py-2 pr-3">Check-in</th>
                   <th scope="col" className="py-2 pr-3">Check-out</th>
+                  <th scope="col" className="py-2 pr-3">Guests</th>
                   <th scope="col" className="py-2 pr-3">Dinners</th>
                   <th scope="col" className="py-2">
                     <span className="sr-only">Remove</span>
@@ -425,6 +433,25 @@ export function PassKeyManager({
                           {nights === undefined
                             ? "—"
                             : `${nights} night${nights === 1 ? "" : "s"}${short ? " · short stay" : ""}`}
+                        </p>
+                      </td>
+                      <td className="py-2 pr-3">
+                        <Input
+                          aria-label="Guests on the hotel booking"
+                          inputMode="numeric"
+                          maxLength={1}
+                          placeholder="—"
+                          value={row.maxGuests}
+                          onChange={(event) =>
+                            updateRow(row.id, {
+                              maxGuests: event.target.value.replace(/[^1-9]/g, "").slice(0, 1),
+                            })
+                          }
+                          className="w-16 px-2 py-1.5"
+                        />
+                        {/* Fewer is fine; more is refused when they book. */}
+                        <p className="mt-1 text-xs text-ink-muted">
+                          {row.maxGuests ? "max" : `up to ${MAX_GUESTS_PER_RESERVATION}`}
                         </p>
                       </td>
                       <td className="py-2 pr-3">
@@ -595,6 +622,7 @@ export function PassKeyManager({
                   <th scope="col" className="py-2 pr-4">Reservation №</th>
                   <th scope="col" className="py-2 pr-4">Room / guest</th>
                   <th scope="col" className="py-2 pr-4">Stay</th>
+                  <th scope="col" className="py-2 pr-4">Guests</th>
                   <th scope="col" className="py-2 pr-4">Dinners</th>
                   <th scope="col" className="py-2 pr-4">Status</th>
                   <th scope="col" className="py-2 pr-4">Bookings</th>
@@ -627,6 +655,9 @@ export function PassKeyManager({
                     <td className="py-3 pr-4 text-ink-muted">
                       {key.expiresOn ? `to ${formatShortDate(key.expiresOn)}` : "no expiry"}
                       {key.nights ? <span className="block text-xs">{key.nights} night(s)</span> : null}
+                    </td>
+                    <td className="py-3 pr-4 tabular-nums text-ink">
+                      {key.maxGuests ? `up to ${key.maxGuests}` : "—"}
                     </td>
                     <td className="py-3 pr-4 tabular-nums text-ink">
                       {Math.max(key.maxUses - key.usedCount, 0)} of {key.maxUses} left
@@ -697,11 +728,12 @@ function EditPassKey({
   passKey: PassKeyRecord;
   busy: boolean;
   today: string;
-  onSave: (patch: { expiresOn?: string | null; maxUses?: number }) => void;
+  onSave: (patch: { expiresOn?: string | null; maxUses?: number; maxGuests?: number | null }) => void;
   onCancel: () => void;
 }) {
   const [expiresOn, setExpiresOn] = useState(passKey.expiresOn ?? "");
   const [maxUses, setMaxUses] = useState(String(passKey.maxUses));
+  const [maxGuests, setMaxGuests] = useState(passKey.maxGuests ? String(passKey.maxGuests) : "");
 
   const nights = nightsBetween(passKey.checkInOn, expiresOn);
 
@@ -749,13 +781,35 @@ function EditPassKey({
             />
           )}
         </Field>
+
+        <Field
+          label="Guests on the hotel booking"
+          hint={`Dinner can be booked for up to this many. Blank means up to ${MAX_GUESTS_PER_RESERVATION}.`}
+        >
+          {(fieldProps) => (
+            <Input
+              {...fieldProps}
+              inputMode="numeric"
+              maxLength={1}
+              placeholder="—"
+              value={maxGuests}
+              onChange={(event) => setMaxGuests(event.target.value.replace(/[^1-9]/g, "").slice(0, 1))}
+            />
+          )}
+        </Field>
       </div>
 
       <div className="mt-4 flex flex-wrap gap-3">
         <Button
           loading={busy}
           loadingLabel="Saving…"
-          onClick={() => onSave({ expiresOn: expiresOn || null, maxUses: Number(maxUses) || passKey.maxUses })}
+          onClick={() =>
+            onSave({
+              expiresOn: expiresOn || null,
+              maxUses: Number(maxUses) || passKey.maxUses,
+              maxGuests: Number(maxGuests) || null,
+            })
+          }
         >
           Save changes
         </Button>

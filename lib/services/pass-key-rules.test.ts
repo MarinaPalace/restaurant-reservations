@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { describePassKeyProblem, isDateWithinStay, isPassKeyUsable } from "@/lib/services/pass-keys";
+import {
+  describeGuestCountProblem,
+  describePassKeyProblem,
+  isDateWithinStay,
+  isPassKeyUsable,
+} from "@/lib/services/pass-keys";
 import type { PassKeyRecord } from "@/types/booking";
 
 /**
@@ -92,5 +97,37 @@ describe("isDateWithinStay", () => {
 
   it("allows anything when the key has no expiry", () => {
     expect(isDateWithinStay({ expiresOn: undefined }, "2099-01-01")).toBe(true);
+  });
+});
+
+/**
+ * Reception knows the party size from the hotel booking, so the key carries
+ * it. Coming with fewer is ordinary; more was never held for them.
+ */
+describe("describeGuestCountProblem", () => {
+  it("allows the exact party and anything smaller", () => {
+    expect(describeGuestCountProblem({ maxGuests: 4 }, 4)).toBeNull();
+    expect(describeGuestCountProblem({ maxGuests: 4 }, 3)).toBeNull();
+    expect(describeGuestCountProblem({ maxGuests: 4 }, 1)).toBeNull();
+  });
+
+  it("refuses a larger party, and says the number they are entitled to", () => {
+    const problem = describeGuestCountProblem({ maxGuests: 4 }, 5);
+
+    expect(problem).toContain("4");
+    expect(problem).toContain("reception");
+  });
+
+  it("gets the singular right for a booking of one", () => {
+    expect(describeGuestCountProblem({ maxGuests: 1 }, 2)).toContain("1 guest,");
+  });
+
+  /**
+   * Keys issued before the party size was recorded carry no limit, and must
+   * keep working — the restaurant's own maximum still applies to them.
+   */
+  it("imposes nothing when the key records no party size", () => {
+    expect(describeGuestCountProblem({ maxGuests: undefined }, 6)).toBeNull();
+    expect(describeGuestCountProblem({}, 6)).toBeNull();
   });
 });

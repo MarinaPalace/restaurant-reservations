@@ -12,15 +12,28 @@ import { pruneSelectionsToGuestCount } from "@/lib/booking-session";
 import { MAX_GUESTS_PER_RESERVATION } from "@/lib/validation/booking";
 import { cx } from "@/components/ui/utils";
 
-const GUEST_OPTIONS = Array.from({ length: MAX_GUESTS_PER_RESERVATION }, (_, index) => index + 1);
-
 export default function GuestsPage() {
   const router = useRouter();
   const { session, ready } = useBookingGuard(["room"]);
   const [choice, setChoice] = useState<number | null>(null);
   const [error, setError] = useState("");
 
-  const selected = choice ?? (session.guestCount > 0 ? session.guestCount : null);
+  /**
+   * The party size on the hotel booking, which reception recorded on the key.
+   * Fewer is fine — people drop out of dinner — but more was never held for
+   * them, so the larger numbers are simply not offered. The server refuses
+   * them regardless; this only stops the guest choosing something that would
+   * be rejected at the end.
+   */
+  const allowed = session.passKeyMaxGuests > 0
+    ? Math.min(session.passKeyMaxGuests, MAX_GUESTS_PER_RESERVATION)
+    : MAX_GUESTS_PER_RESERVATION;
+
+  const guestOptions = Array.from({ length: allowed }, (_, index) => index + 1);
+
+  // A party size left over from a previous key could exceed this one.
+  const stored = session.guestCount > 0 && session.guestCount <= allowed ? session.guestCount : null;
+  const selected = choice ?? stored;
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
@@ -52,11 +65,26 @@ export default function GuestsPage() {
           description="Every guest chooses their own menu on the next step."
         />
 
+        {ready && session.passKeyMaxGuests > 0 ? (
+          <p className="mt-4 rounded-control border border-line bg-surface-muted p-3 text-center text-sm text-ink-muted">
+            Your booking with us is for{" "}
+            <span className="font-semibold text-ink">
+              {session.passKeyMaxGuests} {session.passKeyMaxGuests === 1 ? "guest" : "guests"}
+            </span>
+            , so dinner can be booked for up to that many. Fewer is no trouble — speak to reception if your
+            party has grown.
+          </p>
+        ) : null}
+
         <form onSubmit={handleSubmit} className="mt-6">
           <fieldset>
             <legend className="sr-only">Number of guests</legend>
-            <div role="radiogroup" aria-label="Number of guests" className="grid grid-cols-3 gap-3">
-              {GUEST_OPTIONS.map((option) => {
+            <div
+              role="radiogroup"
+              aria-label="Number of guests"
+              className={cx("grid gap-3", guestOptions.length <= 2 ? "grid-cols-2" : "grid-cols-3")}
+            >
+              {guestOptions.map((option) => {
                 const isSelected = selected === option;
 
                 return (

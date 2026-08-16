@@ -309,6 +309,16 @@ export type PassKeyRecord = {
   /** Last date the key works — check-out. Absent means no expiry. */
   expiresOn?: string;
   /**
+   * How many people the hotel booking is for.
+   *
+   * Reception knows this before the guest arrives, so the key carries it and
+   * the booking flow will not offer a larger table. Fewer is always fine —
+   * people drop out of dinner all the time — but more is not, because the
+   * seats were never held for them. Absent means "no limit beyond the usual
+   * maximum", which is how every key issued before this reads.
+   */
+  maxGuests?: number;
+  /**
    * How many dinners this key may book, and how many it has. Both are absent
    * on keys issued before multi-use existed, where absent reads as a single
    * use — so nothing needed migrating.

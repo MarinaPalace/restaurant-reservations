@@ -93,6 +93,7 @@ function BookingEntry() {
         passKey: normalizedKey,
         passKeyExpiresOn: data.expiresOn ?? "",
         passKeyBookedDates: data.bookedDates ?? [],
+        passKeyMaxGuests: data.maxGuests ?? 0,
       });
       setChecked({
         kind: data.kind,

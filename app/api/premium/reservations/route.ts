@@ -7,6 +7,7 @@ import {
 import {
   PASS_KEY_MESSAGES,
   consumePassKey,
+  describeGuestCountProblem,
   describePassKeyProblem,
   getPassKeyByCode,
   releasePassKey,
@@ -95,6 +96,11 @@ export async function POST(request: Request) {
         { error: "That evening is not part of this invitation. Please choose one of the dates offered." },
         { status: 409 },
       );
+    }
+
+    const guestProblem = describeGuestCountProblem(passKey, parsed.data.guestCount);
+    if (guestProblem) {
+      return NextResponse.json({ error: guestProblem, code: "PASS_KEY_TOO_MANY_GUESTS" }, { status: 409 });
     }
 
     const validation = validateReservationRequest({

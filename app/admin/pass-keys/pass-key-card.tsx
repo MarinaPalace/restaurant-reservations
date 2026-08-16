@@ -12,6 +12,15 @@ import type { PassKeyRecord } from "@/types/booking";
  * The dimensions are in millimetres deliberately: this is designed for paper,
  * and the on-screen preview is the approximate one, not the print.
  *
+ * **The QR is anchored to a corner, and that is not a stylistic choice.** It
+ * used to sit in a flex row beside the text. Flex items default to
+ * `min-width: auto`, so the pass-key — fifteen monospace characters — refused
+ * to shrink below its own width and pushed the QR column past the edge of a
+ * card that is a fixed size with `overflow: hidden`. The code was in the DOM
+ * and painted outside the card, which is a hard fault to see: the element
+ * inspector shows it perfectly. Positioned absolutely it cannot be displaced,
+ * whatever the text alongside it does.
+ *
  * Colours are literal rather than theme tokens. A card is printed and handed
  * over, so it must look the same whatever theme the person at the desk happens
  * to be using, and it must not turn white-on-white in a light palette.
@@ -21,6 +30,16 @@ import type { PassKeyRecord } from "@/types/booking";
 const INK = "#14343d";
 const INK_SOFT = "#4a6670";
 const GOLD = "#a8842c";
+
+/**
+ * The corner the code lives in, and the room the text leaves clear for it.
+ *
+ * 18mm is not arbitrary. A 33-module code at that width prints each module
+ * around half a millimetre, which is about the floor for a phone camera
+ * reading it off paper at arm's length. Smaller looks tidier and scans worse.
+ */
+const QR_BLOCK_WIDTH = "18mm";
+const TEXT_INSET = "24mm";
 
 export function PassKeyCard({
   passKey,
@@ -48,8 +67,8 @@ export function PassKeyCard({
     <article
       data-pass-key-card=""
       data-card-kind={isInvitation ? "invitation" : "in-house"}
-      className="relative flex h-[53.98mm] w-[85.6mm] overflow-hidden rounded-[3mm]"
-      style={{ backgroundColor: "#fbf7ef", color: INK }}
+      className="relative overflow-hidden rounded-[3mm]"
+      style={{ width: "85.6mm", height: "53.98mm", backgroundColor: "#fbf7ef", color: INK }}
     >
       {/* A soft wash of house colour, warmer for an invitation than a room key. */}
       <div
@@ -71,35 +90,75 @@ export function PassKeyCard({
         style={{ border: `0.25mm solid ${GOLD}80` }}
       />
 
-      <div className="relative flex flex-1 flex-col justify-between p-[4.5mm]">
-        <header>
-          <p className="display text-[4mm] leading-none" style={{ color: INK }}>
+      {/* Top right, anchored to the card itself so nothing can displace it. */}
+      <div className="absolute" style={{ top: "3.6mm", right: "3.6mm", width: QR_BLOCK_WIDTH }}>
+        <span
+          className="block rounded-[1mm]"
+          style={{ backgroundColor: "#ffffff", border: `0.2mm solid ${GOLD}55`, padding: "0.7mm" }}
+        >
+          {qrDataUri ? (
+            // Square by ratio rather than by a height that depends on a flex
+            // parent — that is how it collapsed to nothing once already.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={qrDataUri}
+              alt=""
+              style={{ display: "block", width: "100%", height: "auto", aspectRatio: "1 / 1" }}
+            />
+          ) : (
+            <span style={{ display: "block", width: "100%", aspectRatio: "1 / 1" }} />
+          )}
+        </span>
+        <p
+          className="text-center uppercase"
+          style={{ fontSize: "1.7mm", letterSpacing: "0.12em", marginTop: "0.7mm", color: GOLD }}
+        >
+          Scan to book
+        </p>
+      </div>
+
+      <div className="relative flex flex-col justify-between" style={{ height: "100%", padding: "4.5mm" }}>
+        {/*
+          The header and the code stop short of the corner; the footer runs the
+          full width, because the QR block ends well above it.
+        */}
+        <header style={{ paddingRight: TEXT_INSET }}>
+          <p className="display leading-none" style={{ fontSize: "4mm", color: INK }}>
             {restaurantName}
           </p>
-          <p className="mt-[0.8mm] text-[2.1mm] uppercase tracking-[0.22em]" style={{ color: GOLD }}>
-            {isInvitation ? "An invitation to dine" : "Dinner is part of your stay"}
+          <p
+            className="uppercase"
+            style={{ fontSize: "2.1mm", letterSpacing: "0.2em", marginTop: "0.8mm", color: GOLD }}
+          >
+            {isInvitation ? "An invitation" : "Dinner is included"}
           </p>
         </header>
 
-        <div>
-          <p className="text-[2.2mm] uppercase tracking-[0.16em]" style={{ color: INK_SOFT }}>
+        <div style={{ paddingRight: TEXT_INSET }}>
+          <p className="uppercase" style={{ fontSize: "2.2mm", letterSpacing: "0.16em", color: INK_SOFT }}>
             Your pass-key
           </p>
           <p
-            className="mt-[0.6mm] font-mono text-[5.6mm] font-bold leading-none tracking-[0.06em]"
-            style={{ color: INK }}
+            className="font-mono font-bold leading-none"
+            style={{
+              fontSize: "5mm",
+              letterSpacing: "0.04em",
+              marginTop: "0.6mm",
+              color: INK,
+              whiteSpace: "nowrap",
+            }}
           >
             {formatPassKey(passKey.code)}
           </p>
         </div>
 
-        <footer className="text-[2.2mm] leading-tight" style={{ color: INK_SOFT }}>
+        <footer style={{ fontSize: "2.2mm", lineHeight: 1.25, color: INK_SOFT }}>
           <p className="truncate font-semibold" style={{ color: INK }}>
             {bookingUrl}
           </p>
-          <p className="mt-[0.5mm]">
+          <p className="truncate" style={{ marginTop: "0.4mm" }}>
             {dinners}
-            {passKey.maxGuests ? ` · table for up to ${passKey.maxGuests}` : ""}
+            {passKey.maxGuests ? ` · up to ${passKey.maxGuests} at table` : ""}
             {passKey.expiresOn ? ` · until ${formatShortDate(passKey.expiresOn)}` : ""}
           </p>
           {passKey.roomNumber || passKey.guestName ? (
@@ -108,27 +167,6 @@ export function PassKeyCard({
             </p>
           ) : null}
         </footer>
-      </div>
-
-      <div className="relative flex w-[26mm] shrink-0 flex-col items-center justify-center gap-[1mm] p-[3mm]">
-        {/* White behind the code, so a camera reads it off the tinted stock. */}
-        <span
-          className="block rounded-[1.2mm] p-[1mm]"
-          style={{ backgroundColor: "#ffffff", border: `0.2mm solid ${GOLD}55` }}
-        >
-          {qrDataUri ? (
-            // Sized in millimetres rather than by a percentage: an image whose
-            // height depends on its flex parent is exactly how this ended up
-            // collapsing to nothing once already.
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={qrDataUri} alt="" style={{ display: "block", width: "18mm", height: "18mm" }} />
-          ) : (
-            <span style={{ display: "block", width: "18mm", height: "18mm" }} />
-          )}
-        </span>
-        <p className="text-[1.8mm] uppercase tracking-[0.14em]" style={{ color: GOLD }}>
-          Scan to book
-        </p>
       </div>
     </article>
   );

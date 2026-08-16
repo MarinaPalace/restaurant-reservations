@@ -346,12 +346,22 @@ knowing about because each looked right:
    that SVG carried only a `viewBox` and **no `width` or `height`**, so the image had no intrinsic
    size and collapsed to nothing as a flex item.
 3. Both still depended on a request succeeding at the moment somebody pressed print.
+4. Once the bytes were right, the code was *still* invisible — because it sat in a flex row beside
+   the text. Flex items default to `min-width: auto`, so the pass-key (fifteen monospace
+   characters) refused to shrink below its own width and pushed the QR column past the edge of a
+   card that is a fixed size with `overflow: hidden`. It was in the DOM, and the element inspector
+   showed it perfectly; it was simply painted outside the card. It is anchored to the corner with
+   `position: absolute` now, where nothing can displace it.
 
 It is now drawn on the server by `lib/qr.ts`, with explicit dimensions, and handed to the card as a
 base64 data URI — through the page props for existing keys, and in the issue response for new ones.
 There is no request to fail, nothing to load before printing, and no authentication in the path of
 an image. `lib/qr.test.ts` asserts the width and height attributes specifically, because that is the
 part that was silently missing.
+
+The lesson worth keeping: three of the four failures produced *correct data* and were invisible
+anyway. Checking the endpoint, the bytes and the types all passed while the guest saw an empty
+square. The card is small, fixed-size and clipped — render it and look at it.
 
 No external host either: the desk may have no internet, and nothing in this app may depend on one.
 The code points at `/booking?k=<key>` or `/premium/<key>` — worked out by `passKeyTargetUrl`, shared

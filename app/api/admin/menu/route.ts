@@ -1,17 +1,20 @@
 import { NextResponse } from "next/server";
 import { requireAdminApi } from "@/lib/auth/guard";
 import { getFullMenuCatalog, saveMenuCatalog } from "@/lib/services/restaurant";
-import { menuCatalogSchema } from "@/lib/validation/booking";
+import { menuCatalogSchema, menuKindSchema } from "@/lib/validation/booking";
 import type { MenuCourse } from "@/types/booking";
 
-export async function GET() {
+export async function GET(request: Request) {
   const unauthorized = await requireAdminApi();
   if (unauthorized) {
     return unauthorized;
   }
 
   try {
-    return NextResponse.json(await getFullMenuCatalog());
+    const requested = new URL(request.url).searchParams.get("menu");
+    const menu = menuKindSchema.safeParse(requested).data ?? "standard";
+
+    return NextResponse.json(await getFullMenuCatalog(menu));
   } catch (error) {
     console.error("[admin] failed to load menu", error);
     return NextResponse.json({ error: "Unable to load menu." }, { status: 500 });
@@ -41,7 +44,7 @@ export async function POST(request: Request) {
       order: course.order ?? index + 1,
     })) as MenuCourse[];
 
-    const menu = await saveMenuCatalog(courses);
+    const menu = await saveMenuCatalog(courses, parsed.data.menu ?? "standard");
     return NextResponse.json({ ok: true, menu });
   } catch (error) {
     console.error("[admin] failed to save menu", error);

@@ -9,6 +9,7 @@ import { isAdminAuthenticated } from "@/lib/auth/session";
 import { getReservationByNumber } from "@/lib/services/reservations";
 import { getMenuCatalog } from "@/lib/services/restaurant";
 import { canonicalizeSelections } from "@/lib/menu-selection";
+import { reservationLabel } from "@/lib/kitchen-report";
 import { formatLongDate } from "@/lib/date";
 
 export const metadata: Metadata = { title: "Reservation" };
@@ -58,8 +59,8 @@ export default async function ReservationDetailPage({
 
         <dl className="mt-6 grid gap-4 rounded-control bg-surface-muted p-4 sm:grid-cols-2">
           <div>
-            <dt className="text-sm text-ink-subtle">Room</dt>
-            <dd className="mt-1 text-lg font-semibold text-ink">{reservation.roomNumber}</dd>
+            <dt className="text-sm text-ink-subtle">{reservation.kind === "premium" ? "Guest" : "Room"}</dt>
+            <dd className="mt-1 text-lg font-semibold text-ink">{reservationLabel(reservation)}</dd>
           </div>
           <div>
             <dt className="text-sm text-ink-subtle">Guests</dt>

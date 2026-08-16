@@ -10,7 +10,8 @@ import { LANGUAGE_NAMES, isLanguageCode, listLanguages } from "@/lib/languages";
 import { hasAllergen, listAllergenChoices, toggleAllergen } from "@/lib/allergens";
 import { VeganBadge } from "@/components/vegan-badge";
 import { cx } from "@/components/ui/utils";
-import type { MenuCourse, MenuOption, MenuTranslation } from "@/types/booking";
+import Link from "next/link";
+import type { MenuCourse, MenuKind, MenuOption, MenuTranslation } from "@/types/booking";
 
 const DEFAULT_LANGUAGE = "en";
 
@@ -48,7 +49,7 @@ function withTranslation<T extends MenuCourse | MenuOption>(
   };
 }
 
-export function MenuEditor({ initialCourses }: { initialCourses: MenuCourse[] }) {
+export function MenuEditor({ initialCourses, menu }: { initialCourses: MenuCourse[]; menu: MenuKind }) {
   const [courses, setCourses] = useState<MenuCourse[]>(initialCourses);
   const [language, setLanguage] = useState(DEFAULT_LANGUAGE);
   const [extraLanguages, setExtraLanguages] = useState<string[]>([]);
@@ -185,6 +186,7 @@ export function MenuEditor({ initialCourses }: { initialCourses: MenuCourse[] })
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          menu,
           courses: courses.map((course) => ({
             ...course,
             // Draft ids are placeholders; the server assigns real ones.
@@ -217,11 +219,34 @@ export function MenuEditor({ initialCourses }: { initialCourses: MenuCourse[] })
       <Card className="p-5 sm:p-6">
         <CardHeader
           as="h1"
-          eyebrow="Admin panel"
-          title="Menu editor"
-          description="English is the master copy. Other languages fall back to English wherever a translation is missing."
+          eyebrow={menu === "premium" ? "Invitation menu" : "Admin panel"}
+          title={menu === "premium" ? "Premium menu editor" : "Menu editor"}
+          description={
+            menu === "premium"
+              ? "Served only to invited guests booking from /premium. Saved separately from the everyday menu."
+              : "English is the master copy. Other languages fall back to English wherever a translation is missing."
+          }
           actions={
             <div className="flex flex-wrap items-center gap-3">
+              {/* The two menus are edited and saved independently. */}
+              <div role="group" aria-label="Which menu" className="flex rounded-control border border-line-strong">
+                {([
+                  { id: "standard", label: "Everyday" },
+                  { id: "premium", label: "Premium" },
+                ] as const).map((option) => (
+                  <Link
+                    key={option.id}
+                    href={option.id === "standard" ? "/admin/menu" : "/admin/menu?menu=premium"}
+                    aria-current={menu === option.id ? "page" : undefined}
+                    className={cx(
+                      "flex min-h-11 items-center px-4 text-sm font-medium transition-colors first:rounded-l-control last:rounded-r-control",
+                      menu === option.id ? "bg-primary text-primary-fg" : "bg-surface text-ink hover:bg-surface-sunken",
+                    )}
+                  >
+                    {option.label}
+                  </Link>
+                ))}
+              </div>
               <ButtonLink href="/admin">Dashboard</ButtonLink>
               <Button onClick={handleSave} loading={saving} loadingLabel="Saving…">
                 Save menu

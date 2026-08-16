@@ -8,7 +8,8 @@ export async function GET() {
     // Past evenings are never bookable, so they are not offered to guests.
     const today = todayKey();
 
-    return NextResponse.json(dates.filter((entry) => entry.date >= today));
+    // Premium evenings belong to the invitation flow at /premium.
+    return NextResponse.json(dates.filter((entry) => entry.date >= today && !entry.premium));
   } catch (error) {
     console.error("[restaurant] failed to load dates", error);
     return NextResponse.json({ error: "Unable to load restaurant dates." }, { status: 500 });

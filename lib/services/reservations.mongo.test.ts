@@ -678,3 +678,173 @@ describe("existing menus survive the new fields", () => {
     expect(english[0].options[0].ingredients).toBe("Salmon, dill, citrus");
   });
 });
+
+/**
+ * The premium menu lives alongside the everyday one. The dangerous case is
+ * saving one and losing the other, so that is what these check.
+ */
+describe("the two menus stay separate", () => {
+  async function seedBoth() {
+    const { restaurant } = await loadServices();
+
+    await restaurant.saveMenuCatalog(
+      [
+        {
+          id: "",
+          order: 1,
+          name: "Everyday starter",
+          description: "",
+          required: true,
+          active: true,
+          imageUrl: "",
+          translations: {},
+          options: [
+            { id: "", courseId: "", name: "Soup", description: "", allergens: [], active: true, imageUrl: "", translations: {} },
+          ],
+        },
+      ],
+      "standard",
+    );
+
+    await restaurant.saveMenuCatalog(
+      [
+        {
+          id: "",
+          order: 1,
+          name: "Premium starter",
+          description: "",
+          required: true,
+          active: true,
+          imageUrl: "",
+          translations: {},
+          options: [
+            { id: "", courseId: "", name: "Caviar", description: "", allergens: ["Fish"], active: true, imageUrl: "", translations: {} },
+          ],
+        },
+      ],
+      "premium",
+    );
+  }
+
+  it("serves each menu separately", async () => {
+    const { restaurant } = await loadServices();
+    await seedBoth();
+
+    expect((await restaurant.getMenuCatalog("en", "standard")).map((c) => c.name)).toEqual(["Everyday starter"]);
+    expect((await restaurant.getMenuCatalog("en", "premium")).map((c) => c.name)).toEqual(["Premium starter"]);
+  });
+
+  it("defaults to the everyday menu", async () => {
+    const { restaurant } = await loadServices();
+    await seedBoth();
+
+    expect((await restaurant.getMenuCatalog()).map((c) => c.name)).toEqual(["Everyday starter"]);
+  });
+
+  /** The whole point: editing one menu must not delete the other. */
+  it("leaves the everyday menu alone when the premium one is saved", async () => {
+    const { restaurant } = await loadServices();
+    await seedBoth();
+
+    const premium = await restaurant.getFullMenuCatalog("premium");
+    await restaurant.saveMenuCatalog([{ ...premium[0], name: "Renamed premium" }], "premium");
+
+    const standard = await restaurant.getFullMenuCatalog("standard");
+    expect(standard.map((c) => c.name)).toEqual(["Everyday starter"]);
+    expect(standard[0].options.map((o) => o.name)).toEqual(["Soup"]);
+  });
+
+  it("leaves the premium menu alone when the everyday one is saved", async () => {
+    const { restaurant } = await loadServices();
+    await seedBoth();
+
+    const standard = await restaurant.getFullMenuCatalog("standard");
+    await restaurant.saveMenuCatalog([{ ...standard[0], name: "Renamed everyday" }], "standard");
+
+    const premium = await restaurant.getFullMenuCatalog("premium");
+    expect(premium.map((c) => c.name)).toEqual(["Premium starter"]);
+    expect(premium[0].options.map((o) => o.name)).toEqual(["Caviar"]);
+  });
+
+  /** A course saved before premium existed has no `menu` field at all. */
+  it("treats a course with no menu field as the everyday menu", async () => {
+    const { MenuCourseModel } = await import("@/lib/models/menu-course");
+    const { restaurant } = await loadServices();
+
+    await MenuCourseModel.collection.insertOne({
+      order: 1,
+      name: "Legacy course",
+      description: "",
+      required: true,
+      active: true,
+    });
+
+    expect((await restaurant.getFullMenuCatalog("standard")).map((c) => c.name)).toContain("Legacy course");
+    expect((await restaurant.getFullMenuCatalog("premium")).map((c) => c.name)).not.toContain("Legacy course");
+  });
+});
+
+describe("premium evenings", () => {
+  it("records that a date is invitation only", async () => {
+    const { reservations, restaurant } = await loadServices();
+    await reservations.updateRestaurantDate({ date: "2026-12-01", isOpen: true, capacity: 20, premium: true });
+
+    expect((await restaurant.getRestaurantDate("2026-12-01"))?.premium).toBe(true);
+  });
+
+  it("leaves an ordinary evening unmarked", async () => {
+    const { reservations, restaurant } = await loadServices();
+    await reservations.updateRestaurantDate({ date: "2026-12-02", isOpen: true, capacity: 20 });
+
+    expect((await restaurant.getRestaurantDate("2026-12-02"))?.premium).toBe(false);
+  });
+
+  it("stores an invited guest by name rather than by room", async () => {
+    const { reservations } = await loadServices();
+    await reservations.updateRestaurantDate({ date: "2026-12-03", isOpen: true, capacity: 20, premium: true });
+
+    const created = await reservations.createReservationEntry({
+      kind: "premium",
+      roomNumber: "",
+      guestName: "Maria Petrova",
+      guestCount: 2,
+      date: "2026-12-03",
+      selections: SELECTIONS,
+    });
+
+    const loaded = await reservations.getReservationByNumber(created.reservationNumber);
+    expect(loaded?.kind).toBe("premium");
+    expect(loaded?.guestName).toBe("Maria Petrova");
+    expect(loaded?.roomNumber).toBe("");
+  });
+
+  /**
+   * Regression: hiding the date from the list left the API open, so a
+   * hand-made request could take a seat held for an invited guest.
+   */
+  it("keeps premium evenings out of the everyday date list", async () => {
+    const { reservations, restaurant } = await loadServices();
+    await reservations.updateRestaurantDate({ date: "2026-12-05", isOpen: true, capacity: 20, premium: true });
+    await reservations.updateRestaurantDate({ date: "2026-12-06", isOpen: true, capacity: 20 });
+
+    const all = await restaurant.getRestaurantDates();
+    const everyday = all.filter((entry) => !entry.premium).map((entry) => entry.date);
+
+    expect(everyday).toContain("2026-12-06");
+    expect(everyday).not.toContain("2026-12-05");
+  });
+
+  it("still reads an older booking as a standard one", async () => {
+    const { reservations } = await loadServices();
+    await reservations.updateRestaurantDate({ date: "2026-12-04", isOpen: true, capacity: 20 });
+
+    const created = await reservations.createReservationEntry({
+      roomNumber: "402",
+      guestCount: 1,
+      date: "2026-12-04",
+      selections: [SELECTIONS[0]],
+    });
+
+    expect((await reservations.getReservationByNumber(created.reservationNumber))?.kind).toBe("standard");
+  });
+});

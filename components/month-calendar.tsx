@@ -30,6 +30,8 @@ export type DayState = {
   /** Extra context for screen readers, e.g. "fully booked". */
   status?: string;
   tone?: "default" | "muted" | "positive";
+  /** An evening reserved for invited guests: gold, with a star. */
+  premium?: boolean;
 };
 
 /**
@@ -193,17 +195,31 @@ export function MonthCalendar({
                     }
                   }}
                   className={cx(
-                    "flex min-h-16 flex-col justify-between rounded-control border p-1.5 text-left transition-colors sm:min-h-20 sm:p-2",
+                    "relative flex min-h-16 flex-col justify-between rounded-control border p-1.5 text-left transition-colors sm:min-h-20 sm:p-2",
                     !isCurrentMonth && "opacity-45",
                     isSelected
                       ? "border-primary bg-primary text-primary-fg"
-                      : state.disabled
-                        ? "cursor-not-allowed border-line bg-surface-muted text-ink-subtle"
-                        : "border-line-strong bg-surface text-ink hover:border-accent",
+                      : state.premium
+                        ? "border-gold bg-accent-soft text-accent-ink hover:border-accent"
+                        : state.disabled
+                          ? "cursor-not-allowed border-line bg-surface-muted text-ink-subtle"
+                          : "border-line-strong bg-surface text-ink hover:border-accent",
                   )}
                 >
-                  <span className="text-sm font-semibold sm:text-base" aria-hidden="true">
-                    {date.getDate()}
+                  <span className="flex items-center justify-between gap-1">
+                    <span className="text-sm font-semibold sm:text-base" aria-hidden="true">
+                      {date.getDate()}
+                    </span>
+                    {state.premium ? (
+                      <svg
+                        aria-hidden="true"
+                        viewBox="0 0 24 24"
+                        className={cx("size-3.5 shrink-0", isSelected ? "text-primary-fg" : "text-gold")}
+                        fill="currentColor"
+                      >
+                        <path d="M12 2.6l2.7 5.9 6.4.7-4.8 4.3 1.3 6.3L12 16.7 6.4 19.8l1.3-6.3L2.9 9.2l6.4-.7z" />
+                      </svg>
+                    ) : null}
                   </span>
                   <span
                     aria-hidden="true"

@@ -77,9 +77,22 @@ UTF-8 BOM so accented and Cyrillic dish names survive the open.
   Cancelled bookings are excluded from the counts. Cells showing zero are left blank so the counts
   that matter stand out.
 
-**Printing.** Print gives you only the sheet — no calendar, no navigation — followed by a dashed
-cut line and a compact slip listing every dish with its quantity, total plates, and any allergy
-notes. Cut it off and hand it to the kitchen; it carries no tables or room numbers.
+**Invitation bookings (`/premium`).** A separate flow for guests who are not staying yet — people
+invited weeks ahead who must choose now. They give a **name** instead of a room, order from a
+**separate premium menu**, and may only pick evenings staff have opened for them. Mark an evening
+*Invitation only* in the dashboard and it leaves the everyday flow entirely: hidden from the hotel
+date list and refused by the booking API, so its seats cannot be taken by a hand-made request.
+Staff can still place someone on it from the admin side. Premium evenings show gold with a star in
+both calendars.
+
+The premium menu is edited at `/admin/menu?menu=premium`, saved independently of the everyday menu
+— saving one never touches the other.
+
+**Printing.** Print gives you only the sheet — no calendar, no navigation — in **A4 landscape**, sized to
+land an evening on a single page: the course-grouping row is dropped, dish names are trimmed to
+three words ("Slow roasted lamb"), and the type is set small. The kitchen slip follows on its own
+page — a compact list of every dish with its quantity, total plates, and any allergy notes. Cut it
+off and hand it over; it carries no tables or room numbers.
 
 **One language for staff.** Guests may book in any translated language, but the course and option
 names stored on a reservation are always the master English wording, resolved from the catalogue

@@ -54,6 +54,8 @@ type MongoReservationDocument = {
   roomNumber: unknown;
   guestCount: unknown;
   date: unknown;
+  kind?: unknown;
+  guestName?: unknown;
   selections?: unknown;
   contact?: unknown;
   time?: unknown;
@@ -70,7 +72,9 @@ function toReservationRecord(document: MongoReservationDocument): ReservationRec
   return {
     _id: String(document._id),
     reservationNumber: String(document.reservationNumber),
-    roomNumber: String(document.roomNumber),
+    kind: document.kind === "premium" ? "premium" : "standard",
+    roomNumber: String(document.roomNumber ?? ""),
+    guestName: document.guestName ? String(document.guestName) : undefined,
     guestCount: Number(document.guestCount),
     date: String(document.date),
     selections: Array.isArray(document.selections) ? (document.selections as ReservationSelection[]) : [],
@@ -165,6 +169,8 @@ export async function createReservationEntry(input: {
   contact?: ReservationContact;
   notes?: string;
   tableNumber?: string;
+  kind?: ReservationRecord["kind"];
+  guestName?: string;
   /** Reservation number of a party this booking should share a table with. */
   joinReservationNumber?: string;
 }): Promise<ReservationRecord> {
@@ -216,6 +222,8 @@ export async function createReservationEntry(input: {
       roomNumber: input.roomNumber,
       guestCount: input.guestCount,
       date: input.date,
+      kind: input.kind ?? "standard",
+      guestName: input.guestName,
       selections: input.selections,
       contact: input.contact,
       // Copied from the date so the booking keeps the times it was made for.
@@ -460,6 +468,7 @@ export async function updateRestaurantDate(input: {
   capacity: number;
   serviceTime?: string;
   serviceEndTime?: string;
+  premium?: boolean;
 }) {
   if (!isMongoConfigured()) {
     return upsertLocalDate(input);
@@ -475,6 +484,7 @@ export async function updateRestaurantDate(input: {
         capacity: input.capacity,
         serviceTime: input.serviceTime ?? null,
         serviceEndTime: input.serviceEndTime ?? null,
+        premium: input.premium ?? false,
       },
       $setOnInsert: { reservedSeats: 0 },
     },
@@ -488,5 +498,6 @@ export async function updateRestaurantDate(input: {
     reservedSeats: Number(updated.reservedSeats),
     serviceTime: updated.serviceTime ? String(updated.serviceTime) : undefined,
     serviceEndTime: updated.serviceEndTime ? String(updated.serviceEndTime) : undefined,
+    premium: Boolean(updated.premium),
   });
 }

@@ -29,7 +29,10 @@ const reservationSchema = new Schema(
     reservationNumber: { type: String, required: true, unique: true, index: true },
     // A string: rooms are labelled L10, HA3, A43 as well as 402. Values
     // stored as numbers by earlier versions are cast on read.
-    roomNumber: { type: String, required: true },
+    kind: { type: String, enum: ["standard", "premium"], default: "standard" },
+    // Blank for a premium booking, where the guest names themselves instead.
+    roomNumber: { type: String, required: false, default: "" },
+    guestName: { type: String },
     guestCount: { type: Number, required: true },
     date: { type: String, required: true, index: true },
     selections: [selectionSchema],

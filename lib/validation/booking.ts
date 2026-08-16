@@ -49,12 +49,15 @@ export const timeSchema = z
   .string()
   .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "Please enter a time as HH:MM.");
 
+export const menuKindSchema = z.enum(["standard", "premium"]);
+
 export const restaurantDateSchema = z.object({
   date: dateKeySchema,
   isOpen: z.boolean(),
   capacity: z.number().int().min(0).max(10_000),
   serviceTime: timeSchema.optional(),
   serviceEndTime: timeSchema.optional(),
+  premium: z.boolean().optional(),
 });
 
 export const updateSelectionsSchema = z.object({
@@ -90,6 +93,7 @@ const menuTranslationSchema = z.object({
 });
 
 export const menuCatalogSchema = z.object({
+  menu: menuKindSchema.optional(),
   courses: z
     .array(
       z.object({
@@ -119,6 +123,20 @@ export const menuCatalogSchema = z.object({
       }),
     )
     .max(50),
+});
+
+/**
+ * An invited guest is not staying yet, so there is no room to identify them
+ * by. They give a name instead, and contact details are required — it is the
+ * only way to reach them before they arrive.
+ */
+export const premiumReservationSchema = z.object({
+  guestName: z.string().trim().min(2, "Please enter your name.").max(120),
+  guestCount: z.number().int().min(1).max(MAX_GUESTS_PER_RESERVATION),
+  date: dateKeySchema,
+  selections: z.array(reservationSelectionSchema).min(1),
+  contact: reservationContactSchema,
+  notes: z.string().trim().max(500).optional(),
 });
 
 export const adminLoginSchema = z.object({

@@ -45,6 +45,14 @@ export type RoomRow = {
   tableGroupId?: string;
 };
 
+/**
+ * How a booking is identified on the sheet: the room for a hotel guest, the
+ * guest's own name for an invited one, who has no room yet.
+ */
+export function reservationLabel(reservation: Pick<ReservationRecord, "roomNumber" | "guestName">) {
+  return reservation.roomNumber?.trim() || reservation.guestName?.trim() || "—";
+}
+
 function sortReservations(reservations: ReservationRecord[]) {
   return reservations.slice().sort((a, b) => {
     // Rooms sharing a table sit next to each other on the sheet.
@@ -62,7 +70,7 @@ function sortReservations(reservations: ReservationRecord[]) {
       return groupA.localeCompare(groupB);
     }
 
-    return compareRoomNumbers(a.roomNumber, b.roomNumber);
+    return compareRoomNumbers(reservationLabel(a), reservationLabel(b));
   });
 }
 
@@ -163,7 +171,7 @@ export function buildGuestRows(reservations: ReservationRecord[], columns: Cours
         key: `${reservation.reservationNumber}-${guestIndex}`,
         reservationNumber: reservation.reservationNumber,
         table: reservation.tableNumber ?? "",
-        room: reservation.roomNumber,
+        room: reservationLabel(reservation),
         guests: `${guestIndex + 1} of ${reservation.guestCount}`,
         choices,
         // The note belongs to the booking; repeating it on every line would
@@ -195,7 +203,7 @@ export function buildRoomRows(reservations: ReservationRecord[], columns: Option
       key: reservation.reservationNumber,
       reservationNumber: reservation.reservationNumber,
       table: reservation.tableNumber ?? "",
-      room: reservation.roomNumber,
+      room: reservationLabel(reservation),
       guests: reservation.guestCount,
       counts,
       comment: reservation.notes ?? "",

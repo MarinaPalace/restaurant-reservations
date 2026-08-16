@@ -101,6 +101,7 @@ export async function upsertLocalDate(input: {
   capacity: number;
   serviceTime?: string;
   serviceEndTime?: string;
+  premium?: boolean;
 }): Promise<RestaurantDateAvailability> {
   return withStoreLock(async () => {
     const dates = await readDates();
@@ -115,6 +116,7 @@ export async function upsertLocalDate(input: {
             reservedSeats: 0,
             serviceTime: input.serviceTime,
             serviceEndTime: input.serviceEndTime,
+            premium: input.premium ?? false,
           }
         : {
             ...dates[index],
@@ -122,6 +124,7 @@ export async function upsertLocalDate(input: {
             capacity: input.capacity,
             serviceTime: input.serviceTime,
             serviceEndTime: input.serviceEndTime,
+            premium: input.premium ?? false,
           };
 
     if (index === -1) {
@@ -163,6 +166,8 @@ export async function createLocalReservation(input: {
   notes?: string;
   tableNumber?: string;
   tableGroupId?: string;
+  kind?: ReservationRecord["kind"];
+  guestName?: string;
 }): Promise<LocalBookingResult> {
   return withStoreLock(async () => {
     const dates = await readDates();
@@ -181,7 +186,9 @@ export async function createLocalReservation(input: {
     const timestamp = new Date().toISOString();
     const reservation: ReservationRecord = {
       reservationNumber: input.reservationNumber,
+      kind: input.kind ?? "standard",
       roomNumber: input.roomNumber,
+      guestName: input.guestName,
       guestCount: input.guestCount,
       date: input.date,
       selections: input.selections,

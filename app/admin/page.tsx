@@ -50,6 +50,7 @@ export default async function AdminPage() {
                 New reservation
               </ButtonLink>
               <ButtonLink href="/admin/menu">Menu editor</ButtonLink>
+              <ButtonLink href="/admin/menu?menu=premium">Premium menu</ButtonLink>
               <form action="/api/admin/logout" method="POST">
                 <button
                   type="submit"

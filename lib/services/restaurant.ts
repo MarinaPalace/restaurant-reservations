@@ -8,6 +8,7 @@ import { decodeStoredImage, isStoredImage, toPublicImageUrl } from "@/lib/menu-i
 import {
   withRemainingSeats,
   type MenuCourse,
+  type MenuKind,
   type MenuOption,
   type RestaurantDateAvailability,
 } from "@/types/booking";
@@ -28,6 +29,7 @@ export async function getRestaurantDates(): Promise<RestaurantDateAvailability[]
       reservedSeats: Number(date.reservedSeats),
       serviceTime: date.serviceTime ? String(date.serviceTime) : undefined,
       serviceEndTime: date.serviceEndTime ? String(date.serviceEndTime) : undefined,
+      premium: Boolean(date.premium),
     }),
   );
 }
@@ -50,6 +52,7 @@ export async function getRestaurantDate(date: string): Promise<RestaurantDateAva
     reservedSeats: Number(record.reservedSeats),
     serviceTime: record.serviceTime ? String(record.serviceTime) : undefined,
     serviceEndTime: record.serviceEndTime ? String(record.serviceEndTime) : undefined,
+    premium: Boolean(record.premium),
   });
 }
 
@@ -73,6 +76,7 @@ function toMenuOption(option: MongoDocument): MenuOption {
 function toMenuCourse(course: MongoDocument, options: MongoDocument[]): MenuCourse {
   return {
     id: String(course._id),
+    menu: course.menu === "premium" ? "premium" : "standard",
     order: Number(course.order),
     name: String(course.name),
     description: String(course.description ?? ""),
@@ -88,7 +92,17 @@ function toMenuCourse(course: MongoDocument, options: MongoDocument[]): MenuCour
  * The full catalogue including inactive entries — for the admin editor, which
  * has to be able to see and re-enable what it switched off.
  */
-export async function getFullMenuCatalog(): Promise<MenuCourse[]> {
+/** Absent reads as the everyday menu, so older courses need no migration. */
+export function menuKindOf(course: Pick<MenuCourse, "menu">): MenuKind {
+  return course.menu === "premium" ? "premium" : "standard";
+}
+
+export async function getFullMenuCatalog(menu?: MenuKind): Promise<MenuCourse[]> {
+  const all = await loadFullCatalog();
+  return menu ? all.filter((course) => menuKindOf(course) === menu) : all;
+}
+
+async function loadFullCatalog(): Promise<MenuCourse[]> {
   if (!isMongoConfigured()) {
     return getLocalMenu();
   }
@@ -106,8 +120,8 @@ export async function getFullMenuCatalog(): Promise<MenuCourse[]> {
  * Both this and the admin editor now read the same store, so a saved menu
  * change is immediately visible in the booking flow.
  */
-export async function getMenuCatalog(language = "en"): Promise<MenuCourse[]> {
-  const catalog = await getFullMenuCatalog();
+export async function getMenuCatalog(language = "en", menu: MenuKind = "standard"): Promise<MenuCourse[]> {
+  const catalog = await getFullMenuCatalog(menu);
 
   const visible = catalog
     .filter((course) => course.active)
@@ -155,9 +169,15 @@ export async function findMenuImage(id: string) {
  * deleted the whole collection and re-created it, which orphaned every
  * historical reservation.
  */
-export async function saveMenuCatalog(courses: MenuCourse[]): Promise<MenuCourse[]> {
+export async function saveMenuCatalog(courses: MenuCourse[], menu: MenuKind = "standard"): Promise<MenuCourse[]> {
+  // Each menu is saved on its own; the editor only ever sends one of them,
+  // and the other must survive untouched.
+  const tagged = courses.map((course) => ({ ...course, menu }));
+
   if (!isMongoConfigured()) {
-    return saveLocalMenu(courses);
+    const others = (await getLocalMenu()).filter((course) => menuKindOf(course) !== menu);
+    const saved = await saveLocalMenu([...others, ...tagged]);
+    return saved.filter((course) => menuKindOf(course) === menu);
   }
 
   await connectToDatabase();
@@ -165,8 +185,9 @@ export async function saveMenuCatalog(courses: MenuCourse[]): Promise<MenuCourse
   const keptCourseIds: string[] = [];
   const keptOptionIds: string[] = [];
 
-  for (const course of courses) {
+  for (const course of tagged) {
     const courseFields = {
+      menu,
       order: course.order,
       name: course.name,
       description: course.description,
@@ -212,8 +233,19 @@ export async function saveMenuCatalog(courses: MenuCourse[]): Promise<MenuCourse
     }
   }
 
-  await MenuOptionModel.deleteMany({ _id: { $nin: keptOptionIds } });
-  await MenuCourseModel.deleteMany({ _id: { $nin: keptCourseIds } });
+  /**
+   * Pruning is scoped to this menu. Courses on the other menu have ids that are
+   * not in `keptCourseIds`, and deleting by that alone would wipe them.
+   */
+  const menuFilter = menu === "standard" ? { menu: { $ne: "premium" } } : { menu: "premium" };
+  const survivingCourses = await MenuCourseModel.find(menuFilter).select("_id").lean();
+  const survivingIds = survivingCourses.map((course) => String(course._id));
 
-  return getFullMenuCatalog();
+  await MenuCourseModel.deleteMany({ ...menuFilter, _id: { $nin: keptCourseIds } });
+  await MenuOptionModel.deleteMany({
+    courseId: { $in: survivingIds.filter((id) => !keptCourseIds.includes(id)) },
+  });
+  await MenuOptionModel.deleteMany({ courseId: { $in: keptCourseIds }, _id: { $nin: keptOptionIds } });
+
+  return getFullMenuCatalog(menu);
 }

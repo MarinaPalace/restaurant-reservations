@@ -1,50 +1,60 @@
 import { NextResponse } from "next/server";
-import { BookingError, TableJoinError, createReservationEntry } from "@/lib/services/reservations";
+import { BookingError, createReservationEntry } from "@/lib/services/reservations";
 import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
 import { BOOKING_MESSAGES, validateReservationRequest } from "@/lib/services/booking-rules";
-import { createReservationSchema } from "@/lib/validation/booking";
+import { premiumReservationSchema } from "@/lib/validation/booking";
 import { describeContactProblem, normalizeContact } from "@/lib/contact";
 import { canonicalizeSelections } from "@/lib/menu-selection";
 
 const GENERIC_ERROR = "Something went wrong while creating your reservation. Please try again.";
 
+/**
+ * Bookings from the invitation flow.
+ *
+ * These guests are not staying yet, so they give a name rather than a room,
+ * they order from the premium menu, and they may only choose an evening that
+ * has been opened for them.
+ */
 export async function POST(request: Request) {
   let body: unknown;
 
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Please enter valid reservation details." }, { status: 400 });
+    return NextResponse.json({ error: "Please check the reservation details." }, { status: 400 });
   }
 
-  const parsed = createReservationSchema.safeParse(body);
+  const parsed = premiumReservationSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: parsed.error.issues[0]?.message ?? "Please enter valid reservation details." },
+      { error: parsed.error.issues[0]?.message ?? "Please check the reservation details." },
       { status: 400 },
     );
   }
 
+  const contactProblem = describeContactProblem(parsed.data.contact);
+  if (contactProblem) {
+    return NextResponse.json({ error: contactProblem, code: "INVALID_REQUEST" }, { status: 400 });
+  }
+
   try {
     const [menu, restaurantDate] = await Promise.all([
-      getMenuCatalog(),
+      getMenuCatalog("en", "premium"),
       getRestaurantDate(parsed.data.date),
     ]);
 
-    /**
-     * A premium evening is held for invited guests. Hiding it from the date
-     * list is not enough — the seats have to be defended here too, or a
-     * hand-made request could take one.
-     */
-    if (restaurantDate?.premium) {
+    // An evening that is not marked premium is not on offer here, however
+    // valid it may be for hotel guests.
+    if (!restaurantDate?.premium) {
       return NextResponse.json(
-        { error: BOOKING_MESSAGES.unavailable, code: "DATE_UNAVAILABLE" },
+        { error: "That evening is not part of this invitation. Please choose one of the dates offered." },
         { status: 409 },
       );
     }
 
     const validation = validateReservationRequest({
-      roomNumber: parsed.data.roomNumber,
+      // Invited guests have no room; the rules only need a usable label.
+      roomNumber: "INVITED",
       guestCount: parsed.data.guestCount,
       date: parsed.data.date,
       selections: parsed.data.selections,
@@ -52,43 +62,31 @@ export async function POST(request: Request) {
       menu,
     });
 
-    const contactProblem = describeContactProblem(parsed.data.contact);
-    if (contactProblem) {
-      return NextResponse.json({ error: contactProblem, code: "INVALID_REQUEST" }, { status: 400 });
-    }
-
     if (!validation.ok) {
-      const isAvailabilityProblem =
+      const unavailable =
         validation.error === BOOKING_MESSAGES.unavailable ||
         validation.error === BOOKING_MESSAGES.fullyBooked ||
         validation.error === BOOKING_MESSAGES.pastDate;
 
       return NextResponse.json(
-        { error: validation.error, code: isAvailabilityProblem ? "DATE_UNAVAILABLE" : "INVALID_REQUEST" },
-        { status: isAvailabilityProblem ? 409 : 400 },
+        { error: validation.error, code: unavailable ? "DATE_UNAVAILABLE" : "INVALID_REQUEST" },
+        { status: unavailable ? 409 : 400 },
       );
     }
 
     const reservation = await createReservationEntry({
-      roomNumber: parsed.data.roomNumber,
+      kind: "premium",
+      roomNumber: "",
+      guestName: parsed.data.guestName,
       guestCount: parsed.data.guestCount,
       date: parsed.data.date,
-      // Stored in the master English wording, whatever language the guest
-      // booked in, so the kitchen always reads one language.
       selections: canonicalizeSelections(validation.selections, menu),
-      contact: normalizeContact(parsed.data.contact!),
+      contact: normalizeContact(parsed.data.contact),
       notes: parsed.data.notes,
-      joinReservationNumber: parsed.data.joinReservationNumber,
     });
 
     return NextResponse.json({ reservation }, { status: 201 });
   } catch (error) {
-    // The party being joined may have gone away between choosing it and here.
-    if (error instanceof TableJoinError) {
-      return NextResponse.json({ error: error.message, code: "TABLE_JOIN_FAILED" }, { status: 409 });
-    }
-
-    // The date may have filled up between the check above and the write.
     if (error instanceof BookingError) {
       return NextResponse.json(
         {
@@ -99,7 +97,7 @@ export async function POST(request: Request) {
       );
     }
 
-    console.error("[reservations] failed to create reservation", error);
+    console.error("[premium] failed to create reservation", error);
     return NextResponse.json({ error: GENERIC_ERROR }, { status: 500 });
   }
 }

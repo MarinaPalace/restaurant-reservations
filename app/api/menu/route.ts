@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getMenuCatalog } from "@/lib/services/restaurant";
+import { menuKindSchema } from "@/lib/validation/booking";
 
 export async function GET(request: Request) {
   try {
@@ -7,7 +8,10 @@ export async function GET(request: Request) {
     // Keeps an oversized query string out of the translation lookup.
     const safeLanguage = /^[a-z]{2,8}(-[a-z0-9]{2,8})?$/i.test(language) ? language : "en";
 
-    return NextResponse.json(await getMenuCatalog(safeLanguage));
+    const requested = new URL(request.url).searchParams.get("menu");
+    const menu = menuKindSchema.safeParse(requested).data ?? "standard";
+
+    return NextResponse.json(await getMenuCatalog(safeLanguage, menu));
   } catch (error) {
     console.error("[menu] failed to load menu", error);
     return NextResponse.json({ error: "Unable to load menu." }, { status: 500 });

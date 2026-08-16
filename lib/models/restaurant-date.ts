@@ -9,6 +9,7 @@ const restaurantDateSchema = new Schema(
     // Strict arrival time, "HH:MM".
     serviceTime: { type: String },
     serviceEndTime: { type: String },
+    premium: { type: Boolean, default: false },
   },
   { timestamps: true },
 );

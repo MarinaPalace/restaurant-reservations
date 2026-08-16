@@ -256,8 +256,58 @@ body {
     break-inside: avoid;
   }
 
+  /*
+   * The service sheet is a wide matrix — a column per dish — so it is printed
+   * landscape and set small. Everything for one evening has to land on a
+   * single A4, because a waiter carries one sheet, not three.
+   */
   @page {
-    margin: 10mm;
+    size: A4 landscape;
+    margin: 8mm;
+  }
+
+  [data-print-area] table {
+    table-layout: fixed;
+    width: 100%;
+    font-size: 7.6pt;
+    line-height: 1.15;
+  }
+
+  [data-print-area] th,
+  [data-print-area] td {
+    padding: 2px 3px !important;
+  }
+
+  /* Course grouping is dropped in print: with short dish labels the columns
+     speak for themselves, and the row costs vertical space. */
+  [data-print="course-row"] {
+    display: none !important;
+  }
+
+  /* Dish columns are narrow and numeric; the label wraps rather than forcing
+     the table wider. */
+  [data-print="dish"] {
+    width: 3.2em;
+    overflow-wrap: anywhere;
+    hyphens: auto;
+  }
+
+  [data-print="who"] {
+    width: 9em;
+  }
+
+  [data-print="note"] {
+    width: 12em;
+    overflow-wrap: anywhere;
+  }
+
+  /* The kitchen slip starts a fresh page, so the service sheet keeps its own. */
+  [data-print="prep"] {
+    break-before: page;
+  }
+
+  [data-print-area] h3 {
+    font-size: 11pt;
   }
 
   /* Ink on paper, whatever theme the screen was showing. */

@@ -24,6 +24,7 @@ import {
   type KitchenLayout,
 } from "@/lib/kitchen-report";
 import { canonicalizeReservations } from "@/lib/menu-selection";
+import { shortenDishName } from "@/lib/dish-name";
 import { formatLongDate } from "@/lib/date";
 import { cx } from "@/components/ui/utils";
 import type { MenuCourse, ReservationRecord } from "@/types/booking";
@@ -297,38 +298,55 @@ export function KitchenReport({
               <thead className="bg-surface-sunken text-ink-muted">
                 {/* Course names span their options, so the sheet reads in
                     groups rather than as one long run of dish names. */}
-                <tr>
-                  <th scope="col" rowSpan={2} className="whitespace-nowrap border-r border-line px-3 py-2 align-bottom font-semibold">Table</th>
-                  <th scope="col" rowSpan={2} className="whitespace-nowrap border-r border-line px-3 py-2 align-bottom font-semibold">Rooms</th>
-                  <th scope="col" rowSpan={2} className="whitespace-nowrap border-r border-line px-3 py-2 align-bottom font-semibold">Guests</th>
+                {/* Course grouping, hidden in print so the sheet fits a page. */}
+                <tr data-print="course-row">
+                  <th scope="col" className="border-r border-line px-3 py-1" />
+                  <th scope="col" className="border-r border-line px-3 py-1" />
+                  <th scope="col" className="border-r border-line px-3 py-1" />
                   {optionGroups.map((group) => (
                     <th
                       key={group.courseId}
                       scope="colgroup"
                       colSpan={group.options.length}
-                      className="whitespace-nowrap border-r border-line px-3 py-2 text-center font-semibold"
+                      className="whitespace-nowrap border-r border-line px-3 py-1 text-center text-xs font-semibold"
                     >
                       {group.courseName}
                     </th>
                   ))}
-                  <th scope="col" rowSpan={2} className="px-3 py-2 align-bottom font-semibold">Comment</th>
-                  <th scope="col" rowSpan={2} className="px-3 py-2 align-bottom font-semibold" data-print="hide">
-                    <span className="sr-only">Actions</span>
-                  </th>
+                  <th scope="col" className="px-3 py-1" />
+                  <th scope="col" className="px-3 py-1" data-print="hide" />
                 </tr>
                 <tr>
+                  <th scope="col" className="whitespace-nowrap border-r border-line px-3 py-2 align-bottom font-semibold">
+                    Table
+                  </th>
+                  <th scope="col" data-print="who" className="whitespace-nowrap border-r border-line px-3 py-2 align-bottom font-semibold">
+                    Rooms
+                  </th>
+                  <th scope="col" className="whitespace-nowrap border-r border-line px-3 py-2 align-bottom font-semibold">
+                    Guests
+                  </th>
                   {optionColumns.map((column, index) => (
                     <th
                       key={column.id}
                       scope="col"
+                      data-print="dish"
+                      // Full wording on hover; the column shows the short label.
+                      title={column.label}
                       className={cx(
                         "px-2 py-2 text-center align-bottom text-xs font-medium",
                         optionColumns[index + 1]?.courseId !== column.courseId && "border-r border-line",
                       )}
                     >
-                      <span className="block max-w-24 leading-tight">{column.label}</span>
+                      <span className="block max-w-24 leading-tight">{shortenDishName(column.label)}</span>
                     </th>
                   ))}
+                  <th scope="col" data-print="note" className="px-3 py-2 align-bottom font-semibold">
+                    Comment
+                  </th>
+                  <th scope="col" className="px-3 py-2 align-bottom font-semibold" data-print="hide">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
 

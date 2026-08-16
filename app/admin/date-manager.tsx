@@ -53,13 +53,14 @@ export function AdminDateManager({
     }
 
     if (!entry.isOpen) {
-      return { hint: "Closed", status: "closed" };
+      return { hint: "Closed", status: "closed", premium: entry.premium };
     }
 
     return {
       hint: `${entry.remainingSeats} free`,
-      status: `${entry.remainingSeats} of ${entry.capacity} seats free`,
+      status: `${entry.remainingSeats} of ${entry.capacity} seats free${entry.premium ? ", invitation only" : ""}`,
       tone: entry.remainingSeats > 0 ? "positive" : "default",
+      premium: entry.premium,
     };
   };
 
@@ -122,6 +123,7 @@ export function AdminDateManager({
           capacity: Number(selectedEntry.capacity),
           serviceTime: selectedEntry.serviceTime || undefined,
           serviceEndTime: selectedEntry.serviceEndTime || undefined,
+          premium: Boolean(selectedEntry.premium),
         }),
       });
 
@@ -303,14 +305,26 @@ export function AdminDateManager({
         ) : null}
 
         <div className="mt-6 grid gap-6 xl:grid-cols-[1.4fr_1fr]">
-          <MonthCalendar
-            label="Restaurant availability"
-            month={month}
-            onMonthChange={setMonth}
-            selectedDate={selectedDate}
-            onSelect={setSelectedDate}
-            getDayState={getDayState}
-          />
+          <div>
+            <MonthCalendar
+              label="Restaurant availability"
+              month={month}
+              onMonthChange={setMonth}
+              selectedDate={selectedDate}
+              onSelect={setSelectedDate}
+              getDayState={getDayState}
+            />
+
+            <p className="mt-3 flex items-center gap-2 text-xs text-ink-muted">
+              <span className="inline-flex items-center gap-1 rounded-full border border-gold bg-accent-soft px-2 py-0.5 font-medium text-accent-ink">
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" className="size-3 text-gold">
+                  <path d="M12 2.6l2.7 5.9 6.4.7-4.8 4.3 1.3 6.3L12 16.7 6.4 19.8l1.3-6.3L2.9 9.2l6.4-.7z" />
+                </svg>
+                Invitation only
+              </span>
+              Bookable at /premium, hidden from hotel guests.
+            </p>
+          </div>
 
           <div className="rounded-control border border-line bg-surface-muted p-4" data-print="hide">
             {selectedEntry ? (
@@ -328,6 +342,23 @@ export function AdminDateManager({
                       className="size-5 accent-[var(--primary)]"
                       checked={selectedEntry.isOpen}
                       onChange={(event) => patchSelected({ isOpen: event.target.checked })}
+                    />
+                  </label>
+
+                  {/* A premium evening leaves the everyday flow entirely and
+                      becomes selectable only from the invitation link. */}
+                  <label className="flex min-h-11 items-center justify-between gap-4 rounded-control border border-gold/60 bg-accent-soft px-4 py-3 text-sm font-medium text-accent-ink">
+                    <span className="flex items-center gap-2">
+                      <svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" className="size-4 text-gold">
+                        <path d="M12 2.6l2.7 5.9 6.4.7-4.8 4.3 1.3 6.3L12 16.7 6.4 19.8l1.3-6.3L2.9 9.2l6.4-.7z" />
+                      </svg>
+                      Invitation only (premium menu)
+                    </span>
+                    <input
+                      type="checkbox"
+                      className="size-5 accent-[var(--primary)]"
+                      checked={Boolean(selectedEntry.premium)}
+                      onChange={(event) => patchSelected({ premium: event.target.checked })}
                     />
                   </label>
 

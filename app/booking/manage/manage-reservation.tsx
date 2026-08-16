@@ -9,6 +9,7 @@ import { Field, Input } from "@/components/ui/field";
 import { formatLongDate } from "@/lib/date";
 import { formatDeadline } from "@/lib/reservation-policy";
 import { NONE_OPTION_ID, NONE_OPTION_NAME } from "@/lib/menu-selection";
+import { PASS_KEY_PREFIX, formatPassKey, isValidPassKeyFormat, normalizePassKey } from "@/lib/pass-key";
 import { cx } from "@/components/ui/utils";
 import type { MenuCourse, ReservationRecord, ReservationSelection } from "@/types/booking";
 
@@ -20,13 +21,16 @@ type Loaded = {
 };
 
 /**
- * Self-service for a guest who has their reservation number: look the booking
- * up, change the menu choices, or cancel — all subject to the same cutoff the
+ * Self-service, opened with the pass-key from check-in: look the booking up,
+ * change the menu choices, or cancel — all subject to the same cutoff the
  * server enforces.
+ *
+ * The reservation number deliberately does not work here. Guests read it out
+ * to other rooms so they can share a table, and any of those rooms could
+ * otherwise change or cancel the booking.
  */
 export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
-  const [reservationNumber, setReservationNumber] = useState("");
-  const [roomNumber, setRoomNumber] = useState("");
+  const [passKey, setPassKey] = useState("");
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [lookupError, setLookupError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -43,18 +47,26 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
       return;
     }
 
+    if (!isValidPassKeyFormat(passKey)) {
+      setLookupError("Please enter the pass-key exactly as it appears on your slip.");
+      return;
+    }
+
     setBusy(true);
     setLookupError("");
     setNotice("");
 
     try {
-      const response = await fetch(
-        `/api/reservations/${encodeURIComponent(reservationNumber.trim().toUpperCase())}` +
-          `?roomNumber=${encodeURIComponent(roomNumber.trim())}`,
-      );
+      // POSTed rather than put in the URL: the key is a credential and has no
+      // business in browser history or a proxy log.
+      const response = await fetch("/api/booking/manage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ passKey: normalizePassKey(passKey) }),
+      });
 
       if (!response.ok) {
-        setLookupError("We could not find a reservation with that number and room. Please check both and try again.");
+        setLookupError("We could not find a reservation for that pass-key. Please check it and try again.");
         setLoaded(null);
         return;
       }
@@ -93,10 +105,10 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
     setActionError("");
 
     try {
-      const response = await fetch(`/api/reservations/${encodeURIComponent(loaded.reservation.reservationNumber)}`, {
+      const response = await fetch("/api/booking/manage", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ roomNumber, selections: draft }),
+        body: JSON.stringify({ passKey: normalizePassKey(passKey), selections: draft }),
       });
 
       const data = await response.json().catch(() => ({}));
@@ -123,7 +135,9 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
     }
 
     const confirmed = window.confirm(
-      `Cancel reservation ${loaded.reservation.reservationNumber}? This cannot be undone.`,
+      `Cancel reservation ${loaded.reservation.reservationNumber}? ` +
+        "Your pass-key will work again afterwards, so you can book another evening. " +
+        "If you cancel by mistake, reception can put it back.",
     );
     if (!confirmed) {
       return;
@@ -133,11 +147,11 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
     setActionError("");
 
     try {
-      const response = await fetch(
-        `/api/reservations/${encodeURIComponent(loaded.reservation.reservationNumber)}` +
-          `?roomNumber=${encodeURIComponent(roomNumber.trim())}`,
-        { method: "DELETE" },
-      );
+      const response = await fetch("/api/booking/manage/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ passKey: normalizePassKey(passKey) }),
+      });
 
       const data = await response.json().catch(() => ({}));
 
@@ -147,7 +161,10 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
       }
 
       setLoaded({ ...loaded, reservation: { ...loaded.reservation, status: "cancelled" }, canModify: false });
-      setNotice("Your reservation has been cancelled.");
+      setNotice(
+        "Your reservation has been cancelled. Your pass-key works again, so you can book another evening — " +
+          "or call reception if this was a mistake.",
+      );
     } catch {
       setActionError("We could not reach the restaurant. Please try again.");
     } finally {
@@ -164,31 +181,34 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
           flourish
           eyebrow="Your reservation"
           title="Manage your reservation"
-          description="Enter the reservation number from your confirmation, along with your room number."
+          description="Enter the pass-key you booked with — the one from your check-in slip."
         />
 
-        <form onSubmit={lookup} className="mt-6 space-y-4">
-          <Field label="Reservation number">
+        <form onSubmit={lookup} noValidate className="mt-6 space-y-4">
+          <Field label="Pass-key" error={lookupError} hint="Capitals and dashes do not matter.">
             {(fieldProps) => (
               <Input
                 {...fieldProps}
                 autoFocus
-                placeholder="e.g. VDM-3E94B8"
+                name="passKey"
+                autoComplete="off"
                 autoCapitalize="characters"
-                value={reservationNumber}
-                onChange={(event) => setReservationNumber(event.target.value.toUpperCase())}
-              />
-            )}
-          </Field>
-
-          <Field label="Room number" error={lookupError}>
-            {(fieldProps) => (
-              <Input
-                {...fieldProps}
-                maxLength={10}
-                placeholder="402 or L10"
-                value={roomNumber}
-                onChange={(event) => setRoomNumber(event.target.value.replace(/[^A-Za-z0-9-]/g, "").toUpperCase())}
+                autoCorrect="off"
+                spellCheck={false}
+                maxLength={24}
+                placeholder={`${PASS_KEY_PREFIX}-XXXX-XXXX-XXXX`}
+                value={passKey}
+                onChange={(event) => {
+                  setPassKey(event.target.value.toUpperCase());
+                  setLookupError("");
+                }}
+                onBlur={(event) => {
+                  const normalized = normalizePassKey(event.target.value);
+                  if (isValidPassKeyFormat(normalized)) {
+                    setPassKey(formatPassKey(normalized));
+                  }
+                }}
+                className="text-xl tracking-wider"
               />
             )}
           </Field>
@@ -197,6 +217,11 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
             Find my reservation
           </Button>
         </form>
+
+        <p className="mt-6 rounded-control border border-line bg-surface-muted p-3 text-sm text-ink-muted">
+          Booked at reception rather than online, or lost your slip? Dial{" "}
+          <span className="font-semibold text-ink">9</span> from your room and they will change it for you.
+        </p>
       </Card>
     );
   }

@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
-import { requireAdminApi } from "@/lib/auth/guard";
+import { isDenied, requireStaff } from "@/lib/auth/guard";
+import { recordAuditEntry } from "@/lib/services/audit-log";
 import { getFullMenuCatalog, saveMenuCatalog } from "@/lib/services/restaurant";
 import { menuCatalogSchema, menuKindSchema } from "@/lib/validation/booking";
 import type { MenuCourse } from "@/types/booking";
 
 export async function GET(request: Request) {
-  const unauthorized = await requireAdminApi();
-  if (unauthorized) {
-    return unauthorized;
+  const auth = await requireStaff("menu:edit");
+  if (isDenied(auth)) {
+    return auth;
   }
 
   try {
@@ -22,9 +23,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const unauthorized = await requireAdminApi();
-  if (unauthorized) {
-    return unauthorized;
+  const auth = await requireStaff("menu:edit");
+  if (isDenied(auth)) {
+    return auth;
   }
 
   try {
@@ -44,7 +45,15 @@ export async function POST(request: Request) {
       order: course.order ?? index + 1,
     })) as MenuCourse[];
 
-    const menu = await saveMenuCatalog(courses, parsed.data.menu ?? "standard");
+    const kind = parsed.data.menu ?? "standard";
+    const menu = await saveMenuCatalog(courses, kind);
+
+    await recordAuditEntry({
+      action: "menu:save",
+      actor: auth.actor,
+      summary: `Saved the ${kind} menu: ${menu.length} course(s).`,
+    });
+
     return NextResponse.json({ ok: true, menu });
   } catch (error) {
     console.error("[admin] failed to save menu", error);

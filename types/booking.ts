@@ -118,6 +118,21 @@ export type ReservationRecord = {
   /** Assigned by staff in the dashboard; blank until someone sets it. */
   tableNumber?: string;
   status: ReservationStatus;
+  /**
+   * The pass-key this booking was made with. It is what lets the guest come
+   * back and change or cancel it — the reservation number cannot serve that
+   * purpose, because guests hand it to other rooms to share a table.
+   *
+   * Absent on bookings taken by staff and on everything made before pass-keys
+   * existed.
+   */
+  passKeyId?: string;
+  /**
+   * Who cancelled, and when. A denormalised copy of the audit entry so the
+   * record explains itself — in the dashboard, in a CSV export, or read
+   * straight out of the database — without joining the log.
+   */
+  cancellation?: CancellationRecord;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -128,3 +143,159 @@ export function withRemainingSeats(date: StoredRestaurantDate): RestaurantDateAv
     remainingSeats: Math.max(date.capacity - date.reservedSeats, 0),
   };
 }
+
+/* ------------------------------------------------------------------ *
+ * Who did something
+ * ------------------------------------------------------------------ */
+
+/**
+ * `staff` is a named account, `guest` is somebody acting with a pass-key, and
+ * `system` covers automatic action with nobody behind it.
+ */
+export type ActorKind = "staff" | "guest" | "system";
+
+export type Actor = {
+  kind: ActorKind;
+  /** Staff user id, or the pass-key id when a guest acted. */
+  id?: string;
+  /** What to show in the log: a staff name, or the guest's room. */
+  name: string;
+};
+
+export type CancellationRecord = {
+  at: string;
+  actorKind: ActorKind;
+  actorId?: string;
+  actorName: string;
+  /** Optional free text, e.g. what reception was told on the phone. */
+  reason?: string;
+};
+
+/* ------------------------------------------------------------------ *
+ * Staff accounts and permissions
+ * ------------------------------------------------------------------ */
+
+/**
+ * Everything a staff account can be allowed to do. Checked in the API route,
+ * never only in the UI — hiding a button is not access control.
+ */
+export const STAFF_PERMISSIONS = [
+  "reservations:create",
+  "reservations:edit",
+  "reservations:cancel",
+  "reservations:restore",
+  "reservations:delete",
+  "menu:edit",
+  "dates:manage",
+  "passkeys:issue",
+  "users:manage",
+] as const;
+
+export type StaffPermission = (typeof STAFF_PERMISSIONS)[number];
+
+/**
+ * `admin` holds every permission implicitly, including ones added in a later
+ * release, so a new capability is never silently granted to everyone but is
+ * never withheld from the owner either.
+ */
+export type StaffRole = "admin" | "staff";
+
+export type StaffUserRecord = {
+  _id?: string;
+  id: string;
+  /** Lower-cased for comparison; what the person types to sign in. */
+  username: string;
+  /** Shown in the audit log, so a cancellation names a person. */
+  name: string;
+  role: StaffRole;
+  /** Ignored for admins, who hold everything. */
+  permissions: StaffPermission[];
+  /** A disabled account keeps its history but cannot sign in. */
+  active: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  lastLoginAt?: string;
+  createdByName?: string;
+  /**
+   * True for the account backed by ADMIN_USERNAME / ADMIN_PASSWORD_HASH. It
+   * lives in the environment rather than the database, cannot be edited or
+   * deleted from the panel, and exists so a deployment with no accounts yet
+   * can still be signed into.
+   */
+  isEnvironmentAccount?: boolean;
+};
+
+/* ------------------------------------------------------------------ *
+ * Pass-keys
+ * ------------------------------------------------------------------ */
+
+/**
+ * The stay length that entitles a guest to dinner. Reception cannot issue a
+ * key below it without deliberately overriding, which is recorded.
+ */
+export const MINIMUM_STAY_NIGHTS = 5;
+
+/**
+ * `active` may be spent on a booking, `used` has been, and `revoked` was
+ * withdrawn by staff. Expiry is deliberately *not* a status: it is derived
+ * from `expiresOn` so no scheduled job is needed to keep keys honest.
+ */
+export type PassKeyStatus = "active" | "used" | "revoked";
+
+export type PassKeyRecord = {
+  _id?: string;
+  id: string;
+  /** Canonical form: upper-case, no dashes. Compare against this. */
+  code: string;
+  /** The room at check-in. A note for reception — guests confirm their own
+   * room when booking, because they may since have been moved. */
+  roomNumber?: string;
+  guestName?: string;
+  /** Nights booked at the hotel, which is what earns the key. */
+  nights?: number;
+  /** Last date the key works, normally check-out. Absent means no expiry. */
+  expiresOn?: string;
+  status: PassKeyStatus;
+  /** The booking it was spent on, while it is spent. */
+  reservationNumber?: string;
+  issuedById?: string;
+  issuedByName?: string;
+  issuedAt?: string;
+  usedAt?: string;
+  revokedAt?: string;
+  /** Why a short stay was allowed a key, or anything else worth recording. */
+  note?: string;
+};
+
+/* ------------------------------------------------------------------ *
+ * Audit log
+ * ------------------------------------------------------------------ */
+
+export type AuditAction =
+  | "reservation:create"
+  | "reservation:update"
+  | "reservation:cancel"
+  | "reservation:restore"
+  | "reservation:delete"
+  | "reservation:table"
+  | "passkey:issue"
+  | "passkey:revoke"
+  | "user:create"
+  | "user:update"
+  | "user:delete"
+  | "menu:save"
+  | "date:update";
+
+export type AuditEntry = {
+  _id?: string;
+  id: string;
+  at: string;
+  action: AuditAction;
+  actorKind: ActorKind;
+  actorId?: string;
+  actorName: string;
+  /** Set for anything done to a booking, so its history loads in one query. */
+  reservationNumber?: string;
+  /** One line, already worded for a human reading the log. */
+  summary: string;
+};

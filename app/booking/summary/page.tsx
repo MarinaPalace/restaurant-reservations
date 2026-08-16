@@ -57,6 +57,9 @@ export default function SummaryPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          // Proof that this is a guest of the hotel. Checked server-side; the
+          // booking is refused outright without a live key.
+          passKey: session.passKey,
           roomNumber: session.roomNumber,
           guestCount,
           date: session.date,
@@ -79,6 +82,15 @@ export default function SummaryPage() {
 
         // The party they tried to join is the problem, not the booking.
         if (data.code === "TABLE_JOIN_FAILED") {
+          setError(data.error);
+          setSubmitting(false);
+          return;
+        }
+
+        // Something is wrong with the key itself, so send them back to the
+        // step where they can correct it rather than leaving them stuck on a
+        // summary they cannot submit.
+        if (typeof data.code === "string" && data.code.startsWith("PASS_KEY_")) {
           setError(data.error);
           setSubmitting(false);
           return;

@@ -6,11 +6,51 @@ TypeScript, Tailwind CSS v4 and MongoDB/Mongoose.
 The house name, tagline and reservation-number prefix live in `lib/brand.ts`; the mark itself is
 `components/brand.tsx`, with a favicon version at `app/icon.svg`.
 
-Guests book from their room number in a five-step flow (room → guests → date → menu → confirm),
-leave a contact detail, and can add the booking to their calendar. Staff manage availability,
-the menu and the nightly kitchen report from `/admin`.
+Guests book with the **pass-key** they were given at check-in, in a five-step flow (pass-key +
+room → guests → date → menu → confirm), leave a contact detail, and can add the booking to their
+calendar. Staff manage availability, the menu, pass-keys, staff accounts and the nightly kitchen
+report from `/admin`, each signed in under their own name.
 
 ## Features worth knowing about
+
+**Pass-keys.** Dinner is part of a stay of five nights or more, so a room number alone is not
+enough to book — anyone can read one off a door. Reception issues a **pass-key** at check-in from
+`/admin/pass-keys`, and prints a slip carrying the code and the address to book at. The guest enters
+that key and the room they are currently in.
+
+```
+VDM-K7QP-3M2X-R4TN
+```
+
+Twelve characters of Crockford base32: no `I`, `L`, `O` or `U`, so nothing on the slip is ambiguous;
+case-insensitive; dashes and spaces ignored; and the characters people type when they misread a slip
+(`O` for zero, `I` or `l` for one) are folded onto what they meant. `vdm-k7qp-3m2x-r4tn` and
+`VDMK7QP3M2XR4TN` are the same key.
+
+A key books **one** dinner and then goes inactive, and it expires when the stay does, so a table
+cannot be held for an evening after check-out. Reception records the number of nights when issuing
+one; a stay under five nights is refused unless somebody deliberately overrides it, which is
+recorded on the key and in the log.
+
+**Changing your booking.** The pass-key is also how a guest returns to their reservation — *not* the
+reservation number, which they hand to other rooms so they can share a table and which would
+therefore let any of those rooms cancel it. Cancelling **gives the key back**, so a guest who
+cancels can book another evening rather than losing dinner for the whole stay over one tap.
+
+**Staff accounts.** Each member of staff signs in as themselves at `/admin/users`, with their own
+permissions: take, edit, cancel and restore reservations; edit the menus; manage evenings; issue
+pass-keys; manage accounts. **Deleting a reservation is administrators only.** Disabling an account
+takes effect on its next request. The `ADMIN_USERNAME` / `ADMIN_PASSWORD_HASH` owner account still
+works and cannot be deleted from the panel, so a deployment is always recoverable.
+
+**Who did what.** Every change to a booking or an account is recorded, with the name of the person
+who made it — cancellations especially, whether by a guest with their pass-key, by reception, or by
+an administrator. A booking's full history is on its page at `/admin/reservation/<number>`, and a
+cancelled booking shows who cancelled it and when in the service sheet.
+
+**Undoing a cancellation.** Cancelled bookings show a *Restore* button. This is a real claim on the
+seats, not a status flip: cancelling released them, so a restore can be refused because the evening
+filled up or was closed in the meantime, and it says which.
 
 **Dish photos.** Courses and options each take a picture, either a URL or an upload. Uploads are
 resized and re-encoded in the browser before they are sent, so a photo straight off a phone
@@ -42,12 +82,13 @@ concurrent booking cannot slip into the gap, and a refused move leaves both even
 Contact details are optional for staff, since a phone booking may not have them.
 
 **Changing a booking.** Guests reach `/booking/manage` from the confirmation or the first booking
-step, identify themselves with their reservation number *and* room number, and can then swap
-courses or cancel. Self-service closes **12 hours before the sitting**, after which they are asked
-to speak to reception — the kitchen is already prepping against the counts by then. The cutoff is
-enforced on the server for both edits and cancellations; an admin session bypasses it, so staff
-can fix anything at the desk. Staff can also delete a booking outright, which releases its seats;
-cancelling instead keeps it on the night's record.
+step, enter their **pass-key**, and can then swap courses or cancel. Self-service closes **12 hours
+before the sitting**, after which they are asked to speak to reception — the kitchen is already
+prepping against the counts by then. The cutoff is enforced on the server for both edits and
+cancellations; staff are not bound by it, so anything can be fixed at the desk. A booking taken by
+staff has no pass-key attached, so reception changes it on the guest's behalf. Staff with the right
+permission can delete a booking outright, which releases its seats; cancelling instead keeps it on
+the night's record and can be undone.
 
 **Shared tables.** Two or three rooms can eat together: the first room books as usual and passes
 its reservation number to the others, who tick "we are dining with another room" and enter it.
@@ -86,7 +127,10 @@ Staff can still place someone on it from the admin side. Premium evenings show g
 both calendars.
 
 The premium menu is edited at `/admin/menu?menu=premium`, saved independently of the everyday menu
-— saving one never touches the other.
+— saving one never touches the other. The first time you open it while it is empty, it is filled
+with a copy of the everyday menu as a starting point. Nothing is stored, and invited guests see
+nothing, until you press **Save menu**; from then on the two are entirely separate, and editing one
+never changes the other.
 
 **Printing.** Print gives you only the sheet — no calendar, no navigation — in **A4 landscape**, sized to
 land an evening on a single page: the course-grouping row is dropped, dish names are trimmed to
@@ -115,19 +159,30 @@ That is enough to try the app: with no `MONGODB_URI` set it uses a local JSON st
 
 Admin sign-in in development falls back to `admin` / `admin123` and prints a warning. Sessions are signed with a per-process random key, so they end when the dev server restarts.
 
+To try the guest flow you need a pass-key: sign in at `/admin`, open **Pass-keys**, and issue one
+for a stay of five nights or more. The code it shows is what goes in the first booking step.
+
+Note that `npm start` runs in production mode, where the `admin`/`admin123` fallback is off and the
+session cookie is `Secure` — set `ADMIN_PASSWORD_HASH` and `ADMIN_SESSION_SECRET` if you want to
+drive the built app over plain `http`.
+
 ## Configuration
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `MONGODB_URI` | No | Enables the MongoDB backend. Without it the local JSON store is used. |
-| `ADMIN_USERNAME` | No | Admin username. Defaults to `admin`. |
-| `ADMIN_PASSWORD_HASH` | **In production** | bcrypt hash of the admin password. |
-| `ADMIN_SESSION_SECRET` | **In production** | ≥16 chars, used to sign admin session cookies. |
+| `ADMIN_USERNAME` | No | Username of the owner account, which lives in the environment rather than the database. Defaults to `admin`. |
+| `ADMIN_PASSWORD_HASH` | **In production** | bcrypt hash of the owner account's password. |
+| `ADMIN_SESSION_SECRET` | **In production** | ≥16 chars, used to sign admin session cookies. Required even once staff accounts exist. |
 | `LOCAL_STORE_DIR` | No | Overrides where the JSON store is written. Used by the tests. |
 | `NEXT_PUBLIC_DINNER_TIME` | No | Fallback sitting time (`HH:MM`) for dates with no arrival time set. Defaults to `19:00`. |
 | `NEXT_PUBLIC_DINNER_DURATION_MINUTES` | No | Length of the sitting. Defaults to `120`. |
 
 In production the admin area fails closed: without `ADMIN_PASSWORD_HASH` and `ADMIN_SESSION_SECRET` every admin request returns 503 rather than falling back to a default password.
+
+The owner account is how you first sign in and create the real staff accounts, and how you get back
+in if the last administrator account is ever lost. Sign-in checks the staff accounts first, so once
+they exist the log names a person rather than "admin".
 
 Generate the two secrets:
 
@@ -199,9 +254,11 @@ app/                    Routes. Pages fetch on the server; client components
 components/             Shared UI: design-system primitives, calendar, steps
 hooks/                  useBookingSession — sessionStorage via useSyncExternalStore
 lib/
-  auth/                 Credential checking and signed admin sessions
+  auth/                 Credentials, signed sessions, permissions, route guard
   db/                   Mongo connection, JSON store, seed definitions
-  services/             Booking rules, reservations, restaurant/menu
+  services/             Booking rules, reservations, restaurant/menu,
+                        pass-keys, staff accounts, audit log
+  pass-key.ts           Pass-key generation, normalisation and formatting
   date.ts               Local-timezone date keys (never UTC)
   validation/           Zod schemas shared by the API routes
 proxy.ts                Optimistic /admin redirect (pages re-check the session)
@@ -223,5 +280,6 @@ checked against WCAG AA, worst pair 4.98:1.
 
 - **Dates are local calendar strings.** Use the helpers in `lib/date.ts`; `toISOString()` shifts the day for any timezone east of UTC.
 - **Colours come from tokens.** `app/globals.css` defines the light and dark palettes; components use semantic classes (`bg-surface`, `text-ink`, `border-line`) rather than hex values.
-- **Authorisation is checked in the route.** `proxy.ts` only redirects; each admin page and API route calls `isAdminAuthenticated()` itself.
+- **Authorisation is checked in the route.** `proxy.ts` only redirects; each admin page and API route calls `requireStaff(permission)` itself, which answers both who the caller is and whether they may do this. Hiding a button is presentation, not access control.
+- **Guest self-service is authorised by the pass-key**, never the reservation number — guests share that number with other rooms to be seated together.
 - **Booking rules live in `lib/services/booking-rules.ts`.** The API delegates to it so the rules under test are the ones that run.

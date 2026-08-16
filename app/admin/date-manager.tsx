@@ -14,16 +14,20 @@ import {
   type MenuCourse,
   type ReservationRecord,
   type RestaurantDateAvailability,
+  type StaffPermission,
 } from "@/types/booking";
 
 export function AdminDateManager({
   initialDates,
   initialReservations,
   menu,
+  permissions,
 }: {
   initialDates: RestaurantDateAvailability[];
   initialReservations: ReservationRecord[];
   menu: MenuCourse[];
+  /** What the signed-in account may do; the API enforces the same list. */
+  permissions: StaffPermission[];
 }) {
   const [dates, setDates] = useState(initialDates);
   const [reservations, setReservations] = useState(initialReservations);
@@ -267,6 +271,54 @@ export function AdminDateManager({
     }
   };
 
+  /**
+   * Undoes a cancellation.
+   *
+   * This can fail for a real reason — the seats went back into the pool when
+   * the booking was cancelled and somebody else may have taken them — so the
+   * server's message is shown rather than a generic one.
+   */
+  const restoreReservation = async (reservationNumber: string) => {
+    setBusyNumber(reservationNumber);
+    setError("");
+    setNotice("");
+
+    try {
+      const response = await fetch(`/api/admin/reservations/${encodeURIComponent(reservationNumber)}/restore`, {
+        method: "POST",
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to restore this reservation.");
+      }
+
+      const restored: ReservationRecord = data.reservation;
+
+      setReservations((current) =>
+        current.map((reservation) =>
+          reservation.reservationNumber === reservationNumber ? restored : reservation,
+        ),
+      );
+
+      // The seats are held again, so the evening's count has to follow.
+      setDates((current) =>
+        current.map((entry) =>
+          entry.date === restored.date
+            ? withRemainingSeats({ ...entry, reservedSeats: entry.reservedSeats + restored.guestCount })
+            : entry,
+        ),
+      );
+
+      setNotice(`Reservation ${reservationNumber} restored.`);
+    } catch (restoreError) {
+      setError(restoreError instanceof Error ? restoreError.message : "Unable to restore this reservation.");
+    } finally {
+      setBusyNumber(null);
+    }
+  };
+
   return (
     <div className="mt-6 space-y-6">
       <Card className="p-5 sm:p-6" as="section">
@@ -446,8 +498,10 @@ export function AdminDateManager({
         menu={menu}
         onAssignTable={assignTable}
         onCancel={cancelReservation}
+        onRestore={restoreReservation}
         onDelete={deleteReservation}
         busyReservationNumber={busyNumber}
+        permissions={permissions}
       />
     </div>
   );

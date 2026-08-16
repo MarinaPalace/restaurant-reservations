@@ -4,7 +4,8 @@ import { PageShell } from "@/components/page-shell";
 import { AdminDateManager } from "@/app/admin/date-manager";
 import { Card, CardHeader } from "@/components/ui/card";
 import { ButtonLink } from "@/components/ui/button";
-import { isAdminAuthenticated } from "@/lib/auth/session";
+import { getCurrentStaffUser } from "@/lib/auth/guard";
+import { hasPermission, permissionsOf } from "@/lib/auth/permissions";
 import { getReservationsList } from "@/lib/services/reservations";
 import { getFullMenuCatalog, getRestaurantDates } from "@/lib/services/restaurant";
 import { todayKey } from "@/lib/date";
@@ -14,7 +15,9 @@ export const metadata: Metadata = { title: "Staff dashboard" };
 export default async function AdminPage() {
   // Authoritative check — the proxy redirect in front of this is only a
   // convenience and must never be the sole gate.
-  if (!(await isAdminAuthenticated())) {
+  const user = await getCurrentStaffUser();
+
+  if (!user) {
     redirect("/admin/login");
   }
 
@@ -23,6 +26,8 @@ export default async function AdminPage() {
     getRestaurantDates(),
     getFullMenuCatalog(),
   ]);
+
+  const permissions = permissionsOf(user);
 
   const today = todayKey();
   const upcoming = reservations.filter((reservation) => reservation.date >= today && reservation.status === "confirmed");
@@ -37,20 +42,33 @@ export default async function AdminPage() {
     { label: "Open evenings ahead", value: openDates },
   ];
 
+  /**
+   * Links are hidden when the account cannot use them. This is presentation
+   * only — every page and route behind these also checks the permission
+   * itself, because hiding something is not access control.
+   */
+  const links = [
+    { href: "/admin/reservation/new", label: "New reservation", permission: "reservations:create" as const, primary: true },
+    { href: "/admin/pass-keys", label: "Pass-keys", permission: "passkeys:issue" as const },
+    { href: "/admin/menu", label: "Menu editor", permission: "menu:edit" as const },
+    { href: "/admin/menu?menu=premium", label: "Premium menu", permission: "menu:edit" as const },
+    { href: "/admin/users", label: "Staff accounts", permission: "users:manage" as const },
+  ].filter((link) => hasPermission(user, link.permission));
+
   return (
     <PageShell width="xl" headerHref="/admin">
       <Card className="p-5 sm:p-6">
         <CardHeader
           as="h1"
-          eyebrow="Vista Del Mar"
+          eyebrow={`Signed in as ${user.name}`}
           title="Staff dashboard"
           actions={
             <div className="flex flex-wrap items-center gap-3" data-print="hide">
-              <ButtonLink href="/admin/reservation/new" variant="primary">
-                New reservation
-              </ButtonLink>
-              <ButtonLink href="/admin/menu">Menu editor</ButtonLink>
-              <ButtonLink href="/admin/menu?menu=premium">Premium menu</ButtonLink>
+              {links.map((link) => (
+                <ButtonLink key={link.href} href={link.href} variant={link.primary ? "primary" : "secondary"}>
+                  {link.label}
+                </ButtonLink>
+              ))}
               <form action="/api/admin/logout" method="POST">
                 <button
                   type="submit"
@@ -73,7 +91,12 @@ export default async function AdminPage() {
         </dl>
       </Card>
 
-      <AdminDateManager initialDates={restaurantDates} initialReservations={reservations} menu={menu} />
+      <AdminDateManager
+        initialDates={restaurantDates}
+        initialReservations={reservations}
+        menu={menu}
+        permissions={permissions}
+      />
     </PageShell>
   );
 }

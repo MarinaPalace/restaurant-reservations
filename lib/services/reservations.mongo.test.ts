@@ -848,3 +848,221 @@ describe("premium evenings", () => {
     expect((await reservations.getReservationByNumber(created.reservationNumber))?.kind).toBe("standard");
   });
 });
+
+/**
+ * Restoring is a fresh claim on the seats, not a flip of the status flag —
+ * the seats were handed back to the evening when the booking was cancelled
+ * and somebody else may have taken them since.
+ */
+describe("restoring a cancellation against MongoDB", () => {
+  async function cancelledBooking(date: string, capacity: number, guestCount: number) {
+    const { reservations } = await loadServices();
+    await openDate(date, capacity);
+
+    const created = await reservations.createReservationEntry({
+      roomNumber: "402",
+      guestCount,
+      date,
+      selections: SELECTIONS,
+    });
+
+    await reservations.cancelReservation(created.reservationNumber, {
+      at: new Date().toISOString(),
+      actorKind: "staff",
+      actorName: "Maria Petrova",
+    });
+
+    return created;
+  }
+
+  it("takes the seats back and marks the booking confirmed again", async () => {
+    const { reservations, restaurant } = await loadServices();
+    const created = await cancelledBooking("2027-01-10", 10, 4);
+
+    expect((await restaurant.getRestaurantDate("2027-01-10"))?.reservedSeats).toBe(0);
+
+    const restored = await reservations.restoreReservation(created.reservationNumber);
+
+    expect(restored?.status).toBe("confirmed");
+    expect((await restaurant.getRestaurantDate("2027-01-10"))?.reservedSeats).toBe(4);
+  });
+
+  it("records who cancelled it, and clears that when it is restored", async () => {
+    const { reservations } = await loadServices();
+    const created = await cancelledBooking("2027-01-11", 10, 2);
+
+    const cancelled = await reservations.getReservationByNumber(created.reservationNumber);
+    expect(cancelled?.cancellation?.actorName).toBe("Maria Petrova");
+    expect(cancelled?.cancellation?.actorKind).toBe("staff");
+
+    const restored = await reservations.restoreReservation(created.reservationNumber);
+    expect(restored?.cancellation).toBeUndefined();
+  });
+
+  it("refuses when the seats have been taken in the meantime", async () => {
+    const { reservations, restaurant } = await loadServices();
+    const created = await cancelledBooking("2027-01-12", 10, 4);
+
+    // Another party takes what the cancellation released.
+    await reservations.createReservationEntry({
+      roomNumber: "L10",
+      guestCount: 8,
+      date: "2027-01-12",
+      selections: SELECTIONS,
+    });
+
+    await expect(reservations.restoreReservation(created.reservationNumber)).rejects.toMatchObject({
+      code: "DATE_FULL",
+    });
+
+    // The failed restore must not have taken seats on its way out.
+    expect((await restaurant.getRestaurantDate("2027-01-12"))?.reservedSeats).toBe(8);
+    expect((await reservations.getReservationByNumber(created.reservationNumber))?.status).toBe("cancelled");
+  });
+
+  it("refuses when the evening has since been closed", async () => {
+    const { reservations } = await loadServices();
+    const created = await cancelledBooking("2027-01-13", 10, 2);
+
+    await reservations.updateRestaurantDate({ date: "2027-01-13", isOpen: false, capacity: 10 });
+
+    await expect(reservations.restoreReservation(created.reservationNumber)).rejects.toMatchObject({
+      code: "DATE_CLOSED",
+    });
+  });
+
+  it("refuses to restore a booking that was never cancelled", async () => {
+    const { reservations, restaurant } = await loadServices();
+    await openDate("2027-01-14", 10);
+
+    const created = await reservations.createReservationEntry({
+      roomNumber: "402",
+      guestCount: 3,
+      date: "2027-01-14",
+      selections: SELECTIONS,
+    });
+
+    await expect(reservations.restoreReservation(created.reservationNumber)).rejects.toMatchObject({
+      code: "NOT_CANCELLED",
+    });
+
+    // Restoring a live booking twice would otherwise claim its seats again.
+    expect((await restaurant.getRestaurantDate("2027-01-14"))?.reservedSeats).toBe(3);
+  });
+
+  /**
+   * Two members of staff pressing Restore at once. The status filter means
+   * only one update matches; the loser gives its claimed seats back.
+   */
+  it("does not double-claim seats when restored twice at once", async () => {
+    const { reservations, restaurant } = await loadServices();
+    const created = await cancelledBooking("2027-01-15", 10, 3);
+
+    await Promise.allSettled([
+      reservations.restoreReservation(created.reservationNumber),
+      reservations.restoreReservation(created.reservationNumber),
+    ]);
+
+    expect((await restaurant.getRestaurantDate("2027-01-15"))?.reservedSeats).toBe(3);
+    expect((await reservations.getReservationByNumber(created.reservationNumber))?.status).toBe("confirmed");
+  });
+
+  it("returns null for a reservation that does not exist", async () => {
+    const { reservations } = await loadServices();
+    expect(await reservations.restoreReservation("VDM-NOPE00")).toBeNull();
+  });
+});
+
+describe("pass-keys against MongoDB", () => {
+  async function loadPassKeys() {
+    return import("@/lib/services/pass-keys");
+  }
+
+  const actor = { kind: "staff" as const, id: "u1", name: "Maria Petrova" };
+
+  it("issues a key that can be found by however the guest types it", async () => {
+    const passKeys = await loadPassKeys();
+    const issued = await passKeys.issuePassKey({ roomNumber: "402", nights: 7, actor });
+
+    const { formatPassKey } = await import("@/lib/pass-key");
+    const printed = formatPassKey(issued.code);
+
+    expect((await passKeys.getPassKeyByCode(printed))?.id).toBe(issued.id);
+    expect((await passKeys.getPassKeyByCode(printed.toLowerCase()))?.id).toBe(issued.id);
+    expect((await passKeys.getPassKeyByCode(issued.code))?.id).toBe(issued.id);
+  });
+
+  it("refuses a stay shorter than the entitlement unless overridden", async () => {
+    const passKeys = await loadPassKeys();
+
+    await expect(passKeys.issuePassKey({ roomNumber: "402", nights: 2, actor })).rejects.toThrow();
+
+    const exception = await passKeys.issuePassKey({
+      roomNumber: "402",
+      nights: 2,
+      allowShortStay: true,
+      actor,
+    });
+
+    expect(exception.nights).toBe(2);
+    expect(exception.status).toBe("active");
+  });
+
+  /**
+   * The single conditional update is what stops one key producing two
+   * bookings when a guest taps Confirm twice.
+   */
+  it("cannot be spent twice, even by simultaneous requests", async () => {
+    const passKeys = await loadPassKeys();
+    const issued = await passKeys.issuePassKey({ roomNumber: "402", nights: 6, actor });
+
+    const results = await Promise.all([
+      passKeys.consumePassKey(issued.code, "VDM-AAA111"),
+      passKeys.consumePassKey(issued.code, "VDM-BBB222"),
+    ]);
+
+    expect(results.filter(Boolean)).toHaveLength(1);
+  });
+
+  it("is handed back on cancellation and only for its own booking", async () => {
+    const passKeys = await loadPassKeys();
+    const issued = await passKeys.issuePassKey({ roomNumber: "402", nights: 6, actor });
+
+    await passKeys.consumePassKey(issued.code, "VDM-AAA111");
+
+    expect(await passKeys.releasePassKey(issued.id, "VDM-WRONG00")).toBeNull();
+    expect(await passKeys.releasePassKey(issued.id, "VDM-AAA111")).toMatchObject({ status: "active" });
+  });
+
+  it("stops working once revoked", async () => {
+    const passKeys = await loadPassKeys();
+    const issued = await passKeys.issuePassKey({ roomNumber: "402", nights: 6, actor });
+
+    await passKeys.revokePassKey(issued.id);
+
+    expect(await passKeys.consumePassKey(issued.code, "VDM-AAA111")).toBeNull();
+    expect(passKeys.isPassKeyUsable(await passKeys.getPassKeyByCode(issued.code))).toBe(false);
+  });
+
+  it("links the booking it paid for, so the guest can reach it again", async () => {
+    const { reservations } = await loadServices();
+    const passKeys = await loadPassKeys();
+    await openDate("2027-02-01", 20);
+
+    const issued = await passKeys.issuePassKey({ roomNumber: "402", nights: 6, actor });
+    const number = await reservations.reserveReservationNumber();
+    await passKeys.consumePassKey(issued.code, number);
+
+    await reservations.createReservationEntry({
+      reservationNumber: number,
+      roomNumber: "402",
+      guestCount: 2,
+      date: "2027-02-01",
+      selections: SELECTIONS,
+      passKeyId: issued.id,
+    });
+
+    const found = await reservations.getReservationByPassKey(issued.id);
+    expect(found?.reservationNumber).toBe(number);
+  });
+});

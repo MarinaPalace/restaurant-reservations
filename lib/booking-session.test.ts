@@ -117,6 +117,7 @@ describe("reading the booking session", () => {
 
 describe("step guards", () => {
   const complete = {
+    passKey: "K7QP3M2XR4TN",
     roomNumber: "402",
     guestCount: 2,
     date: "2026-08-18",
@@ -132,6 +133,15 @@ describe("step guards", () => {
     expect(findMissingRequirement({ ...complete, roomNumber: "" }, ["room", "guests"])).toBe("room");
     expect(findMissingRequirement({ ...complete, guestCount: 0 }, ["room", "guests"])).toBe("guests");
     expect(findMissingRequirement({ ...complete, date: "" }, ["room", "guests", "date"])).toBe("date");
+  });
+
+  /**
+   * The pass-key and the room are the same step, and the booking is refused
+   * without both — so a session carrying only one of them has to go back
+   * rather than reaching a summary page it can never submit.
+   */
+  it("sends the guest back when the pass-key is missing", () => {
+    expect(findMissingRequirement({ ...complete, passKey: "" }, ["room", "guests", "date"])).toBe("room");
   });
 });
 

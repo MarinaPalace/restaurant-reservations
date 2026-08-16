@@ -27,7 +27,7 @@ import { canonicalizeReservations } from "@/lib/menu-selection";
 import { shortenDishName } from "@/lib/dish-name";
 import { formatLongDate } from "@/lib/date";
 import { cx } from "@/components/ui/utils";
-import type { MenuCourse, ReservationRecord } from "@/types/booking";
+import type { MenuCourse, ReservationRecord, StaffPermission } from "@/types/booking";
 
 export function KitchenReport({
   date,
@@ -36,8 +36,10 @@ export function KitchenReport({
   menu,
   onAssignTable,
   onCancel,
+  onRestore,
   onDelete,
   busyReservationNumber,
+  permissions,
 }: {
   date: string;
   serviceTime?: string;
@@ -45,8 +47,14 @@ export function KitchenReport({
   menu: MenuCourse[];
   onAssignTable: (reservationNumber: string, tableNumber: string) => Promise<void>;
   onCancel: (reservationNumber: string) => Promise<void>;
+  onRestore: (reservationNumber: string) => Promise<void>;
   onDelete: (reservationNumber: string) => Promise<void>;
   busyReservationNumber: string | null;
+  /**
+   * What the signed-in account may do. The API checks the same permissions on
+   * every request — this only avoids showing buttons that would be refused.
+   */
+  permissions: StaffPermission[];
 }) {
   const [layout, setLayout] = useState<KitchenLayout>("room");
   const [editing, setEditing] = useState<{ reservationNumber: string; value: string } | null>(null);
@@ -154,35 +162,71 @@ export function KitchenReport({
     );
   };
 
-  const actionsCell = (reservationNumber: string, cancelled: boolean) => (
-    <div className="flex items-center gap-2">
-      <Link
-        href={`/admin/reservation/${reservationNumber}`}
-        className="text-xs underline underline-offset-2 hover:text-accent"
-      >
-        {reservationNumber}
-      </Link>
-      {!cancelled ? (
-        <Button
-          variant="danger"
-          onClick={() => onCancel(reservationNumber)}
-          loading={busyReservationNumber === reservationNumber}
-          loadingLabel="…"
-        >
-          Cancel
-        </Button>
-      ) : (
-        <Badge tone="info">cancelled</Badge>
-      )}
-      <button
-        type="button"
-        onClick={() => onDelete(reservationNumber)}
-        className="text-xs text-ink-subtle underline underline-offset-2 hover:text-danger"
-      >
-        Delete
-      </button>
-    </div>
-  );
+  const can = (permission: StaffPermission) => permissions.includes(permission);
+
+  const actionsCell = (reservationNumber: string, cancelled: boolean) => {
+    // Who cancelled it, so the question does not have to be asked around the
+    // desk. The full history is on the reservation's own page.
+    const cancellation = reservations.find(
+      (entry) => entry.reservationNumber === reservationNumber,
+    )?.cancellation;
+
+    return (
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-2">
+          <Link
+            href={`/admin/reservation/${reservationNumber}`}
+            className="text-xs underline underline-offset-2 hover:text-accent"
+          >
+            {reservationNumber}
+          </Link>
+          {!cancelled ? (
+            can("reservations:cancel") ? (
+              <Button
+                variant="danger"
+                onClick={() => onCancel(reservationNumber)}
+                loading={busyReservationNumber === reservationNumber}
+                loadingLabel="…"
+              >
+                Cancel
+              </Button>
+            ) : null
+          ) : (
+            <>
+              <Badge tone="info">cancelled</Badge>
+              {can("reservations:restore") ? (
+                <Button
+                  variant="secondary"
+                  onClick={() => onRestore(reservationNumber)}
+                  loading={busyReservationNumber === reservationNumber}
+                  loadingLabel="…"
+                >
+                  Restore
+                </Button>
+              ) : null}
+            </>
+          )}
+          {can("reservations:delete") ? (
+            <button
+              type="button"
+              onClick={() => onDelete(reservationNumber)}
+              className="text-xs text-ink-subtle underline underline-offset-2 hover:text-danger"
+            >
+              Delete
+            </button>
+          ) : null}
+        </div>
+
+        {cancelled && cancellation ? (
+          <p className="text-xs text-ink-subtle" data-print="hide">
+            by {cancellation.actorName}
+            {cancellation.at ? ` · ${new Date(cancellation.at).toLocaleString("en-GB")}` : ""}
+            {cancellation.reason ? ` · ${cancellation.reason}` : ""}
+          </p>
+        ) : null}
+      </div>
+    );
+  };
 
   return (
     <div data-print-area="">

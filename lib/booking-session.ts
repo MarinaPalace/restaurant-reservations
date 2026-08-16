@@ -1,9 +1,11 @@
 import { isValidDateKey } from "@/lib/date";
+import { isValidPassKeyFormat, normalizePassKey } from "@/lib/pass-key";
 import { isValidRoomNumber, normalizeRoomNumber } from "@/lib/room";
 import { MAX_GUESTS_PER_RESERVATION } from "@/lib/validation/booking";
 import type { ReservationRecord, ReservationSelection } from "@/types/booking";
 
 export const BOOKING_STORAGE_KEYS = {
+  passKey: "booking-pass-key",
   roomNumber: "booking-room-number",
   guestCount: "booking-guest-count",
   date: "booking-date",
@@ -13,6 +15,12 @@ export const BOOKING_STORAGE_KEYS = {
 } as const;
 
 export type BookingSession = {
+  /**
+   * The key from reception, in canonical form. Held for the length of the
+   * booking because the final POST has to present it — it is what proves the
+   * person is a guest here.
+   */
+  passKey: string;
   roomNumber: string;
   /** 0 means "not chosen yet", which is different from a party of one. */
   guestCount: number;
@@ -22,6 +30,7 @@ export type BookingSession = {
 };
 
 export const EMPTY_BOOKING_SESSION: BookingSession = {
+  passKey: "",
   roomNumber: "",
   guestCount: 0,
   date: "",
@@ -30,6 +39,7 @@ export const EMPTY_BOOKING_SESSION: BookingSession = {
 };
 
 export { isValidRoomNumber } from "@/lib/room";
+export { isValidPassKeyFormat } from "@/lib/pass-key";
 
 export function parseGuestCount(raw: string | null | undefined): number {
   const value = Number(raw);
@@ -81,8 +91,10 @@ export function readBookingSession(storage: Storage | null | undefined): Booking
 
   const roomNumber = storage.getItem(BOOKING_STORAGE_KEYS.roomNumber) ?? "";
   const date = storage.getItem(BOOKING_STORAGE_KEYS.date) ?? "";
+  const passKey = storage.getItem(BOOKING_STORAGE_KEYS.passKey) ?? "";
 
   return {
+    passKey: isValidPassKeyFormat(passKey) ? normalizePassKey(passKey) : "",
     roomNumber: isValidRoomNumber(roomNumber) ? normalizeRoomNumber(roomNumber) : "",
     guestCount: parseGuestCount(storage.getItem(BOOKING_STORAGE_KEYS.guestCount)),
     date: isValidDateKey(date) ? date : "",
@@ -135,7 +147,9 @@ export function findMissingRequirement(
   requirements: BookingStepRequirement[],
 ): BookingStepRequirement | null {
   for (const requirement of requirements) {
-    if (requirement === "room" && !session.roomNumber) return "room";
+    // The key and the room are entered on the same step, and the booking is
+    // refused without both, so either one missing sends the guest back.
+    if (requirement === "room" && (!session.roomNumber || !session.passKey)) return "room";
     if (requirement === "guests" && session.guestCount < 1) return "guests";
     if (requirement === "date" && !session.date) return "date";
     if (requirement === "selections" && session.selections.length === 0) return "selections";

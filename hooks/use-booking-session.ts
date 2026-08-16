@@ -74,7 +74,9 @@ function getServerSnapshot() {
   return EMPTY_BOOKING_SESSION;
 }
 
-type SessionPatch = Partial<Pick<BookingSession, "roomNumber" | "guestCount" | "date" | "selections" | "language">>;
+type SessionPatch = Partial<
+  Pick<BookingSession, "passKey" | "roomNumber" | "guestCount" | "date" | "selections" | "language">
+>;
 
 export function writeBookingSession(patch: SessionPatch) {
   if (typeof window === "undefined") {
@@ -83,6 +85,7 @@ export function writeBookingSession(patch: SessionPatch) {
 
   const storage = window.sessionStorage;
 
+  if (patch.passKey !== undefined) storage.setItem(BOOKING_STORAGE_KEYS.passKey, patch.passKey);
   if (patch.roomNumber !== undefined) storage.setItem(BOOKING_STORAGE_KEYS.roomNumber, patch.roomNumber);
   if (patch.guestCount !== undefined) storage.setItem(BOOKING_STORAGE_KEYS.guestCount, String(patch.guestCount));
   if (patch.date !== undefined) storage.setItem(BOOKING_STORAGE_KEYS.date, patch.date);

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdminApi } from "@/lib/auth/guard";
+import { isDenied, requireStaff } from "@/lib/auth/guard";
 import { assignTableNumber } from "@/lib/services/reservations";
 import { tableAssignmentSchema } from "@/lib/validation/booking";
 
@@ -8,9 +8,9 @@ import { tableAssignmentSchema } from "@/lib/validation/booking";
  * shared table cannot end up split across two numbers.
  */
 export async function POST(request: Request, { params }: { params: Promise<{ reservationNumber: string }> }) {
-  const unauthorized = await requireAdminApi();
-  if (unauthorized) {
-    return unauthorized;
+  const auth = await requireStaff("reservations:edit");
+  if (isDenied(auth)) {
+    return auth;
   }
 
   try {

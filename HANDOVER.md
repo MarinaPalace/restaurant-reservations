@@ -10,17 +10,18 @@ open. Read the "Rules that must not be broken" section before changing anything.
 
 A reservation app for **Vista Del Mar**, a hotel's à la carte restaurant.
 
-- **Hotel guests** book at `/booking` — a five-step flow (room → guests → date → menu → confirm)
-  keyed to their room number.
+- **Hotel guests** book at `/booking` — a five-step flow (pass-key + room → guests → date → menu →
+  confirm). The **pass-key** is issued at check-in and is what proves they are staying here.
 - **Invited guests** book at `/premium` — a single page for people not yet staying, who choose
   weeks ahead from a separate menu and a restricted set of evenings.
-- **Staff** work at `/admin` — availability, the two menus, the nightly service sheet, and full
-  create/edit/cancel/delete of any reservation.
+- **Staff** work at `/admin` — availability, the two menus, the nightly service sheet, pass-keys,
+  staff accounts, and full create/edit/cancel/restore/delete of any reservation. Each person signs
+  in as themselves, and every change is recorded against their name.
 
 Stack: Next.js 16 (App Router, Turbopack), React 19, TypeScript, Tailwind v4, Mongoose 9, Zod 4,
 Vitest. Deployed on Vercel.
 
-**204 tests, 14 files. Lint, types and build are clean. Keep them that way.**
+**275 tests, 18 files. Lint, types and build are clean. Keep them that way.**
 
 ---
 
@@ -40,8 +41,8 @@ The calendar showed availability against the wrong cells and guests booked the w
 
 The production database holds a live menu and live bookings. Fields added after the fact
 (`ingredients`, `vegan`, `menu`, `premium`, `kind`, `guestName`, `time`, `endTime`, `notes`,
-`tableGroupId`, `tableNumber`, `serviceTime`, `serviceEndTime`) are all optional, and absent values
-read as sensible defaults. **No migration has ever been required, and it should stay that way.**
+`tableGroupId`, `tableNumber`, `serviceTime`, `serviceEndTime`, `passKeyId`, `cancellation`) are all
+optional, and absent values read as sensible defaults. **No migration has ever been required, and it should stay that way.**
 
 `lib/services/reservations.mongo.test.ts` inserts documents in the *old* shape straight into Mongo
 and asserts they read correctly and survive a save round-trip field for field.
@@ -65,9 +66,14 @@ course on save, orphaning all historical bookings. `saveMenuCatalog` upserts by 
 - Hiding something from a list is not access control. We shipped premium dates hidden from the
   date list but still bookable by a hand-made POST — seats held for invited guests could be taken.
   `/api/reservations` now refuses premium evenings outright.
-- Guest reservation access requires reservation number **and** room number. Missing/incorrect
-  returns `404`, identical to "not found", so the endpoint cannot be used to discover which
-  reservation numbers exist.
+- **Guest self-service is authorised by the pass-key, never the reservation number.** The number
+  is not a secret — guests read it out to other rooms so they can share a table — so anything that
+  accepted it as proof handed those rooms the power to cancel the booking. Missing or wrong keys
+  return `404`, identical to "not found", so the endpoint cannot be used to discover which keys
+  exist.
+- **Permissions are checked in the route too.** `requireStaff(permission)` in `lib/auth/guard.ts`
+  answers both "who is this?" and "may they do this?". Hiding a button in the dashboard is
+  presentation, not access control.
 
 ### 2.6 Names shown to staff are resolved from the English menu
 
@@ -88,7 +94,33 @@ This is also why a tampered request cannot invent a dish name.
 - Cancelling is idempotent (status filter), so seats are never refunded twice.
 - A cancelled booking holds no seats, so editing one moves nothing.
 
-### 2.8 No `setState` synchronously inside an effect
+### 2.8 A pass-key is spent before the booking it pays for is written
+
+`consumePassKey` matches **only a key that is still active** and flips it to `used` in one
+conditional update. That single write is the whole mechanism: two requests arriving together with
+the same code cannot both come back with a record, so one key can never produce two dinners.
+
+The order matters and is the same shape as the seat accounting — claim, then write, then hand back
+on failure. `/api/reservations` spends the key, creates the booking, and releases the key again if
+the booking write throws; otherwise a failure that was not the guest's fault would lock them out
+for the rest of their stay.
+
+Releasing is filtered by reservation number as well as key id, so a late request cannot free a key
+that has since been spent on something else. `lib/db/local-restore.test.ts` and the Mongo suite
+cover both directions, including two simultaneous bookings with one code.
+
+### 2.9 Restoring a cancellation is a fresh claim on the seats
+
+Cancelling gives the seats back to the evening. Somebody else may have taken them, or the evening
+may have been closed since — so `restoreReservation` claims them again with the same conditional
+update a new booking uses, and reports `DATE_FULL` or `DATE_CLOSED` rather than quietly overselling
+the room. The status filter on the record write makes two simultaneous restores safe: the loser
+hands its claimed seats straight back.
+
+Never "just flip the status back to confirmed". That was the obvious implementation and it is
+wrong.
+
+### 2.10 No `setState` synchronously inside an effect
 
 React 19's lint rule is on and treated as an error. Data that does not depend on client state is
 fetched **on the server** and passed as props. `sessionStorage` is read through
@@ -102,15 +134,20 @@ render caused a hydration mismatch on the confirmation page.
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `MONGODB_URI` | No | Enables MongoDB. Without it, a JSON store under `data/` is used. |
-| `ADMIN_USERNAME` | No | Defaults to `admin`. |
-| `ADMIN_PASSWORD_HASH` | **In production** | bcrypt hash. |
-| `ADMIN_SESSION_SECRET` | **In production** | ≥16 chars, signs admin session cookies. |
+| `ADMIN_USERNAME` | No | The **owner account**, which lives in the environment rather than the database. Defaults to `admin`. |
+| `ADMIN_PASSWORD_HASH` | **In production** | bcrypt hash for the owner account. |
+| `ADMIN_SESSION_SECRET` | **In production** | ≥16 chars, signs admin session cookies. Required even once staff accounts exist. |
 | `NEXT_PUBLIC_DINNER_TIME` | No | Fallback sitting time for dates with no arrival time. `19:00`. |
 | `NEXT_PUBLIC_DINNER_DURATION_MINUTES` | No | Fallback sitting length. `120`. |
 | `LOCAL_STORE_DIR` | No | Overrides the JSON store path. Used by tests. |
 
 **In production the admin area fails closed**: without both secrets, every admin request returns
 `503` naming the offending variable, rather than falling back to a default password.
+
+The owner account is the way into a deployment that has no staff accounts yet, and the way back in
+if the last administrator account is lost. It cannot be edited or deleted from the panel. Sign-in
+tries the database accounts first, so once real accounts exist the log names a person rather than
+"admin".
 
 `npm run check:admin -- 'password'` diagnoses sign-in problems. The three usual causes: env vars
 added without redeploying, a shell eating the `$` in the bcrypt hash, and a username mismatch.
@@ -125,16 +162,20 @@ app/
   booking/            Hotel guest flow. Pages fetch on the server;
                       client components handle interaction only.
   premium/            Invitation flow — one page, name instead of room.
-  admin/              Dashboard, service sheet, menu editor, reservation editor.
+  admin/              Dashboard, service sheet, menu editor, reservation editor,
+                      pass-keys, staff accounts.
   api/                HTTP API.
+                      booking/manage — guest self-service, keyed on the pass-key.
 components/
   ui/                 Design-system primitives (Button, Card, Field, Alert…).
   brand.tsx           House mark + wordmark.  month-calendar.tsx  Shared ARIA grid.
 hooks/                useBookingSession — sessionStorage via useSyncExternalStore.
 lib/
-  auth/               Credentials, signed sessions, route guard.
-  db/                 Mongo connection, JSON store, seed data.
-  services/           booking-rules, reservations, restaurant/menu.
+  auth/               Credentials, signed sessions, permissions, route guard.
+  db/                 Mongo connection, JSON store, seed data, store-lock.
+  services/           booking-rules, reservations, restaurant/menu,
+                      pass-keys, staff-users, audit-log.
+  pass-key.ts         Code generation, normalisation, formatting.
   date.ts room.ts contact.ts calendar.ts kitchen-report.ts …
 proxy.ts              Optimistic /admin redirect only.
 ```
@@ -153,7 +194,10 @@ proxy.ts              Optimistic /admin redirect only.
 
 ## 5. Features worth knowing about
 
-**Menus.** Two catalogues. Options carry description, optional ingredients (translatable, hidden
+**Menus.** Two catalogues. Opening the premium editor while the premium catalogue is **empty**
+fills it with a copy of the everyday menu as an *unsaved draft* — every id replaced with a `draft-`
+one, so the two can never share an id (see rules 2.3 and 2.4). Nothing is written and invited guests
+see nothing until somebody presses Save. Options carry description, optional ingredients (translatable, hidden
 from guests when blank), an optional vegan flag (leaf badge), allergens from the fourteen EU
 declarables plus whatever the menu already used, and photos. Uploads are resized in the browser to
 ~100–200 KB; stored photos are served from `/api/menu/images/<id>` with a content hash and
@@ -173,9 +217,47 @@ hidden because staff cut the page up. The kitchen slip follows on its own page: 
 total plates, allergy notes; no tables or rooms. CSV exports carry a UTF-8 BOM so Excel does not
 mangle accented or Cyrillic names.
 
-**Guest self-service.** `/booking/manage` — reservation number + room number, then swap courses or
-cancel. Closes **12 hours before the sitting** for both edits and cancellations, enforced
-server-side; an admin session bypasses it.
+**Pass-keys.** Reception issues one at check-in, for a stay of five nights or more; the panel is at
+`/admin/pass-keys` and prints a slip with the code and the booking address. A key books **one**
+dinner and then goes inactive. It expires with the stay, so a guest cannot hold a table for an
+evening after they check out.
+
+The code is Crockford base32 (`VDM-K7QP-3M2X-R4TN`) — twelve characters, sixty bits, no `I`, `L`,
+`O` or `U`, case-insensitive, and dashes are decoration. Anything a guest types that looks like a
+misread slip (`O` for zero, `I` or `l` for one) is folded onto what they meant. All of that is in
+`lib/pass-key.ts` and tested there.
+
+Cancelling **hands the key back**, so a guest who cancels can book another evening instead of
+losing dinner for the whole stay over one tap. Restoring the cancellation takes the key again —
+unless they have already spent it, in which case the newer booking keeps it.
+
+Codes are stored in plain text on purpose: reception has to be able to read one back to a guest who
+has lost their slip. Sixty bits with no rate-limited surface worth attacking is the trade, and it
+is the operationally right one for a hotel desk. Revisit it if that changes.
+
+**Staff accounts.** `/admin/users`. Each person signs in as themselves and holds a named set of
+permissions — take, edit, cancel and restore reservations; edit the menus; manage evenings; issue
+pass-keys; manage accounts. **Deleting a reservation is reserved for administrators** and is
+stripped from a staff account's list even if the request asks for it. Administrators hold every
+permission *implicitly*, so a permission added in a later release reaches them without a migration
+and is never silently granted to anybody else. Disabling an account takes effect on its next
+request, not when its cookie expires. The last administrator cannot be demoted, disabled or
+deleted.
+
+**The log.** Every change to a booking or an account writes one line to an append-only log naming
+who did it: `reservation:cancel`, `reservation:restore`, `passkey:issue`, `user:update`, and so on.
+A cancelled booking also carries a denormalised copy of who cancelled it, so the record explains
+itself in the dashboard, in a CSV export, or read straight out of the database. A booking's full
+history is on its own page at `/admin/reservation/<number>`. Writing to the log never breaks the
+thing being logged — a failed log write is reported to the console and swallowed.
+
+**Restoring a cancellation.** Cancelled bookings show a *Restore* button in the service sheet, for
+accounts with `reservations:restore`. See rule 2.9 — it is a real seat claim and can fail.
+
+**Guest self-service.** `/booking/manage` — **pass-key only**, no reservation number and no room
+number, then swap courses or cancel. Closes **12 hours before the sitting** for both edits and
+cancellations, enforced server-side; staff are not bound by it. A booking taken by staff has no key
+attached, so the guest cannot self-serve it and reception changes it for them.
 
 **Calendar reminders.** Google Calendar plus `.ics`, using the evening's real arrival and end
 times (copied onto the booking when made, so moving a sitting does not rewrite history), asking
@@ -187,13 +269,18 @@ guests to arrive ten minutes early.
 
 Roughly in the order I would tackle them for beta.
 
-1. **The five-night rule is not implemented.** One dinner per stay, for guests staying 5+ nights.
-   Blocked on knowing a guest's stay length — there is no PMS integration. The reservation-count
-   check itself is easy once that data exists.
-2. **`/premium` is unguarded.** Anyone with the URL can book. Fine for an emailed invitation, not a
-   secret link. Consider a token in the URL if that matters.
-3. **Invited guests cannot use `/booking/manage`** — it asks for a room number they do not have.
-   They must contact the hotel to change anything.
+1. **`/premium` is still unguarded.** Anyone with the URL can book. Fine for an emailed invitation,
+   not a secret link. Pass-keys now exist and would fit here almost unchanged — issue one with the
+   invitation instead of at check-in — which is the obvious next piece of work.
+2. **Invited guests cannot use `/booking/manage`**, because their booking has no pass-key. They must
+   contact the hotel to change anything. Same fix as the item above.
+3. **The five-night rule is enforced at issue, not from the PMS.** There is still no integration, so
+   reception types the number of nights when it hands over the key and the system refuses anything
+   under five. A deliberate exception is allowed, recorded on the key and in the log. If a PMS
+   integration ever lands, the stay length should come from it rather than from typing.
+4. **A guest who cancels can rebook a different evening** with the same key, as many times as they
+   like within their stay. That is intentional — one *live* dinner per stay, not one attempt — but
+   it is worth knowing before somebody reports it as a bug.
 4. **Tables have no capacity.** Nothing stops four rooms grouping onto a table that seats six.
    Staff assign the number so they would notice, but the system will not warn.
 5. **Cyrillic headings fall back to a system serif.** The display face is loaded with Latin subsets
@@ -204,9 +291,17 @@ Roughly in the order I would tackle them for beta.
    `Milk`, `Tree nuts`. Both work. Worth tidying to one vocabulary by hand.
 8. **The JSON store writes to `data/`**, which is not durable on serverless. Only used when
    `MONGODB_URI` is unset — i.e. local development. Production must have Mongo.
-9. **No rate limiting** on booking or admin login.
-10. **Reservation numbers** now use the `VDM-` prefix; older `ALC-` numbers still resolve, since
+9. **No rate limiting** on booking, admin login, or pass-key entry. The last of these is the one
+   that now matters most: it is the only thing standing between a determined guesser and the
+   sixty-bit keyspace. Sixty bits is far too large to brute-force over HTTP, but a limiter in front
+   of `/api/reservations` and `/api/booking/manage` is cheap insurance and should go in before beta.
+10. **Staff passwords have no expiry, history or lockout.** Length is the only rule (ten
+    characters). Fine for a small team sharing a desk; revisit if the team grows.
+11. **Reservation numbers** now use the `VDM-` prefix; older `ALC-` numbers still resolve, since
     lookup is an exact match and nothing parses the prefix.
+12. **Bookings made before pass-keys existed have no key**, so their guests cannot use
+    `/booking/manage` at all. There is no migration path — a key is issued at check-in, and those
+    guests have already checked in. Reception handles them by hand until they age out.
 
 ---
 
@@ -214,7 +309,7 @@ Roughly in the order I would tackle them for beta.
 
 ```bash
 npm run dev          # local, JSON store, admin/admin123
-npm test             # 204 tests; the Mongo suite runs an in-memory mongod
+npm test             # 275 tests; the Mongo suite runs an in-memory mongod
 npm run typecheck
 npm run lint
 npm run build
@@ -229,6 +324,14 @@ npm run check:admin -- 'password'
 unit tests but failed the moment a real request hit them — the premium-date hole, the dropped table
 number, the calendar falling back to the default sitting. Start the built app and drive the actual
 endpoints.
+
+Two traps when driving it by hand:
+
+- `npm start` runs in production mode, so the `admin`/`admin123` fallback is **off** and the session
+  cookie is `Secure` — it will not be stored over plain `http` by a strict client. Set
+  `ADMIN_PASSWORD_HASH` and `ADMIN_SESSION_SECRET` for the run, and carry the cookie yourself if
+  your client refuses it.
+- Set `LOCAL_STORE_DIR` to a scratch directory, or a manual run writes into `data/`.
 
 Tests write to a temp directory via `LOCAL_STORE_DIR` and never touch `data/`. One early test wrote
 to the real `data/menu.json` and replaced the restaurant's menu with a fixture; do not reintroduce

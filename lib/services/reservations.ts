@@ -6,10 +6,12 @@ import { RestaurantDateModel } from "@/lib/models/restaurant-date";
 import {
   cancelLocalReservation,
   createLocalReservation,
+  findLocalReservationByPassKey,
   getLocalReservation,
   listLocalReservations,
   reservationNumberExists,
   deleteLocalReservation,
+  restoreLocalReservation,
   setLocalReservationGroup,
   updateLocalReservationDetails,
   setLocalReservationTable,
@@ -19,6 +21,7 @@ import {
 import { getRestaurantDate } from "@/lib/services/restaurant";
 import {
   withRemainingSeats,
+  type CancellationRecord,
   type ReservationContact,
   type ReservationRecord,
   type ReservationSelection,
@@ -48,6 +51,25 @@ async function allocateReservationNumber(isTaken: (candidate: string) => Promise
   return `${RESERVATION_PREFIX}-${randomBytes(5).toString("hex").toUpperCase()}`;
 }
 
+/**
+ * Reserves a number before the booking exists.
+ *
+ * The pass-key has to be spent before the reservation is written — that is
+ * what makes a key unusable twice — and the key records which booking it paid
+ * for, so the number has to be known first. Checked for collisions exactly as
+ * an internally allocated one is.
+ */
+export async function reserveReservationNumber(): Promise<string> {
+  if (!isMongoConfigured()) {
+    return allocateReservationNumber(reservationNumberExists);
+  }
+
+  await connectToDatabase();
+  return allocateReservationNumber(
+    async (candidate) => Boolean(await ReservationModel.exists({ reservationNumber: candidate })),
+  );
+}
+
 type MongoReservationDocument = {
   _id: unknown;
   reservationNumber: unknown;
@@ -64,6 +86,8 @@ type MongoReservationDocument = {
   tableGroupId?: unknown;
   tableNumber?: unknown;
   status?: unknown;
+  passKeyId?: unknown;
+  cancellation?: unknown;
   createdAt?: unknown;
   updatedAt?: unknown;
 };
@@ -85,6 +109,8 @@ function toReservationRecord(document: MongoReservationDocument): ReservationRec
     tableGroupId: document.tableGroupId ? String(document.tableGroupId) : undefined,
     tableNumber: document.tableNumber ? String(document.tableNumber) : undefined,
     status: document.status === "cancelled" ? "cancelled" : "confirmed",
+    passKeyId: document.passKeyId ? String(document.passKeyId) : undefined,
+    cancellation: (document.cancellation as CancellationRecord | undefined) ?? undefined,
     createdAt: document.createdAt ? new Date(document.createdAt as string).toISOString() : undefined,
     updatedAt: document.updatedAt ? new Date(document.updatedAt as string).toISOString() : undefined,
   };
@@ -173,12 +199,24 @@ export async function createReservationEntry(input: {
   guestName?: string;
   /** Reservation number of a party this booking should share a table with. */
   joinReservationNumber?: string;
+  /**
+   * The pass-key spent on this booking. It is already marked used by the time
+   * we get here; storing the id is what lets the guest come back to it.
+   */
+  passKeyId?: string;
+  /**
+   * Pre-allocated by the caller when something else already had to know it —
+   * the pass-key is spent, and records the booking it paid for, before the
+   * booking itself is written.
+   */
+  reservationNumber?: string;
 }): Promise<ReservationRecord> {
   const tableGroupId = await resolveTableGroup(input.joinReservationNumber, input.date);
 
   if (!isMongoConfigured()) {
-    const reservationNumber = await allocateReservationNumber(reservationNumberExists);
-    const result = await createLocalReservation({ reservationNumber, ...input, tableGroupId });
+    const reservationNumber =
+      input.reservationNumber ?? (await allocateReservationNumber(reservationNumberExists));
+    const result = await createLocalReservation({ ...input, reservationNumber, tableGroupId });
 
     if (!result.ok) {
       throw new BookingError(result.reason);
@@ -189,9 +227,11 @@ export async function createReservationEntry(input: {
 
   await connectToDatabase();
 
-  const reservationNumber = await allocateReservationNumber(
-    async (candidate) => Boolean(await ReservationModel.exists({ reservationNumber: candidate })),
-  );
+  const reservationNumber =
+    input.reservationNumber ??
+    (await allocateReservationNumber(
+      async (candidate) => Boolean(await ReservationModel.exists({ reservationNumber: candidate })),
+    ));
 
   /**
    * Claim the seats with a single conditional update. The filter only matches
@@ -233,6 +273,7 @@ export async function createReservationEntry(input: {
       tableNumber: input.tableNumber,
       tableGroupId,
       status: "confirmed",
+      passKeyId: input.passKeyId,
     });
 
     return toReservationRecord(created.toObject() as MongoReservationDocument);
@@ -257,17 +298,24 @@ export async function getReservationByNumber(reservationNumber: string): Promise
  * Cancels a confirmed reservation and releases its seats. The status filter
  * makes this idempotent: cancelling an already-cancelled booking returns the
  * record without refunding the seats a second time.
+ *
+ * `cancellation` records who did it. It is written onto the booking in the
+ * same update as the status, so a cancelled record always says who cancelled
+ * it even if the audit log write later fails.
  */
-export async function cancelReservation(reservationNumber: string): Promise<ReservationRecord | null> {
+export async function cancelReservation(
+  reservationNumber: string,
+  cancellation?: CancellationRecord,
+): Promise<ReservationRecord | null> {
   if (!isMongoConfigured()) {
-    return cancelLocalReservation(reservationNumber);
+    return cancelLocalReservation(reservationNumber, cancellation);
   }
 
   await connectToDatabase();
 
   const cancelled = await ReservationModel.findOneAndUpdate(
     { reservationNumber, status: "confirmed" },
-    { status: "cancelled" },
+    { $set: { status: "cancelled", ...(cancellation ? { cancellation } : {}) } },
     { returnDocument: "after" },
   ).lean();
 
@@ -280,6 +328,114 @@ export async function cancelReservation(reservationNumber: string): Promise<Rese
   await RestaurantDateModel.updateOne({ date: record.date }, { $inc: { reservedSeats: -record.guestCount } });
 
   return record;
+}
+
+export class RestoreError extends Error {
+  constructor(public readonly code: "NOT_CANCELLED" | "DATE_CLOSED" | "DATE_FULL") {
+    super(code);
+    this.name = "RestoreError";
+  }
+}
+
+/**
+ * Undoes a cancellation.
+ *
+ * This is not simply flipping the status back. The seats were handed to the
+ * pool when the booking was cancelled and somebody else may have taken them,
+ * so they must be claimed again — with the same single conditional update used
+ * when a booking is made, so a restore and a new booking racing for the last
+ * table cannot both win. If the record write then fails, the seats go back.
+ */
+export async function restoreReservation(reservationNumber: string): Promise<ReservationRecord | null> {
+  if (!isMongoConfigured()) {
+    const result = await restoreLocalReservation(reservationNumber);
+
+    if (!result.ok) {
+      if (result.reason === "NOT_FOUND") {
+        return null;
+      }
+      throw new RestoreError(result.reason);
+    }
+
+    return result.reservation;
+  }
+
+  await connectToDatabase();
+
+  const existingDocument = await ReservationModel.findOne({ reservationNumber }).lean();
+  if (!existingDocument) {
+    return null;
+  }
+
+  const existing = toReservationRecord(existingDocument as MongoReservationDocument);
+
+  if (existing.status !== "cancelled") {
+    throw new RestoreError("NOT_CANCELLED");
+  }
+
+  const claimed = await RestaurantDateModel.findOneAndUpdate(
+    {
+      date: existing.date,
+      isOpen: true,
+      $expr: { $gte: [{ $subtract: ["$capacity", "$reservedSeats"] }, existing.guestCount] },
+    },
+    { $inc: { reservedSeats: existing.guestCount } },
+    { returnDocument: "after" },
+  ).lean();
+
+  if (!claimed) {
+    const target = await RestaurantDateModel.findOne({ date: existing.date }).lean();
+    throw new RestoreError(!target || !target.isOpen ? "DATE_CLOSED" : "DATE_FULL");
+  }
+
+  try {
+    /**
+     * The status filter makes this safe against two restores at once: the
+     * second finds nothing to update and gives its seats back below.
+     */
+    const restored = await ReservationModel.findOneAndUpdate(
+      { reservationNumber, status: "cancelled" },
+      // The cancellation snapshot goes with the cancellation it described.
+      // The audit log keeps both the cancellation and this restore.
+      { $set: { status: "confirmed" }, $unset: { cancellation: "" } },
+      { returnDocument: "after" },
+    ).lean();
+
+    if (!restored) {
+      throw new RestoreError("NOT_CANCELLED");
+    }
+
+    return toReservationRecord(restored as MongoReservationDocument);
+  } catch (error) {
+    await RestaurantDateModel.updateOne(
+      { date: existing.date },
+      { $inc: { reservedSeats: -existing.guestCount } },
+    );
+    throw error;
+  }
+}
+
+/**
+ * The booking a pass-key is attached to. This is how a guest reaches their own
+ * reservation: the key is a secret, the reservation number is not.
+ */
+export async function getReservationByPassKey(passKeyId: string): Promise<ReservationRecord | null> {
+  if (!passKeyId) {
+    return null;
+  }
+
+  if (!isMongoConfigured()) {
+    return findLocalReservationByPassKey(passKeyId);
+  }
+
+  await connectToDatabase();
+
+  // A key released by a cancellation can be spent again, so the live booking
+  // wins over an older cancelled one.
+  const reservations = await ReservationModel.find({ passKeyId }).sort({ createdAt: -1 }).lean();
+  const records = reservations.map((entry) => toReservationRecord(entry as MongoReservationDocument));
+
+  return records.find((entry) => entry.status === "confirmed") ?? records[0] ?? null;
 }
 
 export type StaffReservationPatch = {

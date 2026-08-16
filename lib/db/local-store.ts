@@ -1,8 +1,10 @@
 import { randomUUID } from "crypto";
 import { getDataFilePath, readJsonFile, writeJsonFile } from "@/lib/db/json-file";
+import { withStoreLock } from "@/lib/db/store-lock";
 import { DEFAULT_MENU, buildDefaultDates } from "@/lib/db/seed-data";
 import {
   withRemainingSeats,
+  type CancellationRecord,
   type MenuCourse,
   type ReservationRecord,
   type RestaurantDateAvailability,
@@ -20,19 +22,6 @@ import {
 const MENU_FILE = "menu.json";
 const DATES_FILE = "dates.json";
 const RESERVATIONS_FILE = "reservations.json";
-
-/**
- * A single lock covers the whole store: creating a reservation touches both
- * the reservations file and the dates file, and those two writes must not
- * interleave with another booking's read-modify-write cycle.
- */
-let storeLock: Promise<unknown> = Promise.resolve();
-
-function withStoreLock<T>(operation: () => Promise<T>): Promise<T> {
-  const result = storeLock.catch(() => undefined).then(operation);
-  storeLock = result.catch(() => undefined);
-  return result;
-}
 
 async function readMenu(): Promise<MenuCourse[]> {
   const menu = await readJsonFile<MenuCourse[]>(getDataFilePath(MENU_FILE), []);
@@ -168,6 +157,7 @@ export async function createLocalReservation(input: {
   tableGroupId?: string;
   kind?: ReservationRecord["kind"];
   guestName?: string;
+  passKeyId?: string;
 }): Promise<LocalBookingResult> {
   return withStoreLock(async () => {
     const dates = await readDates();
@@ -201,6 +191,7 @@ export async function createLocalReservation(input: {
       tableNumber: input.tableNumber,
       tableGroupId: input.tableGroupId,
       status: "confirmed",
+      passKeyId: input.passKeyId,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -217,7 +208,10 @@ export async function createLocalReservation(input: {
 }
 
 /** Cancels a reservation and releases its seats. Cancelling twice is a no-op. */
-export async function cancelLocalReservation(reservationNumber: string): Promise<ReservationRecord | null> {
+export async function cancelLocalReservation(
+  reservationNumber: string,
+  cancellation?: CancellationRecord,
+): Promise<ReservationRecord | null> {
   return withStoreLock(async () => {
     const reservations = await readReservations();
     const index = reservations.findIndex((entry) => entry.reservationNumber === reservationNumber);
@@ -233,6 +227,7 @@ export async function cancelLocalReservation(reservationNumber: string): Promise
     const cancelled: ReservationRecord = {
       ...reservation,
       status: "cancelled",
+      cancellation,
       updatedAt: new Date().toISOString(),
     };
     reservations[index] = cancelled;
@@ -250,6 +245,76 @@ export async function cancelLocalReservation(reservationNumber: string): Promise
     await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
     return cancelled;
   });
+}
+
+export type LocalRestoreResult =
+  | { ok: true; reservation: ReservationRecord }
+  | { ok: false; reason: "NOT_FOUND" | "NOT_CANCELLED" | "DATE_CLOSED" | "DATE_FULL"; remainingSeats?: number };
+
+/**
+ * Puts a cancelled booking back, taking its seats again.
+ *
+ * The seats were given away when it was cancelled, so this can fail: the
+ * evening may have been closed since, or somebody else may have taken the
+ * table. Both are reported rather than quietly overselling the room.
+ */
+export async function restoreLocalReservation(reservationNumber: string): Promise<LocalRestoreResult> {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    const index = reservations.findIndex((entry) => entry.reservationNumber === reservationNumber);
+    if (index === -1) {
+      return { ok: false, reason: "NOT_FOUND" };
+    }
+
+    const reservation = reservations[index];
+    if (reservation.status !== "cancelled") {
+      return { ok: false, reason: "NOT_CANCELLED" };
+    }
+
+    const dates = await readDates();
+    const dateIndex = dates.findIndex((entry) => entry.date === reservation.date);
+    const dateEntry = dateIndex === -1 ? null : dates[dateIndex];
+
+    if (!dateEntry || !dateEntry.isOpen) {
+      return { ok: false, reason: "DATE_CLOSED" };
+    }
+
+    const remainingSeats = Math.max(dateEntry.capacity - dateEntry.reservedSeats, 0);
+    if (remainingSeats < reservation.guestCount) {
+      return { ok: false, reason: "DATE_FULL", remainingSeats };
+    }
+
+    const restored: ReservationRecord = {
+      ...reservation,
+      status: "confirmed",
+      // The cancellation is undone, so its snapshot goes with it. The audit
+      // log keeps both the cancellation and this restore.
+      cancellation: undefined,
+      updatedAt: new Date().toISOString(),
+    };
+
+    reservations[index] = restored;
+    dates[dateIndex] = { ...dateEntry, reservedSeats: dateEntry.reservedSeats + reservation.guestCount };
+
+    await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    await writeJsonFile(getDataFilePath(DATES_FILE), dates);
+
+    return { ok: true, reservation: restored };
+  });
+}
+
+/** The booking a pass-key is currently attached to, cancelled ones included. */
+export async function findLocalReservationByPassKey(passKeyId: string): Promise<ReservationRecord | null> {
+  const reservations = await readReservations();
+  const matches = reservations.filter((entry) => entry.passKeyId === passKeyId);
+
+  // A key can be released and spent again, so prefer the live booking and
+  // otherwise the most recent one.
+  return (
+    matches.find((entry) => entry.status === "confirmed") ??
+    [...matches].sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))[0] ??
+    null
+  );
 }
 
 /**

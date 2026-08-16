@@ -2,7 +2,7 @@ import Link from "next/link";
 import { cx } from "@/components/ui/utils";
 
 export const BOOKING_STEPS = [
-  { id: "room", label: "Room", href: "/booking" },
+  { id: "room", label: "Your stay", href: "/booking" },
   { id: "guests", label: "Guests", href: "/booking/guests" },
   { id: "date", label: "Date", href: "/booking/date" },
   { id: "menu", label: "Menu", href: "/booking/menu" },

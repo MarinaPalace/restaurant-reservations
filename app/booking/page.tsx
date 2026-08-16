@@ -11,26 +11,43 @@ import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
 import { useBookingSession, writeBookingSession } from "@/hooks/use-booking-session";
 import { isValidRoomNumber } from "@/lib/booking-session";
+import { PASS_KEY_PREFIX, formatPassKey, isValidPassKeyFormat, normalizePassKey } from "@/lib/pass-key";
 
 export default function BookingPage() {
   const router = useRouter();
   const session = useBookingSession();
+  const [passKey, setPassKey] = useState<string | null>(null);
   const [roomNumber, setRoomNumber] = useState<string | null>(null);
-  const [error, setError] = useState("");
+  const [passKeyError, setPassKeyError] = useState("");
+  const [roomError, setRoomError] = useState("");
 
   // Falls back to whatever is already in the session until the guest types.
-  const value = roomNumber ?? session.roomNumber;
+  const roomValue = roomNumber ?? session.roomNumber;
+  const passKeyValue = passKey ?? (session.passKey ? formatPassKey(session.passKey) : "");
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
-    const trimmed = value.trim();
 
-    if (!isValidRoomNumber(trimmed)) {
-      setError("Please enter your room number, for example 402 or L10.");
+    const normalizedKey = normalizePassKey(passKeyValue);
+    const trimmedRoom = roomValue.trim();
+
+    // Both are checked here for a quick answer, and again on the server, which
+    // is the check that counts.
+    const keyProblem = isValidPassKeyFormat(normalizedKey)
+      ? ""
+      : "Please enter the pass-key from your check-in slip.";
+    const roomProblem = isValidRoomNumber(trimmedRoom)
+      ? ""
+      : "Please enter your room number, for example 402 or L10.";
+
+    setPassKeyError(keyProblem);
+    setRoomError(roomProblem);
+
+    if (keyProblem || roomProblem) {
       return;
     }
 
-    writeBookingSession({ roomNumber: trimmed });
+    writeBookingSession({ passKey: normalizedKey, roomNumber: trimmedRoom });
     router.push("/booking/guests");
   };
 
@@ -46,24 +63,61 @@ export default function BookingPage() {
           flourish
           eyebrow="Reservations"
           title="Reserve your dinner"
-          description="Your table is booked to your room, so we can find your reservation at the door."
+          description="Dinner is part of your stay with us. Your pass-key is on the slip you were given at check-in."
         />
 
         {/* A real form: the on-screen keyboard shows "Go", and Enter submits. */}
         <form onSubmit={handleSubmit} noValidate className="mt-6 space-y-6">
-          <Field label="Room number" error={error}>
+          <Field
+            label="Pass-key"
+            error={passKeyError}
+            hint={`From your check-in slip, for example ${PASS_KEY_PREFIX}-K7QP-3M2X-R4TN. Capitals and dashes do not matter.`}
+          >
+            {(fieldProps) => (
+              <Input
+                {...fieldProps}
+                name="passKey"
+                autoComplete="off"
+                autoCapitalize="characters"
+                autoCorrect="off"
+                spellCheck={false}
+                autoFocus
+                maxLength={24}
+                placeholder={`${PASS_KEY_PREFIX}-XXXX-XXXX-XXXX`}
+                value={passKeyValue}
+                onChange={(event) => {
+                  setPassKey(event.target.value.toUpperCase());
+                  setPassKeyError("");
+                }}
+                // Re-groups the code as soon as the guest leaves the field, so
+                // what they typed and what is on the slip look the same.
+                onBlur={(event) => {
+                  const normalized = normalizePassKey(event.target.value);
+                  if (isValidPassKeyFormat(normalized)) {
+                    setPassKey(formatPassKey(normalized));
+                  }
+                }}
+                className="text-xl tracking-wider"
+              />
+            )}
+          </Field>
+
+          <Field
+            label="Your room number"
+            error={roomError}
+            hint="The room you are in now — tell us if you have moved since checking in."
+          >
             {(fieldProps) => (
               <Input
                 {...fieldProps}
                 name="roomNumber"
                 autoComplete="off"
-                autoFocus
                 maxLength={10}
                 placeholder="e.g. 402 or L10"
-                value={value}
+                value={roomValue}
                 onChange={(event) => {
                   setRoomNumber(event.target.value.replace(/[^A-Za-z0-9-]/g, "").toUpperCase());
-                  setError("");
+                  setRoomError("");
                 }}
                 className="text-xl"
               />
@@ -83,7 +137,8 @@ export default function BookingPage() {
         </p>
 
         <p className="mt-4 rounded-control border border-line bg-surface-muted p-3 text-sm text-ink-muted">
-          Need help? Dial <span className="font-semibold text-ink">9</span> from your room to reach guest services.
+          No pass-key, or it is not working? Dial <span className="font-semibold text-ink">9</span> from your room to
+          reach guest services.
         </p>
       </Card>
     </PageShell>

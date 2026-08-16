@@ -24,6 +24,21 @@ const contactSchema = new Schema(
   { _id: false },
 );
 
+/**
+ * A snapshot of who cancelled, kept on the booking itself so the record
+ * explains itself without joining the audit log.
+ */
+const cancellationSchema = new Schema(
+  {
+    at: { type: String, required: true },
+    actorKind: { type: String, enum: ["staff", "guest", "system"], required: true },
+    actorId: { type: String },
+    actorName: { type: String, required: true },
+    reason: { type: String },
+  },
+  { _id: false },
+);
+
 const reservationSchema = new Schema(
   {
     reservationNumber: { type: String, required: true, unique: true, index: true },
@@ -45,6 +60,11 @@ const reservationSchema = new Schema(
     tableGroupId: { type: String, index: true },
     tableNumber: { type: String },
     status: { type: String, enum: ["confirmed", "cancelled"], default: "confirmed" },
+    // The pass-key the guest booked with, and their credential for changing
+    // it later. Indexed so "this key's booking" is one query. Absent on staff
+    // bookings and on everything made before pass-keys existed.
+    passKeyId: { type: String, index: true },
+    cancellation: { type: cancellationSchema, required: false },
   },
   { timestamps: true },
 );

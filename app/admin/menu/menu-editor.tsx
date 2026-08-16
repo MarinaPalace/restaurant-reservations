@@ -49,8 +49,23 @@ function withTranslation<T extends MenuCourse | MenuOption>(
   };
 }
 
-export function MenuEditor({ initialCourses, menu }: { initialCourses: MenuCourse[]; menu: MenuKind }) {
+export function MenuEditor({
+  initialCourses,
+  menu,
+  /**
+   * True when this catalogue is empty and what is on screen is a copy of the
+   * everyday menu that has not been saved yet. Nothing exists on the server
+   * until the person presses Save.
+   */
+  startedFromCopy = false,
+}: {
+  initialCourses: MenuCourse[];
+  menu: MenuKind;
+  startedFromCopy?: boolean;
+}) {
   const [courses, setCourses] = useState<MenuCourse[]>(initialCourses);
+  // Cleared on the first successful save, when the copy stops being a draft.
+  const [showCopyNotice, setShowCopyNotice] = useState(startedFromCopy);
   const [language, setLanguage] = useState(DEFAULT_LANGUAGE);
   const [extraLanguages, setExtraLanguages] = useState<string[]>([]);
   const [newLanguage, setNewLanguage] = useState("");
@@ -206,7 +221,12 @@ export function MenuEditor({ initialCourses, menu }: { initialCourses: MenuCours
       }
 
       setCourses(Array.isArray(data.menu) ? data.menu : courses);
-      setNotice("Menu saved. Guests will see these changes immediately.");
+      setShowCopyNotice(false);
+      setNotice(
+        showCopyNotice
+          ? "Premium menu created from the everyday menu. The two are separate from now on — editing one does not change the other."
+          : "Menu saved. Guests will see these changes immediately.",
+      );
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to save menu changes.");
     } finally {
@@ -295,6 +315,15 @@ export function MenuEditor({ initialCourses, menu }: { initialCourses: MenuCours
             </Button>
           </div>
         </div>
+
+        {showCopyNotice ? (
+          <Alert tone="warning" className="mt-4">
+            <span className="font-semibold">This premium menu has not been created yet.</span> It is filled in below
+            with a copy of the everyday menu so you have somewhere to start. Change whatever you like, then press{" "}
+            <span className="font-semibold">Save menu</span> — nothing is stored, and invited guests see nothing, until
+            you do. Afterwards the two menus are completely separate.
+          </Alert>
+        ) : null}
 
         {error ? (
           <Alert tone="danger" className="mt-4">

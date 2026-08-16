@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
-import { requireAdminApi } from "@/lib/auth/guard";
+import { isDenied, requireStaff } from "@/lib/auth/guard";
 import {
   BookingError,
   deleteReservation,
   getReservationByNumber,
   updateReservationDetails,
 } from "@/lib/services/reservations";
+import { releasePassKey } from "@/lib/services/pass-keys";
+import { recordAuditEntry } from "@/lib/services/audit-log";
 import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
 import { validateReservationRequest } from "@/lib/services/booking-rules";
 import { staffReservationPatchSchema } from "@/lib/validation/booking";
@@ -19,9 +21,9 @@ import { pruneSelectionsToGuestCount } from "@/lib/booking-session";
  * whole point is that reception can fix things late.
  */
 export async function PATCH(request: Request, { params }: { params: Promise<{ reservationNumber: string }> }) {
-  const unauthorized = await requireAdminApi();
-  if (unauthorized) {
-    return unauthorized;
+  const auth = await requireStaff("reservations:edit");
+  if (isDenied(auth)) {
+    return auth;
   }
 
   try {
@@ -95,6 +97,28 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ re
       return NextResponse.json({ error: "Reservation not found." }, { status: 404 });
     }
 
+    // Worth naming what moved: "edited the booking" tells whoever reads the
+    // log later nothing about why the evening's numbers changed.
+    const changes: string[] = [];
+    if (updated.date !== existing.date) changes.push(`date ${existing.date} → ${updated.date}`);
+    if (updated.guestCount !== existing.guestCount) {
+      changes.push(`party ${existing.guestCount} → ${updated.guestCount}`);
+    }
+    if (updated.roomNumber !== existing.roomNumber) {
+      changes.push(`room ${existing.roomNumber || "—"} → ${updated.roomNumber || "—"}`);
+    }
+    if (parsed.data.selections !== undefined) changes.push("menu choices");
+    if (parsed.data.notes !== undefined) changes.push("comment");
+    if (parsed.data.contact !== undefined) changes.push("contact details");
+    if (parsed.data.tableNumber !== undefined) changes.push(`table ${updated.tableNumber || "—"}`);
+
+    await recordAuditEntry({
+      action: "reservation:update",
+      actor: auth.actor,
+      reservationNumber: updated.reservationNumber,
+      summary: `Edited the reservation: ${changes.join(", ") || "no visible change"}.`,
+    });
+
     return NextResponse.json({ reservation: updated });
   } catch (error) {
     if (error instanceof BookingError) {
@@ -120,9 +144,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ re
  * a duplicate or a test entry — and releases the seats.
  */
 export async function DELETE(_request: Request, { params }: { params: Promise<{ reservationNumber: string }> }) {
-  const unauthorized = await requireAdminApi();
-  if (unauthorized) {
-    return unauthorized;
+  // Deleting is the one action reserved for administrators: it destroys the
+  // record, so a mistake cannot be undone the way a cancellation can.
+  const auth = await requireStaff("reservations:delete");
+  if (isDenied(auth)) {
+    return auth;
   }
 
   try {
@@ -132,6 +158,27 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
     if (!removed) {
       return NextResponse.json({ error: "Reservation not found." }, { status: 404 });
     }
+
+    // The booking is gone, so the guest's key must not stay attached to it.
+    if (removed.passKeyId) {
+      await releasePassKey(removed.passKeyId, removed.reservationNumber).catch((error) => {
+        console.error("[admin] failed to release pass-key after deleting", error);
+      });
+    }
+
+    /**
+     * The log entry outlives the record it describes — deliberately. "Why is
+     * there no booking for room 402?" is answerable only if the deletion left
+     * a trace.
+     */
+    await recordAuditEntry({
+      action: "reservation:delete",
+      actor: auth.actor,
+      reservationNumber: removed.reservationNumber,
+      summary:
+        `Permanently deleted the reservation for ${removed.date} ` +
+        `(room ${removed.roomNumber || "—"}, ${removed.guestCount} guest(s)).`,
+    });
 
     return NextResponse.json({ reservation: removed });
   } catch (error) {

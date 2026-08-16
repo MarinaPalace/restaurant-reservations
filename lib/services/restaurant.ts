@@ -164,6 +164,62 @@ export async function findMenuImage(id: string) {
 }
 
 /**
+ * A copy of the everyday menu, as an unsaved draft, for filling the premium
+ * catalogue the first time.
+ *
+ * Every id is dropped and replaced with a `draft-` one. That is the whole
+ * point: the two catalogues must never share an id, or editing a premium dish
+ * would silently rewrite the everyday one, and a reservation's `optionId`
+ * would no longer say which menu it came from. `saveMenuCatalog` mints real
+ * ids for `draft-` entries on save.
+ *
+ * Nothing is written here. The editor shows the copy, the person adjusts it,
+ * and it exists only once they press save — so opening the page to look does
+ * not create a menu nobody asked for.
+ */
+export function draftMenuCopy(courses: MenuCourse[], menu: MenuKind): MenuCourse[] {
+  return courses.map((course, courseIndex) => {
+    const courseId = `draft-course-${courseIndex + 1}`;
+
+    return {
+      ...course,
+      id: courseId,
+      menu,
+      options: (course.options ?? []).map((option, optionIndex) => ({
+        ...option,
+        id: `draft-option-${courseIndex + 1}-${optionIndex + 1}`,
+        courseId,
+      })),
+    };
+  });
+}
+
+/**
+ * What the premium editor opens with.
+ *
+ * An empty premium catalogue starts as a copy of the everyday menu rather than
+ * a blank page, because the two are mostly the same and typing the whole thing
+ * out again is how they drift apart. `isDraft` tells the editor to say so.
+ */
+export async function getMenuCatalogForEditing(
+  menu: MenuKind,
+): Promise<{ courses: MenuCourse[]; isDraft: boolean }> {
+  const courses = await getFullMenuCatalog(menu);
+
+  if (courses.length > 0 || menu !== "premium") {
+    return { courses, isDraft: false };
+  }
+
+  const standard = await getFullMenuCatalog("standard");
+
+  if (standard.length === 0) {
+    return { courses: [], isDraft: false };
+  }
+
+  return { courses: draftMenuCopy(standard, "premium"), isDraft: true };
+}
+
+/**
  * Saves the menu while preserving existing ids, so reservations that reference
  * a course or option keep pointing at the same item. The previous version
  * deleted the whole collection and re-created it, which orphaned every

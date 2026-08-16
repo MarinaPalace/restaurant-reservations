@@ -1,17 +1,18 @@
 import { NextResponse } from "next/server";
-import { requireAdminApi } from "@/lib/auth/guard";
+import { isDenied, requireStaff } from "@/lib/auth/guard";
 import { BookingError, TableJoinError, createReservationEntry } from "@/lib/services/reservations";
 import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
 import { BOOKING_MESSAGES, validateReservationRequest } from "@/lib/services/booking-rules";
 import { staffReservationSchema } from "@/lib/validation/booking";
 import { normalizeContact } from "@/lib/contact";
 import { canonicalizeSelections } from "@/lib/menu-selection";
+import { recordAuditEntry } from "@/lib/services/audit-log";
 
 /** Takes a booking on a guest's behalf — at the desk or over the phone. */
 export async function POST(request: Request) {
-  const unauthorized = await requireAdminApi();
-  if (unauthorized) {
-    return unauthorized;
+  const auth = await requireStaff("reservations:create");
+  if (isDenied(auth)) {
+    return auth;
   }
 
   try {
@@ -42,6 +43,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: validation.error }, { status: 400 });
     }
 
+    /**
+     * No pass-key is required here. Staff taking a booking at the desk *are*
+     * the check the key exists to perform, and the action is signed and
+     * logged against their account — which a key would not be.
+     *
+     * The consequence is that such a booking has no key attached, so the
+     * guest cannot self-serve it at /booking/manage. Reception changes it for
+     * them, which is what happens today anyway.
+     */
     const reservation = await createReservationEntry({
       roomNumber: parsed.data.roomNumber,
       guestCount: parsed.data.guestCount,
@@ -50,6 +60,15 @@ export async function POST(request: Request) {
       contact: parsed.data.contact ? normalizeContact(parsed.data.contact) : undefined,
       notes: parsed.data.notes,
       tableNumber: parsed.data.tableNumber,
+    });
+
+    await recordAuditEntry({
+      action: "reservation:create",
+      actor: auth.actor,
+      reservationNumber: reservation.reservationNumber,
+      summary:
+        `Took a reservation for room ${reservation.roomNumber}, ` +
+        `${reservation.guestCount} guest(s) on ${reservation.date}.`,
     });
 
     return NextResponse.json({ reservation }, { status: 201 });

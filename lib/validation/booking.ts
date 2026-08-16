@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { isValidDateKey } from "@/lib/date";
+import { PASS_KEY_LENGTH, normalizePassKey } from "@/lib/pass-key";
 import { isValidRoomNumber, normalizeRoomNumber } from "@/lib/room";
+import { STAFF_PERMISSIONS } from "@/types/booking";
 
 export const MAX_GUESTS_PER_RESERVATION = 6;
 
@@ -30,7 +32,26 @@ export const reservationContactSchema = z.object({
   messagingApp: z.enum(["phone", "whatsapp", "viber", "telegram"]).optional(),
 });
 
+/**
+ * However a guest typed their key — spaced, dashed, lower-case, with or
+ * without the VDM prefix — it is reduced to the canonical form before
+ * anything compares it.
+ */
+export const passKeySchema = z
+  // The message is set here too, so a request that omits the field entirely
+  // gets the sentence written for a guest rather than Zod's "expected string,
+  // received undefined".
+  .string({ error: "Please enter the pass-key from your check-in slip." })
+  .max(64)
+  .transform(normalizePassKey)
+  .refine((code) => code.length === PASS_KEY_LENGTH, "Please enter the pass-key exactly as it appears on your slip.");
+
 export const createReservationSchema = z.object({
+  /**
+   * The proof that this person is staying here. Without it the room number is
+   * just a number anyone could type.
+   */
+  passKey: passKeySchema,
   roomNumber: roomNumberSchema,
   guestCount: z.number().int().min(1).max(MAX_GUESTS_PER_RESERVATION),
   date: dateKeySchema,
@@ -60,8 +81,18 @@ export const restaurantDateSchema = z.object({
   premium: z.boolean().optional(),
 });
 
+/**
+ * Guest self-service is authorised by the pass-key, not the reservation
+ * number. Guests read their reservation number out to other rooms so they can
+ * share a table, which would otherwise hand those rooms the power to change or
+ * cancel the booking.
+ */
+export const manageReservationSchema = z.object({
+  passKey: passKeySchema,
+});
+
 export const updateSelectionsSchema = z.object({
-  roomNumber: roomNumberSchema,
+  passKey: passKeySchema,
   selections: z.array(reservationSelectionSchema).min(1),
 });
 
@@ -142,4 +173,81 @@ export const premiumReservationSchema = z.object({
 export const adminLoginSchema = z.object({
   username: z.string().min(1).max(200),
   password: z.string().min(1).max(200),
+});
+
+/* ------------------------------------------------------------------ *
+ * Staff accounts
+ * ------------------------------------------------------------------ */
+
+const staffRoleSchema = z.enum(["admin", "staff"]);
+
+/**
+ * Long rather than complicated. A staff password is typed once at the start of
+ * a shift on a machine behind the desk, so length is the useful constraint;
+ * character-class rules only push people towards "Password1!".
+ */
+export const STAFF_PASSWORD_MIN_LENGTH = 10;
+
+const staffPasswordSchema = z
+  .string()
+  .min(STAFF_PASSWORD_MIN_LENGTH, `The password must be at least ${STAFF_PASSWORD_MIN_LENGTH} characters.`)
+  .max(200);
+
+const permissionListSchema = z.array(z.enum(STAFF_PERMISSIONS)).max(STAFF_PERMISSIONS.length);
+
+/**
+ * Usernames are a sign-in handle, not a display name: no spaces, no case to
+ * get wrong. The person's real name is a separate field, and it is that name
+ * the audit log shows.
+ */
+export const staffUsernameSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(3, "The username must be at least 3 characters.")
+  .max(40)
+  .regex(/^[a-z0-9][a-z0-9._-]*$/, "Use letters, numbers, dots, dashes and underscores only.");
+
+export const createStaffUserSchema = z.object({
+  username: staffUsernameSchema,
+  name: z.string().trim().min(2, "Please enter the person's name.").max(120),
+  password: staffPasswordSchema,
+  role: staffRoleSchema.default("staff"),
+  permissions: permissionListSchema.default([]),
+});
+
+export const updateStaffUserSchema = z.object({
+  name: z.string().trim().min(2).max(120).optional(),
+  role: staffRoleSchema.optional(),
+  permissions: permissionListSchema.optional(),
+  active: z.boolean().optional(),
+  // Only present when somebody is actually setting a new password.
+  password: staffPasswordSchema.optional(),
+});
+
+/* ------------------------------------------------------------------ *
+ * Pass-keys
+ * ------------------------------------------------------------------ */
+
+export const issuePassKeySchema = z.object({
+  roomNumber: z.string().trim().max(10).optional(),
+  guestName: z.string().trim().max(120).optional(),
+  nights: z.number().int().min(1).max(365).optional(),
+  /** Normally check-out: the key stops working after this evening. */
+  expiresOn: dateKeySchema.optional(),
+  note: z.string().trim().max(200).optional(),
+  /**
+   * Deliberately giving a key to a guest whose stay is too short. Recorded on
+   * the key and in the audit log, so an exception is always traceable.
+   */
+  allowShortStay: z.boolean().optional(),
+});
+
+/* ------------------------------------------------------------------ *
+ * Cancelling
+ * ------------------------------------------------------------------ */
+
+export const cancelReservationSchema = z.object({
+  /** What reception was told, kept with the cancellation. */
+  reason: z.string().trim().max(300).optional(),
 });

@@ -1,13 +1,43 @@
 import { NextResponse } from "next/server";
-import { BookingError, TableJoinError, createReservationEntry } from "@/lib/services/reservations";
+import {
+  BookingError,
+  TableJoinError,
+  createReservationEntry,
+  reserveReservationNumber,
+} from "@/lib/services/reservations";
 import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
 import { BOOKING_MESSAGES, validateReservationRequest } from "@/lib/services/booking-rules";
+import {
+  PASS_KEY_MESSAGES,
+  consumePassKey,
+  describePassKeyProblem,
+  getPassKeyByCode,
+  isDateWithinStay,
+  releasePassKey,
+} from "@/lib/services/pass-keys";
+import { recordAuditEntry } from "@/lib/services/audit-log";
 import { createReservationSchema } from "@/lib/validation/booking";
 import { describeContactProblem, normalizeContact } from "@/lib/contact";
 import { canonicalizeSelections } from "@/lib/menu-selection";
 
 const GENERIC_ERROR = "Something went wrong while creating your reservation. Please try again.";
 
+/**
+ * A guest booking.
+ *
+ * Two things have to be true and neither is checked in the browser:
+ *
+ * 1. **They are staying here, long enough to be entitled to dinner.** That is
+ *    what the pass-key proves — reception issues one at check-in and only for
+ *    a qualifying stay. A room number on its own proves nothing; anyone can
+ *    read one off a door.
+ * 2. **The evening is one they may book.** Premium evenings are held for
+ *    invited guests, and a dinner after check-out is not part of the stay.
+ *
+ * The key is spent *before* the reservation is written and handed back if the
+ * write fails — the same claim-then-release shape the seat accounting uses,
+ * and the reason two requests with one key cannot both produce a booking.
+ */
 export async function POST(request: Request) {
   let body: unknown;
 
@@ -25,11 +55,34 @@ export async function POST(request: Request) {
     );
   }
 
+  let claimedKeyId: string | null = null;
+  let claimedReservationNumber: string | null = null;
+
   try {
-    const [menu, restaurantDate] = await Promise.all([
+    const [menu, restaurantDate, passKey] = await Promise.all([
       getMenuCatalog(),
       getRestaurantDate(parsed.data.date),
+      getPassKeyByCode(parsed.data.passKey),
     ]);
+
+    /**
+     * The key is judged before anything else is revealed, so a wrong key
+     * cannot be used to probe which evenings have seats left.
+     */
+    const keyProblem = describePassKeyProblem(passKey);
+    if (keyProblem || !passKey) {
+      return NextResponse.json(
+        { error: keyProblem?.message ?? PASS_KEY_MESSAGES.invalid, code: `PASS_KEY_${keyProblem?.code ?? "INVALID"}` },
+        { status: 403 },
+      );
+    }
+
+    if (!isDateWithinStay(passKey, parsed.data.date)) {
+      return NextResponse.json(
+        { error: PASS_KEY_MESSAGES.afterStay, code: "PASS_KEY_AFTER_STAY" },
+        { status: 409 },
+      );
+    }
 
     /**
      * A premium evening is held for invited guests. Hiding it from the date
@@ -69,7 +122,26 @@ export async function POST(request: Request) {
       );
     }
 
+    /**
+     * Spend the key now. `consumePassKey` only matches a key that is still
+     * active, so if two requests arrive together exactly one gets a record
+     * back and the other is told the key is used.
+     *
+     * The reservation number is generated here rather than by the service, so
+     * the key and the booking it paid for carry the same number even though
+     * the key is written first.
+     */
+    claimedReservationNumber = await reserveReservationNumber();
+    const spent = await consumePassKey(parsed.data.passKey, claimedReservationNumber);
+
+    if (!spent) {
+      return NextResponse.json({ error: PASS_KEY_MESSAGES.used, code: "PASS_KEY_USED" }, { status: 409 });
+    }
+
+    claimedKeyId = spent.id;
+
     const reservation = await createReservationEntry({
+      reservationNumber: claimedReservationNumber,
       roomNumber: parsed.data.roomNumber,
       guestCount: parsed.data.guestCount,
       date: parsed.data.date,
@@ -79,10 +151,26 @@ export async function POST(request: Request) {
       contact: normalizeContact(parsed.data.contact!),
       notes: parsed.data.notes,
       joinReservationNumber: parsed.data.joinReservationNumber,
+      passKeyId: spent.id,
+    });
+
+    await recordAuditEntry({
+      action: "reservation:create",
+      actor: { kind: "guest", id: spent.id, name: `Room ${parsed.data.roomNumber}` },
+      reservationNumber: reservation.reservationNumber,
+      summary: `Booked ${reservation.guestCount} guest(s) for ${reservation.date} with a pass-key.`,
     });
 
     return NextResponse.json({ reservation }, { status: 201 });
   } catch (error) {
+    // The booking failed after the key was spent, so give it back — otherwise
+    // the guest is locked out by a failure that was not theirs.
+    if (claimedKeyId && claimedReservationNumber) {
+      await releasePassKey(claimedKeyId, claimedReservationNumber).catch((releaseError) => {
+        console.error("[reservations] failed to release pass-key after a failed booking", releaseError);
+      });
+    }
+
     // The party being joined may have gone away between choosing it and here.
     if (error instanceof TableJoinError) {
       return NextResponse.json({ error: error.message, code: "TABLE_JOIN_FAILED" }, { status: 409 });

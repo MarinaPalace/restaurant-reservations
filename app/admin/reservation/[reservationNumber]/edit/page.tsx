@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { PageShell } from "@/components/page-shell";
 import { ReservationForm } from "@/app/admin/reservation/reservation-form";
-import { isAdminAuthenticated } from "@/lib/auth/session";
+import { getCurrentStaffUser } from "@/lib/auth/guard";
+import { hasPermission } from "@/lib/auth/permissions";
 import { getReservationByNumber } from "@/lib/services/reservations";
 import { getMenuCatalog, getRestaurantDates } from "@/lib/services/restaurant";
 
@@ -15,8 +16,14 @@ export default async function EditReservationPage({
 }: {
   params: Promise<{ reservationNumber: string }>;
 }) {
-  if (!(await isAdminAuthenticated())) {
+  const user = await getCurrentStaffUser();
+
+  if (!user) {
     redirect("/admin/login");
+  }
+
+  if (!hasPermission(user, "reservations:edit")) {
+    redirect("/admin");
   }
 
   const { reservationNumber } = await params;

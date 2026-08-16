@@ -5,8 +5,11 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { ButtonLink } from "@/components/ui/button";
 import { Badge } from "@/components/ui/feedback";
 import { ContactLink } from "@/components/contact-link";
-import { isAdminAuthenticated } from "@/lib/auth/session";
+import { getCurrentStaffUser } from "@/lib/auth/guard";
 import { getReservationByNumber } from "@/lib/services/reservations";
+import { getAuditEntries } from "@/lib/services/audit-log";
+import { getPassKeyById } from "@/lib/services/pass-keys";
+import { formatPassKey } from "@/lib/pass-key";
 import { getMenuCatalog } from "@/lib/services/restaurant";
 import { canonicalizeSelections } from "@/lib/menu-selection";
 import { reservationLabel } from "@/lib/kitchen-report";
@@ -19,17 +22,26 @@ export default async function ReservationDetailPage({
 }: {
   params: Promise<{ reservationNumber: string }>;
 }) {
-  if (!(await isAdminAuthenticated())) {
+  if (!(await getCurrentStaffUser())) {
     redirect("/admin/login");
   }
 
   const { reservationNumber } = await params;
-  const [stored, menu] = await Promise.all([getReservationByNumber(reservationNumber), getMenuCatalog()]);
+  const [stored, menu, history] = await Promise.all([
+    getReservationByNumber(reservationNumber),
+    getMenuCatalog(),
+    // Everything that has happened to this booking, newest first.
+    getAuditEntries({ reservationNumber, limit: 50 }),
+  ]);
 
   if (!stored) {
     // A missing reservation is a 404, not a silent bounce to the dashboard.
     notFound();
   }
+
+  // Shown so reception can read the key back to a guest who has lost their
+  // slip and needs to change the booking themselves.
+  const passKey = stored.passKeyId ? await getPassKeyById(stored.passKeyId) : null;
 
   // Resolved against the English menu, so a booking taken in another language
   // still reads in English for staff.
@@ -94,7 +106,30 @@ export default async function ReservationDetailPage({
               <Badge tone={reservation.status === "confirmed" ? "success" : "info"}>{reservation.status}</Badge>
             </dd>
           </div>
+          <div>
+            <dt className="text-sm text-ink-subtle">Pass-key</dt>
+            <dd className="mt-1 font-mono text-base font-semibold text-ink">
+              {passKey ? formatPassKey(passKey.code) : "—"}
+              {passKey ? null : (
+                <span className="block font-sans text-sm font-normal text-ink-muted">
+                  Taken by staff, so the guest cannot change it themselves.
+                </span>
+              )}
+            </dd>
+          </div>
         </dl>
+
+        {reservation.cancellation ? (
+          <div className="mt-6 rounded-control border border-warning/30 bg-warning-soft p-4">
+            <p className="eyebrow">Cancelled</p>
+            <p className="mt-1 font-medium text-warning">
+              By {reservation.cancellation.actorName}
+              {reservation.cancellation.actorKind === "guest" ? " (guest, using their pass-key)" : ""} on{" "}
+              {new Date(reservation.cancellation.at).toLocaleString("en-GB")}
+              {reservation.cancellation.reason ? ` — ${reservation.cancellation.reason}` : ""}
+            </p>
+          </div>
+        ) : null}
 
         {reservation.notes ? (
           <div className="mt-6 rounded-control border border-danger/30 bg-danger-soft p-4">
@@ -129,6 +164,33 @@ export default async function ReservationDetailPage({
             </section>
           ))}
         </div>
+
+        {/*
+          The trail. It is append-only and outlives the record it describes,
+          which is the point: "why is there no booking for room 402?" is only
+          answerable if the change left a trace.
+        */}
+        <section className="mt-8" data-print="hide">
+          <h2 className="eyebrow">History</h2>
+          {history.length === 0 ? (
+            <p className="mt-2 text-sm text-ink-muted">
+              Nothing recorded. This booking predates the log.
+            </p>
+          ) : (
+            <ol className="mt-3 space-y-3 border-l border-line pl-4">
+              {history.map((entry) => (
+                <li key={entry.id}>
+                  <p className="text-sm font-medium text-ink">{entry.summary}</p>
+                  <p className="text-xs text-ink-muted">
+                    {entry.actorName}
+                    {entry.actorKind === "guest" ? " (guest)" : entry.actorKind === "system" ? "" : " (staff)"} ·{" "}
+                    <time dateTime={entry.at}>{new Date(entry.at).toLocaleString("en-GB")}</time>
+                  </p>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
       </Card>
     </PageShell>
   );

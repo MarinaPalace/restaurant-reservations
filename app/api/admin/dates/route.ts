@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
-import { requireAdminApi } from "@/lib/auth/guard";
+import { isDenied, requireStaff } from "@/lib/auth/guard";
+import { recordAuditEntry } from "@/lib/services/audit-log";
 import { getRestaurantDates } from "@/lib/services/restaurant";
 import { updateRestaurantDate } from "@/lib/services/reservations";
 import { restaurantDateSchema } from "@/lib/validation/booking";
 
 export async function GET() {
-  const unauthorized = await requireAdminApi();
-  if (unauthorized) {
-    return unauthorized;
+  // Reading availability is what the dashboard does; any signed-in member of
+  // staff may. Changing it is the guarded action.
+  const auth = await requireStaff();
+  if (isDenied(auth)) {
+    return auth;
   }
 
   try {
@@ -19,9 +22,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const unauthorized = await requireAdminApi();
-  if (unauthorized) {
-    return unauthorized;
+  const auth = await requireStaff("dates:manage");
+  if (isDenied(auth)) {
+    return auth;
   }
 
   try {
@@ -34,7 +37,17 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json(await updateRestaurantDate(parsed.data));
+    const date = await updateRestaurantDate(parsed.data);
+
+    await recordAuditEntry({
+      action: "date:update",
+      actor: auth.actor,
+      summary:
+        `Set ${date.date} to ${date.isOpen ? "open" : "closed"}, ` +
+        `capacity ${date.capacity}${date.premium ? ", invited guests only" : ""}.`,
+    });
+
+    return NextResponse.json(date);
   } catch (error) {
     console.error("[admin] failed to update date", error);
     return NextResponse.json({ error: "Unable to update date." }, { status: 500 });

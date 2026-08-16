@@ -1,7 +1,3 @@
-"use client";
-
-import { useEffect, useState } from "react";
-import QRCode from "qrcode";
 import { formatPassKey } from "@/lib/pass-key";
 import { formatShortDate } from "@/lib/date";
 import type { PassKeyRecord } from "@/types/booking";
@@ -15,47 +11,16 @@ import type { PassKeyRecord } from "@/types/booking";
  *
  * The dimensions are in millimetres deliberately: this is designed for paper,
  * and the on-screen preview is the approximate one, not the print.
+ *
+ * Colours are literal rather than theme tokens. A card is printed and handed
+ * over, so it must look the same whatever theme the person at the desk happens
+ * to be using, and it must not turn white-on-white in a light palette.
  */
 
-/**
- * The QR is drawn to an inline SVG data URL rather than fetched from a chart
- * service: the card has to print on a desk with no internet, and nothing in
- * this app may depend on an outside host.
- */
-function useQrCode(value: string) {
-  const [svg, setSvg] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    QRCode.toString(value, {
-      type: "svg",
-      margin: 0,
-      // M survives a fold or a coffee ring across roughly 15% of the code,
-      // which is the right trade for something carried in a pocket.
-      errorCorrectionLevel: "M",
-      color: { dark: "#1a1a1a", light: "#00000000" },
-    })
-      .then((result) => {
-        if (!cancelled) {
-          setSvg(result);
-        }
-      })
-      .catch(() => {
-        // A card without a QR is still perfectly usable — the code is printed
-        // right next to it — so a failure here is not worth an error state.
-        if (!cancelled) {
-          setSvg(null);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [value]);
-
-  return svg;
-}
+/** Ivory card stock, deep teal ink, gold rule. */
+const INK = "#14343d";
+const INK_SOFT = "#4a6670";
+const GOLD = "#a8842c";
 
 export function PassKeyCard({
   passKey,
@@ -67,75 +32,92 @@ export function PassKeyCard({
   bookingUrl: string;
   restaurantName: string;
 }) {
-  const qr = useQrCode(bookingUrl.startsWith("http") ? bookingUrl : `https://${bookingUrl}`);
   const dinners = passKey.maxUses > 1 ? `${passKey.maxUses} dinners` : "One dinner";
   const isInvitation = passKey.kind === "premium";
+
+  const target = bookingUrl.startsWith("http") ? bookingUrl : `https://${bookingUrl}`;
+  /**
+   * Drawn by the server rather than in the browser: the Node build of `qrcode`
+   * is the one certain to work, and an image the browser has already fetched
+   * prints far more reliably than markup injected after hydration.
+   */
+  const qrSrc = `/api/admin/pass-keys/qr?data=${encodeURIComponent(target)}`;
 
   return (
     <article
       data-pass-key-card=""
       data-card-kind={isInvitation ? "invitation" : "in-house"}
-      className="relative flex h-[53.98mm] w-[85.6mm] overflow-hidden rounded-[3mm] bg-[#0e2a33] text-[#f4ece0]"
+      className="relative flex h-[53.98mm] w-[85.6mm] overflow-hidden rounded-[3mm]"
+      style={{ backgroundColor: "#fbf7ef", color: INK }}
     >
-      {/* A wash of house colour, warmer for an invitation than for a room key. */}
+      {/* A soft wash of house colour, warmer for an invitation than a room key. */}
       <div
         aria-hidden="true"
         data-card-wash=""
-        className={
-          isInvitation
-            ? "pointer-events-none absolute inset-0 bg-gradient-to-br from-[#7a5a2e] via-[#0e2a33] to-[#0e2a33]"
-            : "pointer-events-none absolute inset-0 bg-gradient-to-br from-[#14545f] via-[#0e2a33] to-[#0e2a33]"
-        }
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background: isInvitation
+            ? "linear-gradient(135deg, #f6e7c8 0%, #fbf7ef 46%, #fdfaf4 100%)"
+            : "linear-gradient(135deg, #dbeae9 0%, #fbf7ef 46%, #fdfaf4 100%)",
+        }}
       />
 
       {/* A hairline rule inset from the edge, the way a menu card is ruled. */}
       <div
         aria-hidden="true"
         data-card-rule=""
-        className="pointer-events-none absolute inset-[2mm] rounded-[2mm] border border-[#c8a86b]/50"
+        className="pointer-events-none absolute inset-[2mm] rounded-[2mm]"
+        style={{ border: `0.25mm solid ${GOLD}80` }}
       />
 
       <div className="relative flex flex-1 flex-col justify-between p-[4.5mm]">
         <header>
-          <p className="display text-[4mm] leading-none text-[#f4ece0]">{restaurantName}</p>
-          <p className="mt-[0.8mm] text-[2.1mm] uppercase tracking-[0.22em] text-[#c8a86b]">
+          <p className="display text-[4mm] leading-none" style={{ color: INK }}>
+            {restaurantName}
+          </p>
+          <p className="mt-[0.8mm] text-[2.1mm] uppercase tracking-[0.22em]" style={{ color: GOLD }}>
             {isInvitation ? "An invitation to dine" : "Dinner is part of your stay"}
           </p>
         </header>
 
         <div>
-          <p className="text-[2.2mm] uppercase tracking-[0.16em] text-[#c8a86b]">Your pass-key</p>
-          <p className="mt-[0.6mm] font-mono text-[5.6mm] font-bold leading-none tracking-[0.06em] text-[#ffffff]">
+          <p className="text-[2.2mm] uppercase tracking-[0.16em]" style={{ color: INK_SOFT }}>
+            Your pass-key
+          </p>
+          <p
+            className="mt-[0.6mm] font-mono text-[5.6mm] font-bold leading-none tracking-[0.06em]"
+            style={{ color: INK }}
+          >
             {formatPassKey(passKey.code)}
           </p>
         </div>
 
-        <footer className="text-[2.2mm] leading-tight text-[#f4ece0]/85">
-          <p className="truncate font-semibold text-[#ffffff]">{bookingUrl}</p>
+        <footer className="text-[2.2mm] leading-tight" style={{ color: INK_SOFT }}>
+          <p className="truncate font-semibold" style={{ color: INK }}>
+            {bookingUrl}
+          </p>
           <p className="mt-[0.5mm]">
             {dinners}
             {passKey.expiresOn ? ` · valid until ${formatShortDate(passKey.expiresOn)}` : ""}
           </p>
           {passKey.roomNumber || passKey.guestName ? (
-            <p className="truncate text-[#c8a86b]">
+            <p className="truncate" style={{ color: GOLD }}>
               {passKey.roomNumber ? `Room ${passKey.roomNumber}` : passKey.guestName}
             </p>
           ) : null}
         </footer>
       </div>
 
-      {/* The QR sits on white so a phone camera reads it off dark card stock. */}
-      <div className="relative flex w-[26mm] shrink-0 items-center justify-center p-[3mm]">
-        <div className="flex size-[20mm] items-center justify-center rounded-[1.2mm] bg-white p-[1.2mm]">
-          {qr ? (
-            <span
-              aria-hidden="true"
-              className="block size-full [&>svg]:block [&>svg]:size-full"
-              dangerouslySetInnerHTML={{ __html: qr }}
-            />
-          ) : null}
-        </div>
-        <p className="absolute bottom-[1mm] left-0 right-0 text-center text-[1.7mm] uppercase tracking-[0.14em] text-[#c8a86b]">
+      <div className="relative flex w-[26mm] shrink-0 flex-col items-center justify-center gap-[1mm] p-[3mm]">
+        {/* White behind the code, so a camera reads it off the tinted stock. */}
+        <span
+          className="flex size-[20mm] items-center justify-center rounded-[1.2mm] p-[1mm]"
+          style={{ backgroundColor: "#ffffff", border: `0.2mm solid ${GOLD}55` }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={qrSrc} alt="" width={72} height={72} className="size-full" />
+        </span>
+        <p className="text-[1.8mm] uppercase tracking-[0.14em]" style={{ color: GOLD }}>
           Scan to book
         </p>
       </div>

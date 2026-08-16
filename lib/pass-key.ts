@@ -29,10 +29,26 @@ export const PASS_KEY_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 export const PASS_KEY_PREFIX = "VDM";
 
-/** Twelve characters at five bits each. */
-export const PASS_KEY_LENGTH = 12;
+/**
+ * Ten characters at five bits each — fifty bits, about a quadrillion codes.
+ *
+ * Shortened from twelve because a guest types this off a printed card on a
+ * phone, and every character is a chance to give up. Ten is the balance: two
+ * fewer to type, and still far beyond brute force over HTTP, especially behind
+ * the rate limiter.
+ */
+export const PASS_KEY_LENGTH = 10;
 
-const GROUP_SIZE = 4;
+/**
+ * Codes issued before the length changed are still in guests' hands, so they
+ * must keep working. Anything in this range is a plausible key and is looked
+ * up rather than rejected out of hand.
+ */
+export const MIN_ACCEPTED_PASS_KEY_LENGTH = 8;
+export const MAX_ACCEPTED_PASS_KEY_LENGTH = 12;
+
+/** Two blocks of five: `VDM-K7QP3-M2XR4`. */
+const GROUP_SIZE = 5;
 
 /**
  * What people type when they mean an alphabet character. Applied before
@@ -72,8 +88,15 @@ export function normalizePassKey(value: string | null | undefined): string {
   return normalized;
 }
 
+/**
+ * Whether this could be a key at all — the cheap check before a database
+ * lookup. Deliberately a *range*, not an exact length, so keys issued under
+ * the previous twelve-character format are still accepted from guests holding
+ * an older card.
+ */
 export function isValidPassKeyFormat(value: string | null | undefined): boolean {
-  return normalizePassKey(value).length === PASS_KEY_LENGTH;
+  const length = normalizePassKey(value).length;
+  return length >= MIN_ACCEPTED_PASS_KEY_LENGTH && length <= MAX_ACCEPTED_PASS_KEY_LENGTH;
 }
 
 /**

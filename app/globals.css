@@ -266,9 +266,29 @@ body {
     margin: 8mm;
   }
 
+  /*
+   * The single most important rule here.
+   *
+   * On screen each table sits in a horizontal scrollbox. A browser prints only
+   * the *visible* part of an overflow container, so the printout used to be
+   * whatever happened to be scrolled into view: at the left edge the Comment
+   * column was cut, at the right edge the first two columns were. Neutralising
+   * the scrollbox makes the printed sheet independent of where the scrollbar
+   * was left, which it must always be.
+   */
+  [data-print-scroll] {
+    overflow: visible !important;
+    width: auto !important;
+    max-width: none !important;
+  }
+
   [data-print-area] table {
     table-layout: fixed;
     width: 100%;
+    /* `min-w-full` on screen; in print it must never force the table wider
+       than the page, or the page itself does the clipping instead. */
+    min-width: 0 !important;
+    max-width: 100% !important;
     font-size: 7.6pt;
     line-height: 1.15;
   }
@@ -276,6 +296,9 @@ body {
   [data-print-area] th,
   [data-print-area] td {
     padding: 2px 3px !important;
+    /* Nothing may hold a column open wider than its share. */
+    white-space: normal !important;
+    overflow-wrap: anywhere;
   }
 
   /* Course grouping is dropped in print: with short dish labels the columns
@@ -284,21 +307,34 @@ body {
     display: none !important;
   }
 
-  /* Dish columns are narrow and numeric; the label wraps rather than forcing
-     the table wider. */
-  [data-print="dish"] {
-    width: 3.2em;
-    overflow-wrap: anywhere;
-    hyphens: auto;
+  /*
+   * Column widths are percentages, never `em`.
+   *
+   * With `table-layout: fixed`, columns given a fixed `em` width keep it even
+   * when the total exceeds the table — so a night with many dishes pushed the
+   * table wider than the page and something got cut. Percentages cannot sum
+   * past the page: the identity columns claim a fixed share, and every dish
+   * column divides what is left, growing thinner as dishes are added instead
+   * of pushing the sheet off the paper.
+   *
+   * Specified here: 5 + 9 + 9 + 14 = 37% at most, so dishes always keep 63%.
+   */
+  [data-print="table"] {
+    width: 5%;
   }
 
   [data-print="who"] {
-    width: 9em;
+    width: 9%;
   }
 
   [data-print="note"] {
-    width: 12em;
+    width: 14%;
+  }
+
+  /* Deliberately no width: dish columns share whatever is left, equally. */
+  [data-print="dish"] {
     overflow-wrap: anywhere;
+    hyphens: auto;
   }
 
   /* The kitchen slip starts a fresh page, so the service sheet keeps its own. */
@@ -354,4 +390,60 @@ body {
 
 [data-print="only"] {
   display: none;
+}
+
+/*
+ * Pass-key cards.
+ *
+ * A separate print context from the service sheet, and deliberately so: that
+ * one is A4 landscape and hides everything outside the sheet, this one is
+ * portrait and hides everything outside the card sheet. Sharing a block would
+ * mean one page setup fighting the other.
+ *
+ * Only applies while the page has asked for it, so printing the pass-key
+ * screen for its list still behaves normally.
+ */
+@media print {
+  [data-printing-cards] [data-print-cards] {
+    display: grid !important;
+    /*
+     * Three across, three down — nine cards to a sheet.
+     *
+     * The page stays A4 *landscape*, the size the service sheet already asks
+     * for. A named `@page` for portrait would be tidier, but named pages are
+     * unevenly supported and only one `@page` size can win per document, so
+     * the layout is fitted to the page rather than fighting it.
+     */
+    grid-template-columns: repeat(3, 85.6mm);
+    gap: 4mm;
+    justify-content: center;
+    align-content: start;
+  }
+
+  [data-printing-cards] [data-pass-key-card] {
+    /* Cut lines. A dashed hairline is easier to follow than a solid rule. */
+    border: 0.3mm dashed #666 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    break-inside: avoid;
+  }
+
+  /* Everything that is not a card goes away while cards are printing. */
+  [data-printing-cards] body * {
+    visibility: hidden !important;
+  }
+
+  [data-printing-cards] [data-print-cards],
+  [data-printing-cards] [data-print-cards] * {
+    visibility: visible !important;
+  }
+
+  [data-printing-cards] [data-print-cards] {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
 }

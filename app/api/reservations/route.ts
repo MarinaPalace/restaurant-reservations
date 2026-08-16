@@ -19,6 +19,7 @@ import { recordAuditEntry } from "@/lib/services/audit-log";
 import { createReservationSchema } from "@/lib/validation/booking";
 import { describeContactProblem, normalizeContact } from "@/lib/contact";
 import { canonicalizeSelections } from "@/lib/menu-selection";
+import { checkRateLimit, clientKeyFrom } from "@/lib/rate-limit";
 
 const GENERIC_ERROR = "Something went wrong while creating your reservation. Please try again.";
 
@@ -39,6 +40,17 @@ const GENERIC_ERROR = "Something went wrong while creating your reservation. Ple
  * and the reason two requests with one key cannot both produce a booking.
  */
 export async function POST(request: Request) {
+  // A booking presents a pass-key, so this endpoint is guessable in the same
+  // way the check endpoint is, and gets the same limit.
+  const limit = checkRateLimit(clientKeyFrom(request, "booking"), { limit: 12, windowMs: 60_000 });
+
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "Too many attempts. Please wait a moment and try again.", code: "RATE_LIMITED" },
+      { status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds) } },
+    );
+  }
+
   let body: unknown;
 
   try {
@@ -70,7 +82,15 @@ export async function POST(request: Request) {
      * cannot be used to probe which evenings have seats left.
      */
     const keyProblem = describePassKeyProblem(passKey);
-    if (keyProblem || !passKey) {
+
+    /**
+     * An invitation key is refused here, and an in-house key is refused on the
+     * invitation flow. The two have separate menus and separate evenings, so a
+     * key belongs to exactly one of them — without this check a premium key
+     * booked an everyday evening from the everyday menu, and spent itself
+     * doing it.
+     */
+    if (keyProblem || !passKey || passKey.kind === "premium") {
       return NextResponse.json(
         { error: keyProblem?.message ?? PASS_KEY_MESSAGES.invalid, code: `PASS_KEY_${keyProblem?.code ?? "INVALID"}` },
         { status: 403 },

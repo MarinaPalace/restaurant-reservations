@@ -303,18 +303,13 @@ export async function restoreLocalReservation(reservationNumber: string): Promis
   });
 }
 
-/** The booking a pass-key is currently attached to, cancelled ones included. */
-export async function findLocalReservationByPassKey(passKeyId: string): Promise<ReservationRecord | null> {
+/** Every booking a pass-key has made, newest first, cancelled ones included. */
+export async function findLocalReservationsByPassKey(passKeyId: string): Promise<ReservationRecord[]> {
   const reservations = await readReservations();
-  const matches = reservations.filter((entry) => entry.passKeyId === passKeyId);
 
-  // A key can be released and spent again, so prefer the live booking and
-  // otherwise the most recent one.
-  return (
-    matches.find((entry) => entry.status === "confirmed") ??
-    [...matches].sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))[0] ??
-    null
-  );
+  return reservations
+    .filter((entry) => entry.passKeyId === passKeyId)
+    .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
 }
 
 /**

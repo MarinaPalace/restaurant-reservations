@@ -37,22 +37,39 @@ export async function POST(request: Request) {
       );
     }
 
-    const passKey = await issuePassKey({ ...parsed.data, actor: auth.actor });
+    const { quantity = 1, ...details } = parsed.data;
 
-    const whom = passKey.roomNumber ? `room ${passKey.roomNumber}` : (passKey.guestName ?? "a guest");
-    const exception = parsed.data.allowShortStay && (passKey.nights ?? 0) < MINIMUM_STAY_NIGHTS;
+    /**
+     * Issued one at a time rather than in a bulk write: each key needs its own
+     * unique code with its own retry, and each gets its own line in the log so
+     * a batch is not one anonymous entry.
+     */
+    const passKeys = [];
+    for (let issued = 0; issued < quantity; issued += 1) {
+      passKeys.push(await issuePassKey({ ...details, actor: auth.actor }));
+    }
 
-    await recordAuditEntry({
-      action: "passkey:issue",
-      actor: auth.actor,
-      summary:
-        `Issued pass-key ${formatPassKey(passKey.code)} to ${whom}` +
-        (passKey.nights ? `, ${passKey.nights} night(s)` : "") +
-        (exception ? " — short stay allowed as an exception" : "") +
-        ".",
-    });
+    const exception = details.allowShortStay && (details.nights ?? 0) < MINIMUM_STAY_NIGHTS;
 
-    return NextResponse.json({ passKey }, { status: 201 });
+    for (const passKey of passKeys) {
+      const whom = passKey.roomNumber ? `room ${passKey.roomNumber}` : (passKey.guestName ?? "a guest");
+
+      await recordAuditEntry({
+        action: "passkey:issue",
+        actor: auth.actor,
+        summary:
+          `Issued pass-key ${formatPassKey(passKey.code)} to ${whom}` +
+          (passKey.nights ? `, ${passKey.nights} night(s)` : "") +
+          `, ${passKey.maxUses} dinner(s)` +
+          (passKey.expiresOn ? `, valid to ${passKey.expiresOn}` : "") +
+          (exception ? " — short stay allowed as an exception" : "") +
+          ".",
+      });
+    }
+
+    // `passKey` is kept alongside the list so a caller expecting one still
+    // works; the UI reads `passKeys`.
+    return NextResponse.json({ passKeys, passKey: passKeys[0] }, { status: 201 });
   } catch (error) {
     if (error instanceof ShortStayError) {
       return NextResponse.json(

@@ -117,7 +117,8 @@ describe("reading the booking session", () => {
 
 describe("step guards", () => {
   const complete = {
-    passKey: "K7QP3M2XR4TN",
+    passKey: "K7QP3M2XR4",
+    passKeyExpiresOn: "2026-08-25",
     roomNumber: "402",
     guestCount: 2,
     date: "2026-08-18",

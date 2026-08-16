@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import {
-  getReservationByPassKey,
+  getReservationsByPassKey,
   updateReservationSelections,
 } from "@/lib/services/reservations";
 import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
@@ -10,6 +10,7 @@ import { recordAuditEntry } from "@/lib/services/audit-log";
 import { canGuestModify } from "@/lib/reservation-policy";
 import { canonicalizeSelections } from "@/lib/menu-selection";
 import { manageReservationSchema, updateSelectionsSchema } from "@/lib/validation/booking";
+import { checkRateLimit, clientKeyFrom } from "@/lib/rate-limit";
 import type { ReservationRecord } from "@/types/booking";
 
 /**
@@ -29,23 +30,58 @@ import type { ReservationRecord } from "@/types/booking";
 
 const NOT_FOUND = { error: "We could not find a reservation for that pass-key." };
 
-type Resolved = { reservation: ReservationRecord; passKeyId: string };
+type Resolved = { reservations: ReservationRecord[]; passKeyId: string; usesRemaining: number };
 
 async function resolveByPassKey(code: string): Promise<Resolved | null> {
   const passKey = await getPassKeyByCode(code);
 
-  // A revoked key loses access to its booking; an expired or spent one keeps
-  // it, because the guest still needs to see and cancel the dinner they have.
+  // A revoked key loses access to its bookings; an expired or spent one keeps
+  // it, because the guest still needs to see and cancel dinners they have.
   if (!passKey || passKey.status === "revoked") {
     return null;
   }
 
-  const reservation = await getReservationByPassKey(passKey.id);
-  return reservation ? { reservation, passKeyId: passKey.id } : null;
+  const reservations = await getReservationsByPassKey(passKey.id);
+  if (reservations.length === 0) {
+    return null;
+  }
+
+  return {
+    reservations,
+    passKeyId: passKey.id,
+    usesRemaining: Math.max(passKey.maxUses - passKey.usedCount, 0),
+  };
+}
+
+/**
+ * Which booking a request means.
+ *
+ * A key can hold several dinners now, so the guest names one. With a single
+ * booking the number may be left out, which keeps the common case simple.
+ */
+function pickReservation(resolved: Resolved, reservationNumber?: string) {
+  if (!reservationNumber) {
+    return resolved.reservations.length === 1 ? resolved.reservations[0] : null;
+  }
+
+  return (
+    resolved.reservations.find(
+      (entry) => entry.reservationNumber === reservationNumber.trim().toUpperCase(),
+    ) ?? null
+  );
 }
 
 /** Looks up the booking behind a pass-key. */
 export async function POST(request: Request) {
+  const limit = checkRateLimit(clientKeyFrom(request, "manage"), { limit: 12, windowMs: 60_000 });
+
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "Too many attempts. Please wait a moment and try again." },
+      { status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds) } },
+    );
+  }
+
   try {
     const parsed = manageReservationSchema.safeParse(await request.json());
 
@@ -61,14 +97,21 @@ export async function POST(request: Request) {
       return NextResponse.json(NOT_FOUND, { status: 404 });
     }
 
-    const check = canGuestModify(resolved.reservation);
-
     return NextResponse.json({
-      reservation: resolved.reservation,
-      // Lets the guest's screen explain why the buttons are unavailable.
-      canModify: check.allowed,
-      modificationDeadline: check.deadline.toISOString(),
-      modificationBlockedReason: check.reason ?? null,
+      usesRemaining: resolved.usesRemaining,
+      // Every dinner this key has booked. The screen lists them and the guest
+      // picks which one to change.
+      reservations: resolved.reservations.map((reservation) => {
+        const check = canGuestModify(reservation);
+
+        return {
+          reservation,
+          // Lets the guest's screen explain why the buttons are unavailable.
+          canModify: check.allowed,
+          modificationDeadline: check.deadline.toISOString(),
+          modificationBlockedReason: check.reason ?? null,
+        };
+      }),
     });
   } catch (error) {
     console.error("[booking] failed to load reservation by pass-key", error);
@@ -93,7 +136,13 @@ export async function PATCH(request: Request) {
       return NextResponse.json(NOT_FOUND, { status: 404 });
     }
 
-    const { reservation } = resolved;
+    const reservation = pickReservation(resolved, parsed.data.reservationNumber);
+    if (!reservation) {
+      return NextResponse.json(
+        { error: "Please say which reservation you mean." },
+        { status: 400 },
+      );
+    }
 
     const check = canGuestModify(reservation);
     if (!check.allowed) {

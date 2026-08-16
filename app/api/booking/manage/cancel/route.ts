@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { cancelReservation, getReservationByPassKey } from "@/lib/services/reservations";
+import { cancelReservation, getReservationsByPassKey } from "@/lib/services/reservations";
 import { getPassKeyByCode, releasePassKey } from "@/lib/services/pass-keys";
 import { recordAuditEntry } from "@/lib/services/audit-log";
 import { canGuestModify } from "@/lib/reservation-policy";
@@ -31,9 +31,26 @@ export async function POST(request: Request) {
       return NextResponse.json(NOT_FOUND, { status: 404 });
     }
 
-    const reservation = await getReservationByPassKey(passKey.id);
+    const reservations = await getReservationsByPassKey(passKey.id);
+
+    /**
+     * A key can hold several dinners, so the guest names the one they mean.
+     * Omitting the number is only allowed when there is exactly one, which
+     * keeps the ordinary case a single tap.
+     */
+    const reservation = parsed.data.reservationNumber
+      ? reservations.find(
+          (entry) => entry.reservationNumber === parsed.data.reservationNumber!.trim().toUpperCase(),
+        )
+      : reservations.length === 1
+        ? reservations[0]
+        : undefined;
+
     if (!reservation) {
-      return NextResponse.json(NOT_FOUND, { status: 404 });
+      return NextResponse.json(
+        reservations.length ? { error: "Please say which reservation you mean." } : NOT_FOUND,
+        { status: reservations.length ? 400 : 404 },
+      );
     }
 
     const check = canGuestModify(reservation);

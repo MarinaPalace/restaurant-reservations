@@ -64,17 +64,71 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
   const allComplete = localizedCourses.length > 0 && guestIndexes.every(isGuestComplete);
   const completedCount = guestIndexes.filter(isGuestComplete).length;
 
-  const handleContinue = () => {
-    const incompleteGuest = guestIndexes.find((guestIndex) => !isGuestComplete(guestIndex));
+  /** The first course this guest still owes an answer for. */
+  const firstUnansweredCourse = useCallback(
+    (guestIndex: number) =>
+      requiredCourses.find(
+        (course) => !selections.some((entry) => entry.guestIndex === guestIndex && entry.courseId === course.id),
+      ),
+    [requiredCourses, selections],
+  );
 
-    if (incompleteGuest !== undefined) {
-      setActiveGuestIndex(incompleteGuest);
-      setError(`Please complete the menu choices for guest ${incompleteGuest + 1}.`);
-      return;
+  const currentGuestComplete = isGuestComplete(activeGuestIndex);
+  const chosenForActiveGuest = requiredCourses.filter((course) =>
+    selections.some((entry) => entry.guestIndex === activeGuestIndex && entry.courseId === course.id),
+  ).length;
+  // Whoever still needs choosing for, starting after the guest on screen so the
+  // party is worked through in order.
+  const nextIncompleteGuest = useMemo(
+    () =>
+      guestIndexes.find((guestIndex) => guestIndex > activeGuestIndex && !isGuestComplete(guestIndex)) ??
+      guestIndexes.find((guestIndex) => guestIndex !== activeGuestIndex && !isGuestComplete(guestIndex)),
+    [guestIndexes, activeGuestIndex, isGuestComplete],
+  );
+
+  const scrollToTopOfCourses = () => {
+    document.getElementById("course-list")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const goToGuest = (guestIndex: number) => {
+    setActiveGuestIndex(guestIndex);
+    setError("");
+    // The courses below have just been swapped for another guest's; without
+    // this the page stays where it was and looks like nothing happened.
+    scrollToTopOfCourses();
+  };
+
+  /**
+   * One button that always does the obvious next thing.
+   *
+   * It is never disabled. A disabled button gives no reason and leaves the
+   * guest to work out for themselves that somebody upstairs in the list is
+   * unfinished — so instead it either takes them to the course they missed, or
+   * on to the next guest, or to the summary.
+   */
+  const primaryAction = (() => {
+    if (!currentGuestComplete) {
+      const missing = firstUnansweredCourse(activeGuestIndex);
+      return {
+        label: missing ? `Choose ${missing.name}` : "Continue",
+        onClick: () => {
+          if (missing) {
+            document.getElementById(`course-${missing.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+            setError("");
+          }
+        },
+      };
     }
 
-    router.push("/booking/summary");
-  };
+    if (nextIncompleteGuest !== undefined) {
+      return {
+        label: `Continue to guest ${nextIncompleteGuest + 1}`,
+        onClick: () => goToGuest(nextIncompleteGuest),
+      };
+    }
+
+    return { label: "Review reservation", onClick: () => router.push("/booking/summary") };
+  })();
 
   return (
     <>
@@ -125,7 +179,7 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
                     key={guestIndex}
                     type="button"
                     aria-pressed={isActive}
-                    onClick={() => setActiveGuestIndex(guestIndex)}
+                    onClick={() => goToGuest(guestIndex)}
                     className={cx(
                       "min-h-11 rounded-full border px-4 text-sm font-medium transition-colors",
                       isActive
@@ -151,9 +205,16 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
           <Alert tone="info">The menu is not published yet. Please contact guest services.</Alert>
         </Card>
       ) : (
-        <div className="mt-6 space-y-5">
+        <div id="course-list" className="mt-6 space-y-5 scroll-mt-4">
           {guestCount > 1 ? (
-            <h2 className="text-lg font-semibold text-ink">Choices for guest {activeGuestIndex + 1}</h2>
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="text-lg font-semibold text-ink">Choices for guest {activeGuestIndex + 1}</h2>
+              <p aria-live="polite" className="text-sm text-ink-muted">
+                {currentGuestComplete
+                  ? "All courses chosen for this guest."
+                  : `${chosenForActiveGuest} of ${requiredCourses.length} courses chosen`}
+              </p>
+            </div>
           ) : null}
 
           {localizedCourses.map((course) => {
@@ -162,7 +223,7 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
             );
 
             return (
-              <Card key={course.id} as="section" className="overflow-hidden">
+              <Card key={course.id} id={`course-${course.id}`} as="section" className="overflow-hidden scroll-mt-4">
                 <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-start">
                   <DishImage src={course.imageUrl} alt="" width={160} height={112} className="h-28 w-full sm:w-40" />
                   <div className="min-w-0 flex-1">
@@ -305,13 +366,27 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
         </Alert>
       ) : null}
 
-      <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-        <ButtonLink href="/booking/date" size="lg" className="flex-1">
-          Back
-        </ButtonLink>
-        <Button size="lg" className="flex-1" onClick={handleContinue} disabled={!ready || !allComplete}>
-          Review reservation
-        </Button>
+      {/*
+        Sticky, so the way forward is always on screen. The complaint this
+        answers was having to scroll back to the top to move to the next guest.
+      */}
+      <div className="sticky bottom-0 z-10 mt-6 border-t border-line bg-canvas/95 py-3 backdrop-blur">
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <ButtonLink href="/booking/date" size="lg" className="sm:flex-1">
+            Back
+          </ButtonLink>
+          <Button size="lg" className="sm:flex-[2]" onClick={primaryAction.onClick} disabled={!ready}>
+            {primaryAction.label}
+          </Button>
+        </div>
+
+        {guestCount > 1 ? (
+          <p aria-live="polite" className="mt-2 text-center text-xs text-ink-muted">
+            {allComplete
+              ? "Everyone has chosen."
+              : `${completedCount} of ${guestCount} guests have finished choosing.`}
+          </p>
+        ) : null}
       </div>
     </>
   );

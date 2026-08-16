@@ -9,9 +9,17 @@ import { Brand } from "@/components/brand";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
+import { Alert } from "@/components/ui/feedback";
 import { useBookingSession, writeBookingSession } from "@/hooks/use-booking-session";
 import { isValidRoomNumber } from "@/lib/booking-session";
 import { PASS_KEY_PREFIX, formatPassKey, isValidPassKeyFormat, normalizePassKey } from "@/lib/pass-key";
+import { formatLongDate } from "@/lib/date";
+
+/**
+ * The prefix every key carries. Kept in the field so the guest only ever types
+ * the part that varies, and cannot delete it by accident.
+ */
+const PREFIX = `${PASS_KEY_PREFIX}-`;
 
 export default function BookingPage() {
   const router = useRouter();
@@ -20,22 +28,24 @@ export default function BookingPage() {
   const [roomNumber, setRoomNumber] = useState<string | null>(null);
   const [passKeyError, setPassKeyError] = useState("");
   const [roomError, setRoomError] = useState("");
+  const [checking, setChecking] = useState(false);
 
   // Falls back to whatever is already in the session until the guest types.
   const roomValue = roomNumber ?? session.roomNumber;
-  const passKeyValue = passKey ?? (session.passKey ? formatPassKey(session.passKey) : "");
+  const passKeyValue = passKey ?? (session.passKey ? formatPassKey(session.passKey) : PREFIX);
 
-  const handleSubmit = (event: React.FormEvent) => {
+  const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (checking) {
+      return;
+    }
 
     const normalizedKey = normalizePassKey(passKeyValue);
     const trimmedRoom = roomValue.trim();
 
-    // Both are checked here for a quick answer, and again on the server, which
-    // is the check that counts.
     const keyProblem = isValidPassKeyFormat(normalizedKey)
       ? ""
-      : "Please enter the pass-key from your check-in slip.";
+      : "Please enter the pass-key from your check-in card.";
     const roomProblem = isValidRoomNumber(trimmedRoom)
       ? ""
       : "Please enter your room number, for example 402 or L10.";
@@ -47,8 +57,40 @@ export default function BookingPage() {
       return;
     }
 
-    writeBookingSession({ passKey: normalizedKey, roomNumber: trimmedRoom });
-    router.push("/booking/guests");
+    setChecking(true);
+
+    /**
+     * The key is checked here, before the guest chooses anything.
+     *
+     * It used to be judged only when the finished booking was submitted, so a
+     * guest with a spent or expired key picked a date and a full menu for
+     * everyone at the table before being told it was never going to work.
+     */
+    try {
+      const response = await fetch("/api/booking/pass-key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ passKey: normalizedKey }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.ok) {
+        setPassKeyError(data.error ?? "That pass-key is not valid. Please check it and try again.");
+        setChecking(false);
+        return;
+      }
+
+      writeBookingSession({
+        passKey: normalizedKey,
+        passKeyExpiresOn: data.expiresOn ?? "",
+        roomNumber: trimmedRoom,
+      });
+      router.push("/booking/guests");
+    } catch {
+      setPassKeyError("We could not reach the restaurant. Please check your connection and try again.");
+      setChecking(false);
+    }
   };
 
   return (
@@ -63,15 +105,14 @@ export default function BookingPage() {
           flourish
           eyebrow="Reservations"
           title="Reserve your dinner"
-          description="Dinner is part of your stay with us. Your pass-key is on the slip you were given at check-in."
+          description="Dinner is part of your stay with us. Your pass-key is on the card you were given at check-in."
         />
 
-        {/* A real form: the on-screen keyboard shows "Go", and Enter submits. */}
         <form onSubmit={handleSubmit} noValidate className="mt-6 space-y-6">
           <Field
             label="Pass-key"
             error={passKeyError}
-            hint={`From your check-in slip, for example ${PASS_KEY_PREFIX}-K7QP-3M2X-R4TN. Capitals and dashes do not matter.`}
+            hint="From your check-in card. Capitals and dashes do not matter."
           >
             {(fieldProps) => (
               <Input
@@ -83,19 +124,24 @@ export default function BookingPage() {
                 spellCheck={false}
                 autoFocus
                 maxLength={24}
-                placeholder={`${PASS_KEY_PREFIX}-XXXX-XXXX-XXXX`}
+                placeholder={`${PREFIX}XXXXX-XXXXX`}
                 value={passKeyValue}
                 onChange={(event) => {
-                  setPassKey(event.target.value.toUpperCase());
+                  // The prefix is part of every key, so it is put back if the
+                  // guest deletes it while editing.
+                  const typed = event.target.value.toUpperCase();
+                  setPassKey(typed.startsWith(PREFIX) ? typed : PREFIX + normalizePassKey(typed));
                   setPassKeyError("");
                 }}
-                // Re-groups the code as soon as the guest leaves the field, so
-                // what they typed and what is on the slip look the same.
+                onFocus={(event) => {
+                  // Never leave the caret in front of the prefix.
+                  if (event.target.selectionStart !== null && event.target.selectionStart < PREFIX.length) {
+                    event.target.setSelectionRange(event.target.value.length, event.target.value.length);
+                  }
+                }}
                 onBlur={(event) => {
                   const normalized = normalizePassKey(event.target.value);
-                  if (isValidPassKeyFormat(normalized)) {
-                    setPassKey(formatPassKey(normalized));
-                  }
+                  setPassKey(isValidPassKeyFormat(normalized) ? formatPassKey(normalized) : event.target.value);
                 }}
                 className="text-xl tracking-wider"
               />
@@ -124,7 +170,14 @@ export default function BookingPage() {
             )}
           </Field>
 
-          <Button type="submit" size="lg" className="w-full">
+          {/* Reassurance that the key is live, once we have checked it. */}
+          {session.passKeyExpiresOn && !passKeyError ? (
+            <Alert tone="info">
+              This pass-key can book dinner up to {formatLongDate(session.passKeyExpiresOn)}.
+            </Alert>
+          ) : null}
+
+          <Button type="submit" size="lg" className="w-full" loading={checking} loadingLabel="Checking…">
             Continue
           </Button>
         </form>

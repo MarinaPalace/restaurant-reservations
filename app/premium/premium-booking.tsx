@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { PASS_KEY_PREFIX, formatPassKey, isValidPassKeyFormat, normalizePassKey } from "@/lib/pass-key";
 import { Brand } from "@/components/brand";
 import { DishImage } from "@/components/dish-image";
 import { ContactFields } from "@/components/contact-fields";
@@ -36,10 +37,18 @@ import type {
 export function PremiumBooking({
   menu,
   dates,
+  /**
+   * The key from the invitation. Supplied by /premium/<pass-key> so the guest
+   * follows a link from their email and never types it; blank on the bare
+   * /premium address, where they are asked for it.
+   */
+  initialPassKey = "",
 }: {
   menu: MenuCourse[];
   dates: RestaurantDateAvailability[];
+  initialPassKey?: string;
 }) {
+  const [passKey, setPassKey] = useState(initialPassKey ? formatPassKey(initialPassKey) : "");
   const [guestName, setGuestName] = useState("");
   const [guestCount, setGuestCount] = useState(1);
   const [date, setDate] = useState(dates[0]?.date ?? "");
@@ -129,6 +138,11 @@ export function PremiumBooking({
       return;
     }
 
+    if (!isValidPassKeyFormat(passKey)) {
+      setError("Please enter the pass-key from your invitation.");
+      return;
+    }
+
     const contactProblem = describeContactProblem(contact);
     if (contactProblem) {
       setError(contactProblem);
@@ -143,6 +157,7 @@ export function PremiumBooking({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          passKey: normalizePassKey(passKey),
           guestName: guestName.trim(),
           guestCount,
           date,
@@ -242,6 +257,39 @@ export function PremiumBooking({
         <CardHeader eyebrow="Your party" title="Who is coming" />
 
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          {/*
+            Shown only when the guest arrived without a key in the link, so
+            somebody following the invitation never has to type it.
+          */}
+          {!initialPassKey ? (
+            <Field
+              label="Pass-key from your invitation"
+              hint="Capitals and dashes do not matter."
+            >
+              {(fieldProps) => (
+                <Input
+                  {...fieldProps}
+                  name="passKey"
+                  autoComplete="off"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  maxLength={24}
+                  placeholder={`${PASS_KEY_PREFIX}-XXXXX-XXXXX`}
+                  value={passKey}
+                  onChange={(event) => setPassKey(event.target.value.toUpperCase())}
+                  onBlur={(event) => {
+                    const normalized = normalizePassKey(event.target.value);
+                    if (isValidPassKeyFormat(normalized)) {
+                      setPassKey(formatPassKey(normalized));
+                    }
+                  }}
+                  className="tracking-wider"
+                />
+              )}
+            </Field>
+          ) : null}
+
           <Field label="Name the reservation is under">
             {(fieldProps) => (
               <Input

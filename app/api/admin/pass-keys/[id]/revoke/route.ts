@@ -28,10 +28,12 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     await recordAuditEntry({
       action: "passkey:revoke",
       actor: auth.actor,
-      reservationNumber: revoked.reservationNumber,
+      // The first booking it paid for, so the key's withdrawal shows up on
+      // that reservation's own history.
+      reservationNumber: revoked.reservationNumbers[0],
       summary:
         `Revoked pass-key ${formatPassKey(revoked.code)}` +
-        (revoked.reservationNumber ? ` (had booked ${revoked.reservationNumber})` : "") +
+        (revoked.reservationNumbers.length ? ` (had booked ${revoked.reservationNumbers.join(", ")})` : "") +
         ".",
     });
 

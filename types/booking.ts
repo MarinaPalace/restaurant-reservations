@@ -236,9 +236,27 @@ export type StaffUserRecord = {
 export const MINIMUM_STAY_NIGHTS = 5;
 
 /**
- * `active` may be spent on a booking, `used` has been, and `revoked` was
- * withdrawn by staff. Expiry is deliberately *not* a status: it is derived
- * from `expiresOn` so no scheduled job is needed to keep keys honest.
+ * How many dinners a stay earns: one per five nights, capped at three.
+ * 5 nights → 1, 10 → 2, 15 or more → 3. Reception can override at issue and
+ * change it later when a stay is extended.
+ */
+export const MAX_USES_CAP = 3;
+
+export function suggestedUsesForNights(nights: number | undefined): number {
+  if (!nights || nights < MINIMUM_STAY_NIGHTS) {
+    return 1;
+  }
+  return Math.min(Math.floor(nights / MINIMUM_STAY_NIGHTS), MAX_USES_CAP);
+}
+
+/**
+ * `active` may still be spent, `used` is fully spent, and `revoked` was
+ * withdrawn by staff.
+ *
+ * Only `revoked` is really stored — "used" is derived by comparing `usedCount`
+ * with `maxUses`, so a key with two dinners left cannot drift out of step with
+ * its own counter. Expiry is derived too, from `expiresOn`, so no scheduled job
+ * is needed to keep keys honest.
  */
 export type PassKeyStatus = "active" | "used" | "revoked";
 
@@ -247,6 +265,13 @@ export type PassKeyRecord = {
   id: string;
   /** Canonical form: upper-case, no dashes. Compare against this. */
   code: string;
+  /**
+   * Which flow the key belongs to. A `premium` key books invitation evenings
+   * from the premium menu and nothing else; a `standard` key is the reverse.
+   * Absent reads as `standard`, so keys issued before invitations had their
+   * own keys are unaffected.
+   */
+  kind?: MenuKind;
   /** The room at check-in. A note for reception — guests confirm their own
    * room when booking, because they may since have been moved. */
   roomNumber?: string;
@@ -255,9 +280,16 @@ export type PassKeyRecord = {
   nights?: number;
   /** Last date the key works, normally check-out. Absent means no expiry. */
   expiresOn?: string;
+  /**
+   * How many dinners this key may book, and how many it has. Both are absent
+   * on keys issued before multi-use existed, where absent reads as a single
+   * use — so nothing needed migrating.
+   */
+  maxUses: number;
+  usedCount: number;
   status: PassKeyStatus;
-  /** The booking it was spent on, while it is spent. */
-  reservationNumber?: string;
+  /** Every booking made with this key, in the order they were made. */
+  reservationNumbers: string[];
   issuedById?: string;
   issuedByName?: string;
   issuedAt?: string;

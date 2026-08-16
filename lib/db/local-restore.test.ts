@@ -166,7 +166,10 @@ describe("pass-keys", () => {
       roomNumber: "402",
       nights: 7,
       expiresOn: "2026-08-25",
+      maxUses: 1,
+      usedCount: 0,
       status: "active",
+      reservationNumbers: [],
     });
 
     if (!created.ok) {
@@ -214,7 +217,7 @@ describe("pass-keys", () => {
 
     expect(await admin.reclaimLocalPassKey(key.id, "VDM-AAA111")).toMatchObject({
       status: "used",
-      reservationNumber: "VDM-AAA111",
+      reservationNumbers: ["VDM-AAA111"],
     });
   });
 
@@ -225,7 +228,86 @@ describe("pass-keys", () => {
     await admin.consumeLocalPassKey(key.code, "VDM-CCC333");
 
     expect(await admin.reclaimLocalPassKey(key.id, "VDM-AAA111")).toBeNull();
-    expect((await admin.getLocalPassKey(key.id))?.reservationNumber).toBe("VDM-CCC333");
+    expect((await admin.getLocalPassKey(key.id))?.reservationNumbers).toEqual(["VDM-CCC333"]);
+  });
+
+  it("spends a multi-use key once per dinner, then stops", async () => {
+    const admin = await loadAdminStore();
+    const created = await admin.createLocalPassKey({
+      code: "M2XR4K7QP3",
+      roomNumber: "708",
+      nights: 15,
+      maxUses: 3,
+      usedCount: 0,
+      status: "active",
+      reservationNumbers: [],
+    });
+    if (!created.ok) throw new Error("could not create the key");
+
+    expect(await admin.consumeLocalPassKey(created.key.code, "VDM-A")).toMatchObject({
+      status: "active",
+      usedCount: 1,
+    });
+    expect(await admin.consumeLocalPassKey(created.key.code, "VDM-B")).toMatchObject({
+      status: "active",
+      usedCount: 2,
+    });
+    // The third fills it; the fourth has nothing left to take.
+    expect(await admin.consumeLocalPassKey(created.key.code, "VDM-C")).toMatchObject({
+      status: "used",
+      usedCount: 3,
+    });
+    expect(await admin.consumeLocalPassKey(created.key.code, "VDM-D")).toBeNull();
+
+    const key = await admin.getLocalPassKey(created.key.id);
+    expect(key?.reservationNumbers).toEqual(["VDM-A", "VDM-B", "VDM-C"]);
+  });
+
+  it("gives back exactly one use when a booking is cancelled", async () => {
+    const admin = await loadAdminStore();
+    const created = await admin.createLocalPassKey({
+      code: "R4TNK7QP35",
+      nights: 10,
+      maxUses: 2,
+      usedCount: 0,
+      status: "active",
+      reservationNumbers: [],
+    });
+    if (!created.ok) throw new Error("could not create the key");
+
+    await admin.consumeLocalPassKey(created.key.code, "VDM-A");
+    await admin.consumeLocalPassKey(created.key.code, "VDM-B");
+    expect((await admin.getLocalPassKey(created.key.id))?.status).toBe("used");
+
+    const released = await admin.releaseLocalPassKey(created.key.id, "VDM-A");
+    expect(released).toMatchObject({ status: "active", usedCount: 1 });
+    expect(released?.reservationNumbers).toEqual(["VDM-B"]);
+
+    // The freed use can be spent on a different evening.
+    expect(await admin.consumeLocalPassKey(created.key.code, "VDM-C")).toMatchObject({ usedCount: 2 });
+  });
+
+  /**
+   * A key written before multi-use existed has neither counter. It has to read
+   * as the single-use key it was, spent or not, with no migration.
+   */
+  it("reads a key stored before multi-use as a spent single-use key", async () => {
+    const admin = await loadAdminStore();
+    const legacy = {
+      code: "LEGACYKEY1",
+      roomNumber: "402",
+      status: "used" as const,
+      reservationNumber: "VDM-OLD001",
+    };
+
+    // Written in the old shape, straight past the typed helper.
+    const created = await admin.createLocalPassKey(legacy as never);
+    if (!created.ok) throw new Error("could not create the key");
+
+    const key = await admin.getLocalPassKey(created.key.id);
+    expect(key).toMatchObject({ maxUses: 1, usedCount: 1, status: "used" });
+    expect(key?.reservationNumbers).toEqual([]);
+    expect(await admin.consumeLocalPassKey("LEGACYKEY1", "VDM-NEW001")).toBeNull();
   });
 
   it("cannot be spent once revoked", async () => {

@@ -4,14 +4,17 @@ import { cx } from "@/components/ui/utils";
 export function Card({
   children,
   className,
+  id,
   as: Component = "div",
 }: {
   children: ReactNode;
   className?: string;
+  /** Anchor for scrolling a specific card into view. */
+  id?: string;
   as?: "div" | "section" | "article";
 }) {
   return (
-    <Component className={cx("rounded-card border border-line bg-surface shadow-card", className)}>
+    <Component id={id} className={cx("rounded-card border border-line bg-surface shadow-card", className)}>
       {children}
     </Component>
   );

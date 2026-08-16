@@ -1024,6 +1024,53 @@ describe("pass-keys against MongoDB", () => {
     expect(results.filter(Boolean)).toHaveLength(1);
   });
 
+  /**
+   * The guard is a single conditional update comparing usedCount to maxUses,
+   * so three requests racing for two remaining dinners must yield exactly two
+   * bookings — never three.
+   */
+  it("hands out no more dinners than a multi-use key carries, under contention", async () => {
+    const passKeys = await loadPassKeys();
+    const issued = await passKeys.issuePassKey({ roomNumber: "708", nights: 12, maxUses: 2, actor });
+
+    expect(issued.maxUses).toBe(2);
+
+    const results = await Promise.all([
+      passKeys.consumePassKey(issued.code, "VDM-A"),
+      passKeys.consumePassKey(issued.code, "VDM-B"),
+      passKeys.consumePassKey(issued.code, "VDM-C"),
+    ]);
+
+    expect(results.filter(Boolean)).toHaveLength(2);
+
+    const after = await passKeys.getPassKeyByCode(issued.code);
+    expect(after?.usedCount).toBe(2);
+    expect(after?.status).toBe("used");
+    expect(after?.reservationNumbers).toHaveLength(2);
+  });
+
+  it("derives the number of dinners from the length of the stay", async () => {
+    const passKeys = await loadPassKeys();
+
+    // 5 nights earns one dinner, 10 earns two, 15 and beyond earn three.
+    expect((await passKeys.issuePassKey({ nights: 6, actor })).maxUses).toBe(1);
+    expect((await passKeys.issuePassKey({ nights: 10, actor })).maxUses).toBe(2);
+    expect((await passKeys.issuePassKey({ nights: 15, actor })).maxUses).toBe(3);
+    expect((await passKeys.issuePassKey({ nights: 40, actor })).maxUses).toBe(3);
+  });
+
+  it("gives a use back on cancellation and takes it again on restore", async () => {
+    const passKeys = await loadPassKeys();
+    const issued = await passKeys.issuePassKey({ nights: 10, actor });
+
+    await passKeys.consumePassKey(issued.code, "VDM-A");
+    await passKeys.consumePassKey(issued.code, "VDM-B");
+    expect((await passKeys.getPassKeyByCode(issued.code))?.status).toBe("used");
+
+    expect(await passKeys.releasePassKey(issued.id, "VDM-A")).toMatchObject({ usedCount: 1, status: "active" });
+    expect(await passKeys.reclaimPassKey(issued.id, "VDM-A")).toMatchObject({ usedCount: 2, status: "used" });
+  });
+
   it("is handed back on cancellation and only for its own booking", async () => {
     const passKeys = await loadPassKeys();
     const issued = await passKeys.issuePassKey({ roomNumber: "402", nights: 6, actor });
@@ -1032,6 +1079,30 @@ describe("pass-keys against MongoDB", () => {
 
     expect(await passKeys.releasePassKey(issued.id, "VDM-WRONG00")).toBeNull();
     expect(await passKeys.releasePassKey(issued.id, "VDM-AAA111")).toMatchObject({ status: "active" });
+  });
+
+  /**
+   * Regression: a premium key booked an everyday evening from the everyday
+   * menu, and spent itself doing it — so the invitation link it belonged to
+   * then 404'd for the guest it was posted to.
+   */
+  it("keeps invitation keys and in-house keys in their own flows", async () => {
+    const passKeys = await loadPassKeys();
+
+    const inHouse = await passKeys.issuePassKey({ roomNumber: "402", nights: 7, actor });
+    const invitation = await passKeys.issuePassKey({ kind: "premium", guestName: "Dimitrov", actor });
+
+    expect(inHouse.kind).toBe("standard");
+    expect(invitation.kind).toBe("premium");
+  });
+
+  /** An invitation has no stay, so the five-night rule cannot apply to it. */
+  it("does not hold an invitation key to the five-night rule", async () => {
+    const passKeys = await loadPassKeys();
+
+    await expect(passKeys.issuePassKey({ nights: 2, actor })).rejects.toThrow();
+    const invitation = await passKeys.issuePassKey({ kind: "premium", nights: 2, actor });
+    expect(invitation.status).toBe("active");
   });
 
   it("stops working once revoked", async () => {
@@ -1062,7 +1133,7 @@ describe("pass-keys against MongoDB", () => {
       passKeyId: issued.id,
     });
 
-    const found = await reservations.getReservationByPassKey(issued.id);
-    expect(found?.reservationNumber).toBe(number);
+    const found = await reservations.getReservationsByPassKey(issued.id);
+    expect(found.map((entry) => entry.reservationNumber)).toEqual([number]);
   });
 });

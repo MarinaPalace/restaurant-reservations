@@ -13,12 +13,34 @@ import { PASS_KEY_PREFIX, formatPassKey, isValidPassKeyFormat, normalizePassKey 
 import { cx } from "@/components/ui/utils";
 import type { MenuCourse, ReservationRecord, ReservationSelection } from "@/types/booking";
 
-type Loaded = {
+/** One booking, with whether the guest may still change it. */
+type Entry = {
   reservation: ReservationRecord;
   canModify: boolean;
   modificationDeadline: string;
   modificationBlockedReason: string | null;
 };
+
+type Loaded = {
+  usesRemaining: number;
+  reservations: Entry[];
+};
+
+
+/**
+ * Swaps one booking inside the loaded list, leaving the others alone. The key
+ * may hold several dinners, so changing one must not discard the rest.
+ */
+function replaceEntry(loaded: Loaded, reservation: ReservationRecord, patch: Partial<Entry> = {}): Loaded {
+  return {
+    ...loaded,
+    reservations: loaded.reservations.map((entry) =>
+      entry.reservation.reservationNumber === reservation.reservationNumber
+        ? { ...entry, ...patch, reservation }
+        : entry,
+    ),
+  };
+}
 
 /**
  * Self-service, opened with the pass-key from check-in: look the booking up,
@@ -32,6 +54,12 @@ type Loaded = {
 export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
   const [passKey, setPassKey] = useState("");
   const [loaded, setLoaded] = useState<Loaded | null>(null);
+  /**
+   * Which booking is open. A long stay earns more than one dinner, so a key
+   * can hold several; with only one there is nothing to choose and it opens
+   * straight away.
+   */
+  const [selectedNumber, setSelectedNumber] = useState<string | null>(null);
   const [lookupError, setLookupError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -40,6 +68,11 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
   const [activeGuest, setActiveGuest] = useState(0);
   const [actionError, setActionError] = useState("");
   const [notice, setNotice] = useState("");
+
+  // The booking currently open, if any. Declared here so the handlers below
+  // and the markup further down both read the same value.
+  const activeEntry =
+    loaded?.reservations.find((entry) => entry.reservation.reservationNumber === selectedNumber) ?? null;
 
   const lookup = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -73,7 +106,10 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
 
       const data: Loaded = await response.json();
       setLoaded(data);
-      setDraft(data.reservation.selections);
+
+      const only = data.reservations.length === 1 ? data.reservations[0] : null;
+      setSelectedNumber(only?.reservation.reservationNumber ?? null);
+      setDraft(only?.reservation.selections ?? []);
       setEditing(false);
     } catch {
       setLookupError("We could not reach the restaurant. Please check your connection and try again.");
@@ -97,9 +133,11 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
   };
 
   const saveChanges = async () => {
-    if (!loaded || busy) {
+    if (!loaded || !activeEntry || busy) {
       return;
     }
+
+    const { reservation } = activeEntry;
 
     setBusy(true);
     setActionError("");
@@ -108,7 +146,11 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
       const response = await fetch("/api/booking/manage", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ passKey: normalizePassKey(passKey), selections: draft }),
+        body: JSON.stringify({
+          passKey: normalizePassKey(passKey),
+          reservationNumber: reservation.reservationNumber,
+          selections: draft,
+        }),
       });
 
       const data = await response.json().catch(() => ({}));
@@ -118,7 +160,7 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
         return;
       }
 
-      setLoaded({ ...loaded, reservation: data.reservation });
+      setLoaded(replaceEntry(loaded, data.reservation));
       setDraft(data.reservation.selections);
       setEditing(false);
       setNotice("Your menu choices have been updated.");
@@ -130,12 +172,14 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
   };
 
   const cancelReservation = async () => {
-    if (!loaded || busy) {
+    if (!loaded || !activeEntry || busy) {
       return;
     }
 
+    const { reservation } = activeEntry;
+
     const confirmed = window.confirm(
-      `Cancel reservation ${loaded.reservation.reservationNumber}? ` +
+      `Cancel reservation ${reservation.reservationNumber}? ` +
         "Your pass-key will work again afterwards, so you can book another evening. " +
         "If you cancel by mistake, reception can put it back.",
     );
@@ -150,7 +194,10 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
       const response = await fetch("/api/booking/manage/cancel", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ passKey: normalizePassKey(passKey) }),
+        body: JSON.stringify({
+          passKey: normalizePassKey(passKey),
+          reservationNumber: reservation.reservationNumber,
+        }),
       });
 
       const data = await response.json().catch(() => ({}));
@@ -160,7 +207,9 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
         return;
       }
 
-      setLoaded({ ...loaded, reservation: { ...loaded.reservation, status: "cancelled" }, canModify: false });
+      setLoaded(
+        replaceEntry(loaded, { ...reservation, status: "cancelled" }, { canModify: false }),
+      );
       setNotice(
         "Your reservation has been cancelled. Your pass-key works again, so you can book another evening — " +
           "or call reception if this was a mistake.",
@@ -226,7 +275,60 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
     );
   }
 
-  const { reservation, canModify, modificationDeadline, modificationBlockedReason } = loaded;
+  if (!activeEntry) {
+    return (
+      <Card className="p-5 sm:p-6">
+        <CardHeader
+          as="h1"
+          eyebrow="Your reservations"
+          title="You have more than one dinner booked"
+          description={
+            loaded.usesRemaining > 0
+              ? `Choose the one you want to change. Your pass-key can still book ${loaded.usesRemaining} more.`
+              : "Choose the one you want to change."
+          }
+        />
+
+        <ul className="mt-6 space-y-3">
+          {loaded.reservations.map((entry) => (
+            <li key={entry.reservation.reservationNumber}>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedNumber(entry.reservation.reservationNumber);
+                  setDraft(entry.reservation.selections);
+                  setEditing(false);
+                  setNotice("");
+                  setActionError("");
+                }}
+                className="flex w-full items-center justify-between gap-4 rounded-control border border-line-strong bg-surface p-4 text-left transition-colors hover:border-accent"
+              >
+                <span>
+                  <span className="block font-semibold text-ink">{formatLongDate(entry.reservation.date)}</span>
+                  <span className="block text-sm text-ink-muted">
+                    {entry.reservation.reservationNumber} · {entry.reservation.guestCount}{" "}
+                    {entry.reservation.guestCount === 1 ? "guest" : "guests"}
+                    {entry.reservation.time ? ` · arrival ${entry.reservation.time}` : ""}
+                  </span>
+                </span>
+                <Badge tone={entry.reservation.status === "cancelled" ? "info" : "success"}>
+                  {entry.reservation.status}
+                </Badge>
+              </button>
+            </li>
+          ))}
+        </ul>
+
+        <div className="mt-6">
+          <ButtonLink href="/booking" size="lg">
+            Book another evening
+          </ButtonLink>
+        </div>
+      </Card>
+    );
+  }
+
+  const { reservation, canModify, modificationDeadline, modificationBlockedReason } = activeEntry;
   const guestIndexes = Array.from({ length: Math.max(reservation.guestCount, 1) }, (_, index) => index);
   const isCancelled = reservation.status === "cancelled";
 

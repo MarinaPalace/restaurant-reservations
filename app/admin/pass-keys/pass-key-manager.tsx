@@ -5,24 +5,32 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Alert, Badge, EmptyState } from "@/components/ui/feedback";
 import { Field, Input, Textarea } from "@/components/ui/field";
+import { PassKeyCard } from "@/app/admin/pass-keys/pass-key-card";
 import { formatPassKey } from "@/lib/pass-key";
 import { formatShortDate, todayKey } from "@/lib/date";
-import { MINIMUM_STAY_NIGHTS, type PassKeyRecord } from "@/types/booking";
+import {
+  MAX_USES_CAP,
+  MINIMUM_STAY_NIGHTS,
+  suggestedUsesForNights,
+  type PassKeyRecord,
+} from "@/types/booking";
 
 /**
- * Reception's screen: issue a key to an arriving guest, print the slip, and
+ * Reception's screen: issue keys to arriving guests, print them as cards, and
  * see what has been handed out.
  *
- * The key is shown once, large, immediately after it is created — that is the
- * moment it gets written on a slip and given to the guest. It stays in the
- * list afterwards, because guests lose slips and reception has to be able to
- * read it back to them.
+ * Freshly issued keys are shown as the cards they will be printed as — that is
+ * the moment they get handed over. They stay in the list afterwards, because
+ * guests lose cards and reception has to be able to read one back.
  */
 
 type Props = {
   initialPassKeys: PassKeyRecord[];
-  /** Where guests go to redeem one. Printed on the slip. */
+  /** Where in-house guests go to redeem one. Printed on the card. */
   bookingUrl: string;
+  /** The invitation address; the key is appended so the link opens directly. */
+  invitationUrl: string;
+  restaurantName: string;
 };
 
 type Status = "all" | "active" | "used" | "revoked";
@@ -49,26 +57,50 @@ function statusLabel(key: PassKeyRecord, today: string) {
   return "active";
 }
 
-export function PassKeyManager({ initialPassKeys, bookingUrl }: Props) {
+export function PassKeyManager({ initialPassKeys, bookingUrl, invitationUrl, restaurantName }: Props) {
   const [passKeys, setPassKeys] = useState(initialPassKeys);
+  const [kind, setKind] = useState<"standard" | "premium">("standard");
   const [roomNumber, setRoomNumber] = useState("");
   const [guestName, setGuestName] = useState("");
   const [nights, setNights] = useState("");
+  const [expiresOn, setExpiresOn] = useState("");
+  const [maxUses, setMaxUses] = useState("");
+  const [quantity, setQuantity] = useState("1");
   const [note, setNote] = useState("");
   const [allowShortStay, setAllowShortStay] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [issued, setIssued] = useState<PassKeyRecord | null>(null);
+  const [issued, setIssued] = useState<PassKeyRecord[]>([]);
+  const [editing, setEditing] = useState<PassKeyRecord | null>(null);
   const [filter, setFilter] = useState<Status>("all");
 
   const today = todayKey();
   const nightCount = Number(nights);
-  const isShortStay = Number.isInteger(nightCount) && nightCount > 0 && nightCount < MINIMUM_STAY_NIGHTS;
+  const hasNights = Number.isInteger(nightCount) && nightCount > 0;
+  const isShortStay = hasNights && nightCount < MINIMUM_STAY_NIGHTS;
+
+  // Both fields follow the stay until reception overrides them.
+  const effectiveExpiry = expiresOn || (hasNights ? checkoutFrom(nightCount) : "");
+  const effectiveUses = maxUses || String(suggestedUsesForNights(hasNights ? nightCount : undefined));
 
   const visible = useMemo(
     () => (filter === "all" ? passKeys : passKeys.filter((key) => key.status === filter)),
     [passKeys, filter],
   );
+
+  /**
+   * Printing cards and printing the list are different page setups, so the
+   * root is marked for the duration of the print and unmarked afterwards.
+   */
+  const printCards = () => {
+    document.documentElement.setAttribute("data-printing-cards", "");
+    const done = () => {
+      document.documentElement.removeAttribute("data-printing-cards");
+      window.removeEventListener("afterprint", done);
+    };
+    window.addEventListener("afterprint", done);
+    window.print();
+  };
 
   const issue = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -84,13 +116,13 @@ export function PassKeyManager({ initialPassKeys, bookingUrl }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          kind,
           roomNumber: roomNumber.trim() || undefined,
           guestName: guestName.trim() || undefined,
-          nights: Number.isInteger(nightCount) && nightCount > 0 ? nightCount : undefined,
-          // The key stops working when the guest checks out, so a dinner
-          // cannot be booked for an evening after they have gone.
-          expiresOn:
-            Number.isInteger(nightCount) && nightCount > 0 ? checkoutFrom(nightCount) : undefined,
+          nights: hasNights ? nightCount : undefined,
+          expiresOn: effectiveExpiry || undefined,
+          maxUses: Number(effectiveUses) || undefined,
+          quantity: Number(quantity) || 1,
           note: note.trim() || undefined,
           allowShortStay: allowShortStay || undefined,
         }),
@@ -103,13 +135,45 @@ export function PassKeyManager({ initialPassKeys, bookingUrl }: Props) {
         return;
       }
 
-      setPassKeys((current) => [data.passKey, ...current]);
-      setIssued(data.passKey);
+      const created: PassKeyRecord[] = data.passKeys ?? [data.passKey];
+      setPassKeys((current) => [...created, ...current]);
+      setIssued(created);
+      setKind("standard");
       setRoomNumber("");
       setGuestName("");
       setNights("");
+      setExpiresOn("");
+      setMaxUses("");
+      setQuantity("1");
       setNote("");
       setAllowShortStay(false);
+    } catch {
+      setError("We could not reach the server. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveEdit = async (key: PassKeyRecord, patch: { expiresOn?: string | null; maxUses?: number }) => {
+    setBusy(true);
+    setError("");
+
+    try {
+      const response = await fetch(`/api/admin/pass-keys/${encodeURIComponent(key.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setError(data.error ?? "Unable to update this pass-key.");
+        return;
+      }
+
+      setPassKeys((current) => current.map((entry) => (entry.id === key.id ? data.passKey : entry)));
+      setEditing(null);
     } catch {
       setError("We could not reach the server. Please try again.");
     } finally {
@@ -122,10 +186,12 @@ export function PassKeyManager({ initialPassKeys, bookingUrl }: Props) {
       return;
     }
 
+    const booked = key.reservationNumbers ?? [];
     const confirmed = window.confirm(
       `Revoke ${formatPassKey(key.code)}? It will stop working immediately. ` +
-        (key.reservationNumber
-          ? `Reservation ${key.reservationNumber} is NOT cancelled — cancel it separately if that is what you want.`
+        (booked.length
+          ? `${booked.length === 1 ? "Reservation" : "Reservations"} ${booked.join(", ")} ` +
+            `${booked.length === 1 ? "is" : "are"} NOT cancelled — cancel separately if that is what you want.`
           : "No reservation has been made with it."),
     );
     if (!confirmed) {
@@ -147,9 +213,6 @@ export function PassKeyManager({ initialPassKeys, bookingUrl }: Props) {
       }
 
       setPassKeys((current) => current.map((entry) => (entry.id === key.id ? data.passKey : entry)));
-      if (issued?.id === key.id) {
-        setIssued(data.passKey);
-      }
     } catch {
       setError("We could not reach the server. Please try again.");
     } finally {
@@ -159,57 +222,45 @@ export function PassKeyManager({ initialPassKeys, bookingUrl }: Props) {
 
   return (
     <>
-      <Card className="p-5 sm:p-6">
+      <Card className="p-5 sm:p-6" data-print="hide">
         <CardHeader
           as="h1"
           eyebrow="Front desk"
           title="Pass-keys"
-          description={`Issued at check-in. One key books one dinner, and only for a stay of ${MINIMUM_STAY_NIGHTS} nights or more.`}
-          actions={
-            <div className="flex flex-wrap gap-3" data-print="hide">
-              <ButtonLink href="/admin">Dashboard</ButtonLink>
-            </div>
-          }
+          description={`Issued at check-in for a stay of ${MINIMUM_STAY_NIGHTS} nights or more. A stay earns one dinner per ${MINIMUM_STAY_NIGHTS} nights, up to ${MAX_USES_CAP}.`}
+          actions={<ButtonLink href="/admin">Dashboard</ButtonLink>}
         />
 
-        {/* The slip. Printing the page gives reception something to hand over. */}
-        {issued ? (
-          <div className="mt-6 rounded-card border-2 border-accent bg-surface-muted p-6 text-center print:border-black">
-            <p className="eyebrow">
-              {issued.roomNumber ? `Room ${issued.roomNumber}` : (issued.guestName ?? "Pass-key")}
+        <form onSubmit={issue} className="mt-6 grid gap-4 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <p id="key-kind-label" className="text-sm font-medium text-ink">
+              What kind of key
             </p>
-            <p className="mt-3 select-all font-mono text-3xl font-bold tracking-widest text-ink sm:text-4xl">
-              {formatPassKey(issued.code)}
-            </p>
-            <p className="mt-4 text-sm text-ink-muted">
-              Book your dinner at <span className="font-semibold text-ink">{bookingUrl}</span>
-            </p>
-            {issued.expiresOn ? (
-              <p className="mt-1 text-sm text-ink-muted">
-                Valid until {formatShortDate(issued.expiresOn)} · one reservation
-              </p>
-            ) : (
-              <p className="mt-1 text-sm text-ink-muted">One reservation</p>
-            )}
-
-            <div className="mt-5 flex flex-wrap justify-center gap-3" data-print="hide">
-              <Button variant="secondary" onClick={() => window.print()}>
-                Print this slip
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => navigator.clipboard?.writeText(formatPassKey(issued.code))}
-              >
-                Copy the key
-              </Button>
-              <Button variant="ghost" onClick={() => setIssued(null)}>
-                Done
-              </Button>
+            <div role="group" aria-labelledby="key-kind-label" className="mt-2 flex flex-wrap gap-2">
+              {(
+                [
+                  { id: "standard", label: "In-house guest", hint: "Staying with us now" },
+                  { id: "premium", label: "Invitation", hint: "Not staying — booking from the premium menu" },
+                ] as const
+              ).map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  aria-pressed={kind === option.id}
+                  onClick={() => setKind(option.id)}
+                  className={
+                    kind === option.id
+                      ? "rounded-control border border-primary bg-primary px-4 py-2 text-sm font-semibold text-primary-fg"
+                      : "rounded-control border border-line-strong bg-surface px-4 py-2 text-sm font-medium text-ink hover:border-accent"
+                  }
+                >
+                  {option.label}
+                  <span className="block text-xs font-normal opacity-80">{option.hint}</span>
+                </button>
+              ))}
             </div>
           </div>
-        ) : null}
 
-        <form onSubmit={issue} className="mt-6 grid gap-4 sm:grid-cols-2" data-print="hide">
           <Field label="Room number" hint="For your own reference — guests confirm their room when booking.">
             {(fieldProps) => (
               <Input
@@ -236,7 +287,7 @@ export function PassKeyManager({ initialPassKeys, bookingUrl }: Props) {
             )}
           </Field>
 
-          <Field label="Nights staying" hint="Sets when the key expires, so it cannot outlive the stay.">
+          <Field label="Nights staying" hint="Sets the suggested expiry and number of dinners.">
             {(fieldProps) => (
               <Input
                 {...fieldProps}
@@ -252,18 +303,58 @@ export function PassKeyManager({ initialPassKeys, bookingUrl }: Props) {
             )}
           </Field>
 
-          <Field label="Note (optional)">
+          <Field label="Valid until" hint="Check-out. The key stops working after this date.">
             {(fieldProps) => (
-              <Textarea
+              <Input
                 {...fieldProps}
-                rows={2}
-                maxLength={200}
-                placeholder="Anything worth recording"
-                value={note}
-                onChange={(event) => setNote(event.target.value)}
+                type="date"
+                min={today}
+                value={effectiveExpiry}
+                onChange={(event) => setExpiresOn(event.target.value)}
               />
             )}
           </Field>
+
+          <Field label="Dinners on this key" hint={`One per ${MINIMUM_STAY_NIGHTS} nights, up to ${MAX_USES_CAP}.`}>
+            {(fieldProps) => (
+              <Input
+                {...fieldProps}
+                inputMode="numeric"
+                maxLength={1}
+                value={effectiveUses}
+                onChange={(event) =>
+                  setMaxUses(event.target.value.replace(/[^1-9]/g, "").slice(0, 1))
+                }
+              />
+            )}
+          </Field>
+
+          <Field label="How many keys" hint="For a family or a group arriving together.">
+            {(fieldProps) => (
+              <Input
+                {...fieldProps}
+                inputMode="numeric"
+                maxLength={2}
+                value={quantity}
+                onChange={(event) => setQuantity(event.target.value.replace(/[^0-9]/g, ""))}
+              />
+            )}
+          </Field>
+
+          <div className="sm:col-span-2">
+            <Field label="Note (optional)">
+              {(fieldProps) => (
+                <Textarea
+                  {...fieldProps}
+                  rows={2}
+                  maxLength={200}
+                  placeholder="Anything worth recording"
+                  value={note}
+                  onChange={(event) => setNote(event.target.value)}
+                />
+              )}
+            </Field>
+          </div>
 
           {isShortStay ? (
             <div className="sm:col-span-2">
@@ -276,8 +367,8 @@ export function PassKeyManager({ initialPassKeys, bookingUrl }: Props) {
                     onChange={(event) => setAllowShortStay(event.target.checked)}
                   />
                   <span>
-                    This stay is under {MINIMUM_STAY_NIGHTS} nights. Tick to issue a key anyway — the exception is
-                    recorded against your account in the log.
+                    This stay is under {MINIMUM_STAY_NIGHTS} nights. Tick to issue anyway — the exception is recorded
+                    against your account in the log.
                   </span>
                 </label>
               </Alert>
@@ -292,11 +383,51 @@ export function PassKeyManager({ initialPassKeys, bookingUrl }: Props) {
 
           <div className="sm:col-span-2">
             <Button type="submit" size="lg" loading={busy} loadingLabel="Issuing…">
-              Issue a pass-key
+              {Number(quantity) > 1 ? `Issue ${quantity} pass-keys` : "Issue a pass-key"}
             </Button>
           </div>
         </form>
       </Card>
+
+      {/* The cards themselves — what gets printed and handed over. */}
+      {issued.length > 0 ? (
+        <Card className="mt-6 p-5 sm:p-6" data-print="hide">
+          <CardHeader
+            as="h2"
+            title={issued.length > 1 ? `${issued.length} pass-keys ready` : "Pass-key ready"}
+            description="Print, cut along the dashed lines, and hand them over. Nine to a sheet."
+            actions={
+              <div className="flex flex-wrap gap-3">
+                <Button onClick={printCards}>Print the cards</Button>
+                <Button
+                  variant="secondary"
+                  onClick={() =>
+                    navigator.clipboard?.writeText(issued.map((key) => formatPassKey(key.code)).join("\n"))
+                  }
+                >
+                  Copy the codes
+                </Button>
+                <Button variant="ghost" onClick={() => setIssued([])}>
+                  Done
+                </Button>
+              </div>
+            }
+          />
+
+          <div data-print-cards="" className="mt-6 flex flex-wrap gap-4">
+            {issued.map((key) => (
+              <PassKeyCard
+                key={key.id}
+                passKey={key}
+                bookingUrl={
+                  key.kind === "premium" ? `${invitationUrl}/${formatPassKey(key.code)}` : bookingUrl
+                }
+                restaurantName={restaurantName}
+              />
+            ))}
+          </div>
+        </Card>
+      ) : null}
 
       <Card className="mt-6 p-5 sm:p-6" data-print="hide">
         <CardHeader
@@ -324,23 +455,21 @@ export function PassKeyManager({ initialPassKeys, bookingUrl }: Props) {
             <EmptyState
               title="No pass-keys here"
               description={
-                filter === "all"
-                  ? "Issue one above when a guest checks in."
-                  : "Nothing with that status yet."
+                filter === "all" ? "Issue one above when a guest checks in." : "Nothing with that status yet."
               }
             />
           </div>
         ) : (
-          <div className="mt-6 overflow-x-auto">
-            <table className="w-full min-w-[46rem] text-left text-sm">
+          <div data-print-scroll="" className="mt-6 overflow-x-auto">
+            <table className="w-full min-w-[52rem] text-left text-sm">
               <thead className="border-b border-line text-xs uppercase tracking-wide text-ink-subtle">
                 <tr>
                   <th scope="col" className="py-2 pr-4">Key</th>
                   <th scope="col" className="py-2 pr-4">Room / guest</th>
                   <th scope="col" className="py-2 pr-4">Valid until</th>
+                  <th scope="col" className="py-2 pr-4">Dinners</th>
                   <th scope="col" className="py-2 pr-4">Status</th>
-                  <th scope="col" className="py-2 pr-4">Booking</th>
-                  <th scope="col" className="py-2 pr-4">Issued by</th>
+                  <th scope="col" className="py-2 pr-4">Bookings</th>
                   <th scope="col" className="py-2">
                     <span className="sr-only">Actions</span>
                   </th>
@@ -353,22 +482,37 @@ export function PassKeyManager({ initialPassKeys, bookingUrl }: Props) {
                     <td className="py-3 pr-4 text-ink">
                       {key.roomNumber || "—"}
                       {key.guestName ? <span className="block text-ink-muted">{key.guestName}</span> : null}
+                      {key.kind === "premium" ? (
+                        <span className="block text-xs font-medium text-accent-ink">invitation</span>
+                      ) : null}
                     </td>
                     <td className="py-3 pr-4 text-ink-muted">
                       {key.expiresOn ? formatShortDate(key.expiresOn) : "no expiry"}
                       {key.nights ? <span className="block text-xs">{key.nights} night(s)</span> : null}
                     </td>
+                    <td className="py-3 pr-4 tabular-nums text-ink">
+                      {Math.max(key.maxUses - key.usedCount, 0)} of {key.maxUses} left
+                    </td>
                     <td className="py-3 pr-4">
                       <Badge tone={statusTone(key, today)}>{statusLabel(key, today)}</Badge>
                     </td>
-                    <td className="py-3 pr-4 text-ink-muted">{key.reservationNumber ?? "—"}</td>
-                    <td className="py-3 pr-4 text-ink-muted">{key.issuedByName ?? "—"}</td>
-                    <td className="py-3 text-right">
-                      {key.status === "revoked" ? null : (
-                        <Button variant="danger" onClick={() => revoke(key)} disabled={busy}>
-                          Revoke
+                    <td className="py-3 pr-4 text-ink-muted">
+                      {key.reservationNumbers?.length ? key.reservationNumbers.join(", ") : "—"}
+                    </td>
+                    <td className="py-3">
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          variant="secondary"
+                          onClick={() => setEditing(editing?.id === key.id ? null : key)}
+                        >
+                          {editing?.id === key.id ? "Close" : "Edit"}
                         </Button>
-                      )}
+                        {key.status === "revoked" ? null : (
+                          <Button variant="danger" onClick={() => revoke(key)} disabled={busy}>
+                            Revoke
+                          </Button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -376,7 +520,92 @@ export function PassKeyManager({ initialPassKeys, bookingUrl }: Props) {
             </table>
           </div>
         )}
+
+        {editing ? (
+          <EditPassKey
+            key={editing.id}
+            passKey={editing}
+            busy={busy}
+            today={today}
+            onSave={(patch) => saveEdit(editing, patch)}
+            onCancel={() => setEditing(null)}
+          />
+        ) : null}
       </Card>
     </>
+  );
+}
+
+/**
+ * Extending a stay: move the expiry, and add a dinner if the longer stay now
+ * earns one. The guest keeps the card they were given.
+ */
+function EditPassKey({
+  passKey,
+  busy,
+  today,
+  onSave,
+  onCancel,
+}: {
+  passKey: PassKeyRecord;
+  busy: boolean;
+  today: string;
+  onSave: (patch: { expiresOn?: string | null; maxUses?: number }) => void;
+  onCancel: () => void;
+}) {
+  const [expiresOn, setExpiresOn] = useState(passKey.expiresOn ?? "");
+  const [maxUses, setMaxUses] = useState(String(passKey.maxUses));
+
+  return (
+    <div className="mt-6 rounded-control border border-accent bg-surface-muted p-4">
+      <h3 className="font-semibold text-ink">
+        Editing <span className="font-mono">{formatPassKey(passKey.code)}</span>
+      </h3>
+      <p className="mt-1 text-sm text-ink-muted">
+        {passKey.usedCount} dinner(s) already booked with this key.
+      </p>
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <Field label="Valid until">
+          {(fieldProps) => (
+            <Input
+              {...fieldProps}
+              type="date"
+              min={today}
+              value={expiresOn}
+              onChange={(event) => setExpiresOn(event.target.value)}
+            />
+          )}
+        </Field>
+
+        <Field
+          label="Dinners on this key"
+          hint={`Cannot go below the ${passKey.usedCount} already booked.`}
+        >
+          {(fieldProps) => (
+            <Input
+              {...fieldProps}
+              inputMode="numeric"
+              maxLength={1}
+              value={maxUses}
+              onChange={(event) => setMaxUses(event.target.value.replace(/[^1-9]/g, "").slice(0, 1))}
+            />
+          )}
+        </Field>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-3">
+        <Button
+          loading={busy}
+          loadingLabel="Saving…"
+          onClick={() => onSave({ expiresOn: expiresOn || null, maxUses: Number(maxUses) || passKey.maxUses })}
+        >
+          Save changes
+        </Button>
+        <Button variant="secondary" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
   );
 }

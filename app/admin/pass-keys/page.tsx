@@ -6,6 +6,7 @@ import { PassKeyManager } from "@/app/admin/pass-keys/pass-key-manager";
 import { getCurrentStaffUser } from "@/lib/auth/guard";
 import { hasPermission } from "@/lib/auth/permissions";
 import { listPassKeys } from "@/lib/services/pass-keys";
+import { RESTAURANT_NAME } from "@/lib/brand";
 
 export const metadata: Metadata = { title: "Pass-keys" };
 
@@ -34,7 +35,12 @@ export default async function AdminPassKeysPage() {
 
   return (
     <PageShell width="xl" headerHref="/admin">
-      <PassKeyManager initialPassKeys={passKeys} bookingUrl={`${host}/booking`} />
+      <PassKeyManager
+        initialPassKeys={passKeys}
+        bookingUrl={`${host}/booking`}
+        invitationUrl={`${host}/premium`}
+        restaurantName={RESTAURANT_NAME}
+      />
     </PageShell>
   );
 }

@@ -22,20 +22,36 @@ that key and the room they are currently in.
 VDM-K7QP-3M2X-R4TN
 ```
 
-Twelve characters of Crockford base32: no `I`, `L`, `O` or `U`, so nothing on the slip is ambiguous;
-case-insensitive; dashes and spaces ignored; and the characters people type when they misread a slip
-(`O` for zero, `I` or `l` for one) are folded onto what they meant. `vdm-k7qp-3m2x-r4tn` and
-`VDMK7QP3M2XR4TN` are the same key.
+Ten characters of Crockford base32: no `I`, `L`, `O` or `U`, so nothing on the card is ambiguous;
+case-insensitive; dashes and spaces ignored; and the characters people type when they misread a card
+(`O` for zero, `I` or `l` for one) are folded onto what they meant. `vdm-k7qp3-m2xr4` and
+`VDMK7QP3M2XR4` are the same key. The `VDM-` prefix is already in the box, so guests only type the
+part that varies.
 
-A key books **one** dinner and then goes inactive, and it expires when the stay does, so a table
-cannot be held for an evening after check-out. Reception records the number of nights when issuing
-one; a stay under five nights is refused unless somebody deliberately overrides it, which is
-recorded on the key and in the log.
+**A long stay earns more than one dinner** — one per five nights, up to three. Reception sets the
+number and the expiry date when issuing, can issue a batch in one go for a family arriving together,
+and can edit both later when a stay is extended. A key expires when the stay does, so a table cannot
+be held for an evening after check-out, and a stay under five nights is refused unless somebody
+deliberately overrides it, which is recorded on the key and in the log.
 
-**Changing your booking.** The pass-key is also how a guest returns to their reservation — *not* the
+Keys print as **credit-card-sized cards** with the code, the address to book at, the expiry and how
+many dinners are on it — several to a sheet with dashed cut lines.
+
+**The key is checked on the first screen**, not when the finished booking is submitted, so nobody
+picks a date and a full menu for four people only to be told the key was spent. The date calendar
+then shows how long the key is good for and greys out evenings after the stay ends.
+
+**Changing your booking.** The pass-key is also how a guest returns to their reservations — *not* the
 reservation number, which they hand to other rooms so they can share a table and which would
-therefore let any of those rooms cancel it. Cancelling **gives the key back**, so a guest who
-cancels can book another evening rather than losing dinner for the whole stay over one tap.
+therefore let any of those rooms cancel it. A key holding several dinners lists them all and the
+guest picks one. Cancelling **gives a use back**, so a guest who cancels can book another evening
+rather than losing dinner over one tap.
+
+**Invitations.** Guests who are not staying get the same kind of key, marked as an invitation, and
+receive it as a link — `/premium/<pass-key>` — so they go from the email straight into the booking
+without typing anything. Invitation keys only work on the invitation flow and in-house keys only
+work on the everyday one; each is refused on the other. This closes the old hole where anyone who
+came across the `/premium` address could take a seat held for an invited guest.
 
 **Staff accounts.** Each member of staff signs in as themselves at `/admin/users`, with their own
 permissions: take, edit, cancel and restore reservations; edit the menus; manage evenings; issue

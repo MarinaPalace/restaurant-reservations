@@ -3,8 +3,20 @@ import { verifyAdminCredentials } from "@/lib/auth/admin";
 import { AdminConfigError, ENVIRONMENT_ADMIN_ID, startAdminSession } from "@/lib/auth/session";
 import { verifyStaffCredentials } from "@/lib/services/staff-users";
 import { adminLoginSchema } from "@/lib/validation/booking";
+import { checkRateLimit, clientKeyFrom } from "@/lib/rate-limit";
 
 export async function POST(request: Request) {
+  // Slower than the guest limits: a member of staff mistyping a password a
+  // few times is normal, a script trying hundreds is not.
+  const limit = checkRateLimit(clientKeyFrom(request, "admin-login"), { limit: 10, windowMs: 5 * 60_000 });
+
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "Too many sign-in attempts. Please wait a few minutes and try again." },
+      { status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds) } },
+    );
+  }
+
   try {
     const parsed = adminLoginSchema.safeParse(await request.json());
 

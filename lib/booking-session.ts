@@ -6,6 +6,7 @@ import type { ReservationRecord, ReservationSelection } from "@/types/booking";
 
 export const BOOKING_STORAGE_KEYS = {
   passKey: "booking-pass-key",
+  passKeyExpiresOn: "booking-pass-key-expires",
   roomNumber: "booking-room-number",
   guestCount: "booking-guest-count",
   date: "booking-date",
@@ -21,6 +22,12 @@ export type BookingSession = {
    * person is a guest here.
    */
   passKey: string;
+  /**
+   * When the key stops working — check-out, normally. Held so the date step
+   * can grey out evenings after the stay and say why, rather than letting the
+   * guest pick one and be refused at the end.
+   */
+  passKeyExpiresOn: string;
   roomNumber: string;
   /** 0 means "not chosen yet", which is different from a party of one. */
   guestCount: number;
@@ -31,6 +38,7 @@ export type BookingSession = {
 
 export const EMPTY_BOOKING_SESSION: BookingSession = {
   passKey: "",
+  passKeyExpiresOn: "",
   roomNumber: "",
   guestCount: 0,
   date: "",
@@ -93,8 +101,11 @@ export function readBookingSession(storage: Storage | null | undefined): Booking
   const date = storage.getItem(BOOKING_STORAGE_KEYS.date) ?? "";
   const passKey = storage.getItem(BOOKING_STORAGE_KEYS.passKey) ?? "";
 
+  const passKeyExpiresOn = storage.getItem(BOOKING_STORAGE_KEYS.passKeyExpiresOn) ?? "";
+
   return {
     passKey: isValidPassKeyFormat(passKey) ? normalizePassKey(passKey) : "",
+    passKeyExpiresOn: isValidDateKey(passKeyExpiresOn) ? passKeyExpiresOn : "",
     roomNumber: isValidRoomNumber(roomNumber) ? normalizeRoomNumber(roomNumber) : "",
     guestCount: parseGuestCount(storage.getItem(BOOKING_STORAGE_KEYS.guestCount)),
     date: isValidDateKey(date) ? date : "",

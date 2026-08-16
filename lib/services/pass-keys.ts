@@ -9,11 +9,19 @@ import {
   reclaimLocalPassKey,
   releaseLocalPassKey,
   revokeLocalPassKey,
+  updateLocalPassKey,
 } from "@/lib/db/local-admin-store";
 import { generatePassKeyCode, normalizePassKey } from "@/lib/pass-key";
 import { todayKey } from "@/lib/date";
 import { normalizeRoomNumber } from "@/lib/room";
-import { MINIMUM_STAY_NIGHTS, type Actor, type PassKeyRecord } from "@/types/booking";
+import {
+  MAX_USES_CAP,
+  MINIMUM_STAY_NIGHTS,
+  suggestedUsesForNights,
+  type Actor,
+  type MenuKind,
+  type PassKeyRecord,
+} from "@/types/booking";
 
 /**
  * Pass-keys: the proof of being a guest here, and the guest's credential for
@@ -33,7 +41,7 @@ import { MINIMUM_STAY_NIGHTS, type Actor, type PassKeyRecord } from "@/types/boo
 
 export const PASS_KEY_MESSAGES = {
   invalid: "That pass-key is not valid. Please check the slip you were given at reception.",
-  used: "That pass-key has already been used for a reservation. Please speak to reception.",
+  used: "That pass-key has no dinners left on it. Please speak to reception.",
   revoked: "That pass-key is no longer valid. Please speak to reception.",
   expired: "That pass-key has expired. Please speak to reception.",
   afterStay: "That evening falls after your stay ends. Please choose an earlier date.",
@@ -51,17 +59,58 @@ export class PassKeyError extends Error {
 
 type MongoPassKeyDocument = Record<string, unknown>;
 
+/**
+ * Reads a stored key, filling in what multi-use added.
+ *
+ * A key written before multi-use has neither counter and a `status` of
+ * "active" or "used". It reads as a one-use key, spent or not according to
+ * that status — which is exactly what it was, so nothing needed migrating.
+ * The same goes for the old single `reservationNumber`.
+ */
+export function normalizePassKeyCounts(input: {
+  maxUses?: unknown;
+  usedCount?: unknown;
+  status?: unknown;
+  reservationNumbers?: unknown;
+  reservationNumber?: unknown;
+}): Pick<PassKeyRecord, "maxUses" | "usedCount" | "status" | "reservationNumbers"> {
+  const maxUses = typeof input.maxUses === "number" && input.maxUses > 0 ? input.maxUses : 1;
+  const legacyStatus = input.status === "revoked" || input.status === "used" ? input.status : "active";
+
+  const usedCount =
+    typeof input.usedCount === "number"
+      ? Math.max(input.usedCount, 0)
+      : // No counter: a legacy key, spent iff it said so.
+        legacyStatus === "used"
+        ? 1
+        : 0;
+
+  const reservationNumbers = Array.isArray(input.reservationNumbers)
+    ? input.reservationNumbers.map(String)
+    : input.reservationNumber
+      ? [String(input.reservationNumber)]
+      : [];
+
+  return {
+    maxUses,
+    usedCount,
+    // Revoked is the only stored state; "used" is a fact about the counters.
+    status: legacyStatus === "revoked" ? "revoked" : usedCount >= maxUses ? "used" : "active",
+    reservationNumbers,
+  };
+}
+
 function toPassKeyRecord(document: MongoPassKeyDocument): PassKeyRecord {
   return {
     _id: String(document._id),
     id: String(document._id),
     code: String(document.code),
+    kind: document.kind === "premium" ? "premium" : "standard",
     roomNumber: document.roomNumber ? String(document.roomNumber) : undefined,
     guestName: document.guestName ? String(document.guestName) : undefined,
     nights: typeof document.nights === "number" ? document.nights : undefined,
     expiresOn: document.expiresOn ? String(document.expiresOn) : undefined,
-    status: (document.status as PassKeyRecord["status"]) ?? "active",
-    reservationNumber: document.reservationNumber ? String(document.reservationNumber) : undefined,
+    ...normalizePassKeyCounts(document),
     issuedById: document.issuedById ? String(document.issuedById) : undefined,
     issuedByName: document.issuedByName ? String(document.issuedByName) : undefined,
     issuedAt: document.createdAt ? new Date(document.createdAt as string).toISOString() : undefined,
@@ -90,7 +139,7 @@ export function describePassKeyProblem(
     return { code: "REVOKED", message: PASS_KEY_MESSAGES.revoked };
   }
 
-  if (key.status === "used") {
+  if (key.usedCount >= key.maxUses) {
     return { code: "USED", message: PASS_KEY_MESSAGES.used };
   }
 
@@ -174,26 +223,48 @@ export class ShortStayError extends Error {
  * hotel always has exceptions; it is recorded on the key and in the log.
  */
 export async function issuePassKey(input: {
+  /** `premium` issues an invitation key rather than an in-house one. */
+  kind?: MenuKind;
   roomNumber?: string;
   guestName?: string;
   nights?: number;
   expiresOn?: string;
+  /** Dinners this key may book. Defaults to what the stay length earns. */
+  maxUses?: number;
   note?: string;
   allowShortStay?: boolean;
   actor: Actor;
 }): Promise<PassKeyRecord> {
   const nights = input.nights;
 
-  if (!input.allowShortStay && typeof nights === "number" && nights < MINIMUM_STAY_NIGHTS) {
+  /**
+   * The five-night rule is about earning dinner as part of a stay, so it does
+   * not apply to an invitation — those guests are not staying here at all.
+   */
+  if (
+    input.kind !== "premium" &&
+    !input.allowShortStay &&
+    typeof nights === "number" &&
+    nights < MINIMUM_STAY_NIGHTS
+  ) {
     throw new ShortStayError();
   }
 
+  const maxUses = Math.min(
+    Math.max(input.maxUses ?? suggestedUsesForNights(nights), 1),
+    MAX_USES_CAP,
+  );
+
   const base = {
+    kind: input.kind ?? ("standard" as const),
     roomNumber: input.roomNumber ? normalizeRoomNumber(input.roomNumber) : undefined,
     guestName: input.guestName?.trim() || undefined,
     nights,
     expiresOn: input.expiresOn,
+    maxUses,
+    usedCount: 0,
     status: "active" as const,
+    reservationNumbers: [] as string[],
     issuedById: input.actor.id,
     issuedByName: input.actor.name,
     note: input.note?.trim() || undefined,
@@ -247,13 +318,42 @@ export async function consumePassKey(
 
   await connectToDatabase();
 
+  /**
+   * One conditional update, and the condition is "there is a use left".
+   *
+   * `$expr` compares the two counters inside the write itself, so two requests
+   * racing with the same code cannot both succeed on the last remaining use —
+   * exactly as the seat accounting compares capacity to reserved.
+   *
+   * The `$ifNull` wrappers are what let a key written before multi-use take
+   * part: it reads as 0 of 1.
+   */
   const consumed = await PassKeyModel.findOneAndUpdate(
-    { code: normalized, status: "active" },
-    { $set: { status: "used", reservationNumber, usedAt: new Date() } },
+    {
+      code: normalized,
+      status: { $ne: "revoked" },
+      $expr: {
+        $lt: [{ $ifNull: ["$usedCount", 0] }, { $ifNull: ["$maxUses", 1] }],
+      },
+    },
+    {
+      $inc: { usedCount: 1 },
+      $addToSet: { reservationNumbers: reservationNumber },
+      $set: { usedAt: new Date() },
+    },
     { returnDocument: "after" },
   ).lean();
 
-  return consumed ? toPassKeyRecord(consumed as MongoPassKeyDocument) : null;
+  if (!consumed) {
+    return null;
+  }
+
+  // Keep the legacy status field agreeing with the counters, so anything
+  // reading the raw document still sees the truth.
+  const record = toPassKeyRecord(consumed as MongoPassKeyDocument);
+  await PassKeyModel.updateOne({ _id: record.id }, { $set: { status: record.status } });
+
+  return record;
 }
 
 /**
@@ -278,13 +378,36 @@ export async function releasePassKey(id: string, reservationNumber: string): Pro
 
   await connectToDatabase();
 
+  /**
+   * Give one use back — and only the use this booking took. Matching on the
+   * reservation number is what stops a late request refunding a use that was
+   * since spent on a different dinner.
+   *
+   * The legacy single-value field is matched too, so a booking made before
+   * multi-use can still be cancelled.
+   */
   const released = await PassKeyModel.findOneAndUpdate(
-    { _id: id, status: "used", reservationNumber },
-    { $set: { status: "active" }, $unset: { usedAt: "" } },
+    {
+      _id: id,
+      $or: [{ reservationNumbers: reservationNumber }, { reservationNumber }],
+      $expr: { $gt: [{ $ifNull: ["$usedCount", 1] }, 0] },
+    },
+    {
+      $inc: { usedCount: -1 },
+      $pull: { reservationNumbers: reservationNumber },
+      $unset: { reservationNumber: "" },
+    },
     { returnDocument: "after" },
   ).lean();
 
-  return released ? toPassKeyRecord(released as MongoPassKeyDocument) : null;
+  if (!released) {
+    return null;
+  }
+
+  const record = toPassKeyRecord(released as MongoPassKeyDocument);
+  await PassKeyModel.updateOne({ _id: record.id }, { $set: { status: record.status } });
+
+  return record;
 }
 
 /**
@@ -308,12 +431,103 @@ export async function reclaimPassKey(id: string, reservationNumber: string): Pro
   await connectToDatabase();
 
   const reclaimed = await PassKeyModel.findOneAndUpdate(
-    { _id: id, status: "active" },
-    { $set: { status: "used", reservationNumber, usedAt: new Date() } },
+    {
+      _id: id,
+      status: { $ne: "revoked" },
+      $expr: { $lt: [{ $ifNull: ["$usedCount", 0] }, { $ifNull: ["$maxUses", 1] }] },
+    },
+    {
+      $inc: { usedCount: 1 },
+      $addToSet: { reservationNumbers: reservationNumber },
+      $set: { usedAt: new Date() },
+    },
     { returnDocument: "after" },
   ).lean();
 
-  return reclaimed ? toPassKeyRecord(reclaimed as MongoPassKeyDocument) : null;
+  if (!reclaimed) {
+    return null;
+  }
+
+  const record = toPassKeyRecord(reclaimed as MongoPassKeyDocument);
+  await PassKeyModel.updateOne({ _id: record.id }, { $set: { status: record.status } });
+
+  return record;
+}
+
+export class UpdatePassKeyError extends Error {
+  constructor(public readonly code: "NOT_FOUND" | "BELOW_USED") {
+    super(code);
+    this.name = "UpdatePassKeyError";
+  }
+}
+
+/**
+ * Changes the expiry, the number of dinners, or the note on a key already in a
+ * guest's hand — a stay being extended, usually.
+ *
+ * `maxUses` may not drop below what has already been booked: that would
+ * retroactively invalidate a dinner the guest is expecting to eat. Reception
+ * has to cancel the booking first, which is the honest order to do it in.
+ */
+export async function updatePassKey(
+  id: string,
+  patch: { expiresOn?: string | null; maxUses?: number; note?: string },
+): Promise<{ before: PassKeyRecord; after: PassKeyRecord }> {
+  const before = await getPassKeyById(id);
+  if (!before) {
+    throw new UpdatePassKeyError("NOT_FOUND");
+  }
+
+  if (patch.maxUses !== undefined && patch.maxUses < before.usedCount) {
+    throw new UpdatePassKeyError("BELOW_USED");
+  }
+
+  const next: PassKeyRecord = {
+    ...before,
+    expiresOn: patch.expiresOn === undefined ? before.expiresOn : (patch.expiresOn ?? undefined),
+    maxUses: patch.maxUses ?? before.maxUses,
+    note: patch.note === undefined ? before.note : patch.note || undefined,
+  };
+
+  // Raising the allowance can bring a spent key back to life, which is the
+  // point of extending a stay.
+  next.status = next.status === "revoked" ? "revoked" : next.usedCount >= next.maxUses ? "used" : "active";
+
+  if (!isMongoConfigured()) {
+    const saved = await updateLocalPassKey(id, {
+      expiresOn: next.expiresOn,
+      maxUses: next.maxUses,
+      note: next.note,
+      status: next.status,
+    });
+
+    if (!saved) {
+      throw new UpdatePassKeyError("NOT_FOUND");
+    }
+
+    return { before, after: saved };
+  }
+
+  await connectToDatabase();
+
+  const saved = await PassKeyModel.findByIdAndUpdate(
+    id,
+    {
+      $set: {
+        maxUses: next.maxUses,
+        status: next.status,
+        ...(patch.expiresOn === undefined ? {} : { expiresOn: patch.expiresOn ?? null }),
+        ...(patch.note === undefined ? {} : { note: patch.note || null }),
+      },
+    },
+    { returnDocument: "after" },
+  ).lean();
+
+  if (!saved) {
+    throw new UpdatePassKeyError("NOT_FOUND");
+  }
+
+  return { before, after: toPassKeyRecord(saved as MongoPassKeyDocument) };
 }
 
 export async function revokePassKey(id: string): Promise<PassKeyRecord | null> {

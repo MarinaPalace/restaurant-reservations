@@ -55,13 +55,23 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
         };
       }
 
+      /**
+       * The pass-key stops working at check-out, so an evening after that is
+       * not bookable however many seats it has. Blocking it here means the
+       * guest sees the limit of their stay on the calendar instead of picking
+       * a date and being refused at the end.
+       */
+      if (session.passKeyExpiresOn && dateKey > session.passKeyExpiresOn) {
+        return { disabled: true, hint: "After your stay", status: "after your stay ends" };
+      }
+
       return {
         hint: `${entry.remainingSeats} left`,
         status: `${entry.remainingSeats} seats available`,
         tone: "positive",
       };
     },
-    [findDate, guestCount],
+    [findDate, guestCount, session.passKeyExpiresOn],
   );
 
   const handleContinue = () => {
@@ -87,6 +97,13 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
           ready ? `Showing evenings with room for ${guestCount} ${guestCount === 1 ? "guest" : "guests"}.` : undefined
         }
       />
+
+      {ready && session.passKeyExpiresOn ? (
+        <Alert tone="info" className="mt-4">
+          Your pass-key books dinner up to {formatLongDate(session.passKeyExpiresOn)}, the day you check out.
+          Evenings after that are not available.
+        </Alert>
+      ) : null}
 
       <div className="mt-6">
         {dates.length === 0 ? (

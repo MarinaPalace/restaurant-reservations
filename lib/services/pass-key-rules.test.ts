@@ -13,7 +13,10 @@ function key(overrides: Partial<PassKeyRecord> = {}): PassKeyRecord {
   return {
     id: "key-1",
     code: "K7QP3M2XR4TN",
+    maxUses: 1,
+    usedCount: 0,
     status: "active",
+    reservationNumbers: [],
     expiresOn: "2026-08-25",
     ...overrides,
   };
@@ -29,8 +32,18 @@ describe("describePassKeyProblem", () => {
     expect(describePassKeyProblem(null, NOW)).toMatchObject({ code: "INVALID" });
   });
 
-  it("rejects a key that has already been spent", () => {
-    expect(describePassKeyProblem(key({ status: "used" }), NOW)).toMatchObject({ code: "USED" });
+  it("rejects a key with no dinners left on it", () => {
+    expect(describePassKeyProblem(key({ usedCount: 1, maxUses: 1 }), NOW)).toMatchObject({ code: "USED" });
+  });
+
+  /**
+   * A long stay earns more than one dinner, so a key with a use still on it
+   * must keep working after the first booking.
+   */
+  it("accepts a multi-use key that still has a dinner left", () => {
+    expect(describePassKeyProblem(key({ maxUses: 3, usedCount: 1 }), NOW)).toBeNull();
+    expect(describePassKeyProblem(key({ maxUses: 3, usedCount: 2 }), NOW)).toBeNull();
+    expect(describePassKeyProblem(key({ maxUses: 3, usedCount: 3 }), NOW)).toMatchObject({ code: "USED" });
   });
 
   it("rejects a revoked key", () => {

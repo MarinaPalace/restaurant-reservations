@@ -6,7 +6,7 @@ import { RestaurantDateModel } from "@/lib/models/restaurant-date";
 import {
   cancelLocalReservation,
   createLocalReservation,
-  findLocalReservationByPassKey,
+  findLocalReservationsByPassKey,
   getLocalReservation,
   listLocalReservations,
   reservationNumberExists,
@@ -416,26 +416,25 @@ export async function restoreReservation(reservationNumber: string): Promise<Res
 }
 
 /**
- * The booking a pass-key is attached to. This is how a guest reaches their own
- * reservation: the key is a secret, the reservation number is not.
+ * Every booking made with a pass-key, newest first.
+ *
+ * A key can carry more than one dinner now, so this is a list. It is how a
+ * guest reaches their own reservations: the key is a secret, the reservation
+ * number is not.
  */
-export async function getReservationByPassKey(passKeyId: string): Promise<ReservationRecord | null> {
+export async function getReservationsByPassKey(passKeyId: string): Promise<ReservationRecord[]> {
   if (!passKeyId) {
-    return null;
+    return [];
   }
 
   if (!isMongoConfigured()) {
-    return findLocalReservationByPassKey(passKeyId);
+    return findLocalReservationsByPassKey(passKeyId);
   }
 
   await connectToDatabase();
 
-  // A key released by a cancellation can be spent again, so the live booking
-  // wins over an older cancelled one.
   const reservations = await ReservationModel.find({ passKeyId }).sort({ createdAt: -1 }).lean();
-  const records = reservations.map((entry) => toReservationRecord(entry as MongoReservationDocument));
-
-  return records.find((entry) => entry.status === "confirmed") ?? records[0] ?? null;
+  return reservations.map((entry) => toReservationRecord(entry as MongoReservationDocument));
 }
 
 export type StaffReservationPatch = {

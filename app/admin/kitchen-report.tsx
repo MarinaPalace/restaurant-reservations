@@ -279,20 +279,20 @@ export function KitchenReport({
         {!hasRows ? (
           <EmptyState title="No reservations yet" description="Nothing has been booked for this evening." />
         ) : layout === "guest" ? (
-          <div className="overflow-x-auto">
+          <div data-print-scroll="" className="overflow-x-auto">
             <table className="min-w-full border-collapse text-left text-sm">
               <caption className="sr-only">Plating list for {formatLongDate(date)}, one row per guest</caption>
               <thead className="bg-surface-sunken text-ink-muted">
                 <tr>
-                  <th scope="col" className="whitespace-nowrap px-3 py-2 font-semibold">Table</th>
-                  <th scope="col" className="whitespace-nowrap px-3 py-2 font-semibold">Room</th>
-                  <th scope="col" className="whitespace-nowrap px-3 py-2 font-semibold">Guest</th>
+                  <th scope="col" data-print="table" className="whitespace-nowrap px-3 py-2 font-semibold">Table</th>
+                  <th scope="col" data-print="who" className="whitespace-nowrap px-3 py-2 font-semibold">Room</th>
+                  <th scope="col" data-print="who" className="whitespace-nowrap px-3 py-2 font-semibold">Guest</th>
                   {courseColumns.map((column) => (
                     <th key={column.id} scope="col" className="whitespace-nowrap px-3 py-2 font-semibold">
                       {column.label}
                     </th>
                   ))}
-                  <th scope="col" className="px-3 py-2 font-semibold">Comment</th>
+                  <th scope="col" data-print="note" className="px-3 py-2 font-semibold">Comment</th>
                   <th scope="col" className="px-3 py-2 font-semibold" data-print="hide">Contact</th>
                   <th scope="col" className="px-3 py-2 font-semibold" data-print="hide">
                     <span className="sr-only">Actions</span>
@@ -334,7 +334,7 @@ export function KitchenReport({
             </table>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div data-print-scroll="" className="overflow-x-auto">
             <table className="min-w-full border-collapse text-left text-sm">
               <caption className="sr-only">
                 Prep counts for {formatLongDate(date)}, grouped by table with a column per dish
@@ -361,7 +361,7 @@ export function KitchenReport({
                   <th scope="col" className="px-3 py-1" data-print="hide" />
                 </tr>
                 <tr>
-                  <th scope="col" className="whitespace-nowrap border-r border-line px-3 py-2 align-bottom font-semibold">
+                  <th scope="col" data-print="table" className="whitespace-nowrap border-r border-line px-3 py-2 align-bottom font-semibold">
                     Table
                   </th>
                   <th scope="col" data-print="who" className="whitespace-nowrap border-r border-line px-3 py-2 align-bottom font-semibold">

@@ -146,15 +146,17 @@ export async function countLocalAdmins(excludeId?: string): Promise<number> {
 
 export async function listLocalPassKeys(): Promise<PassKeyRecord[]> {
   const keys = await readPassKeys();
-  return [...keys].sort((a, b) => (b.issuedAt ?? "").localeCompare(a.issuedAt ?? ""));
+  return [...keys].map(withCounts).sort((a, b) => (b.issuedAt ?? "").localeCompare(a.issuedAt ?? ""));
 }
 
 export async function getLocalPassKeyByCode(code: string): Promise<PassKeyRecord | null> {
-  return (await readPassKeys()).find((key) => key.code === code) ?? null;
+  const key = (await readPassKeys()).find((entry) => entry.code === code);
+  return key ? withCounts(key) : null;
 }
 
 export async function getLocalPassKey(id: string): Promise<PassKeyRecord | null> {
-  return (await readPassKeys()).find((key) => key.id === id) ?? null;
+  const key = (await readPassKeys()).find((entry) => entry.id === id);
+  return key ? withCounts(key) : null;
 }
 
 export async function createLocalPassKey(
@@ -176,8 +178,34 @@ export async function createLocalPassKey(
 }
 
 /**
- * Spends a key, but only while it is still active — the status filter is what
- * stops two requests racing to book with the same key and both winning.
+ * Reads a stored key with the multi-use fields filled in, so a key written
+ * before they existed behaves as the single-use key it was.
+ */
+function withCounts(key: PassKeyRecord): PassKeyRecord {
+  const maxUses = typeof key.maxUses === "number" && key.maxUses > 0 ? key.maxUses : 1;
+  const usedCount =
+    typeof key.usedCount === "number"
+      ? Math.max(key.usedCount, 0)
+      : key.status === "used"
+        ? 1
+        : 0;
+  const reservationNumbers = Array.isArray(key.reservationNumbers) ? key.reservationNumbers : [];
+
+  return {
+    ...key,
+    maxUses,
+    usedCount,
+    reservationNumbers,
+    status: key.status === "revoked" ? "revoked" : usedCount >= maxUses ? "used" : "active",
+  };
+}
+
+/**
+ * Spends one use of a key.
+ *
+ * The "is there a use left" test and the write happen inside the same locked
+ * section, which is what stops two requests racing to book the last dinner on
+ * a key and both winning.
  */
 export async function consumeLocalPassKey(
   code: string,
@@ -185,17 +213,22 @@ export async function consumeLocalPassKey(
 ): Promise<PassKeyRecord | null> {
   return withStoreLock(async () => {
     const keys = await readPassKeys();
-    const index = keys.findIndex((key) => key.code === code && key.status === "active");
+    const index = keys.findIndex((entry) => entry.code === code);
     if (index === -1) {
       return null;
     }
 
-    keys[index] = {
-      ...keys[index],
-      status: "used",
-      reservationNumber,
+    const key = withCounts(keys[index]);
+    if (key.status === "revoked" || key.usedCount >= key.maxUses) {
+      return null;
+    }
+
+    keys[index] = withCounts({
+      ...key,
+      usedCount: key.usedCount + 1,
+      reservationNumbers: [...key.reservationNumbers, reservationNumber],
       usedAt: new Date().toISOString(),
-    };
+    });
 
     await writeJsonFile(getDataFilePath(PASS_KEYS_FILE), keys);
     return keys[index];
@@ -213,14 +246,24 @@ export async function releaseLocalPassKey(
 ): Promise<PassKeyRecord | null> {
   return withStoreLock(async () => {
     const keys = await readPassKeys();
-    const index = keys.findIndex(
-      (key) => key.id === id && key.status === "used" && key.reservationNumber === reservationNumber,
-    );
+    const index = keys.findIndex((entry) => entry.id === id);
     if (index === -1) {
       return null;
     }
 
-    keys[index] = { ...keys[index], status: "active", usedAt: undefined };
+    const key = withCounts(keys[index]);
+
+    // Only the use this booking took, and only if it actually took one.
+    if (!key.reservationNumbers.includes(reservationNumber) || key.usedCount === 0) {
+      return null;
+    }
+
+    keys[index] = withCounts({
+      ...key,
+      usedCount: key.usedCount - 1,
+      reservationNumbers: key.reservationNumbers.filter((entry) => entry !== reservationNumber),
+    });
+
     await writeJsonFile(getDataFilePath(PASS_KEYS_FILE), keys);
     return keys[index];
   });
@@ -233,18 +276,41 @@ export async function reclaimLocalPassKey(
 ): Promise<PassKeyRecord | null> {
   return withStoreLock(async () => {
     const keys = await readPassKeys();
-    const index = keys.findIndex((key) => key.id === id && key.status === "active");
+    const index = keys.findIndex((entry) => entry.id === id);
     if (index === -1) {
       return null;
     }
 
-    keys[index] = {
-      ...keys[index],
-      status: "used",
-      reservationNumber,
-      usedAt: new Date().toISOString(),
-    };
+    const key = withCounts(keys[index]);
+    if (key.status === "revoked" || key.usedCount >= key.maxUses) {
+      return null;
+    }
 
+    keys[index] = withCounts({
+      ...key,
+      usedCount: key.usedCount + 1,
+      reservationNumbers: [...key.reservationNumbers, reservationNumber],
+      usedAt: new Date().toISOString(),
+    });
+
+    await writeJsonFile(getDataFilePath(PASS_KEYS_FILE), keys);
+    return keys[index];
+  });
+}
+
+/** Applies an edit from the panel: expiry, dinners allowed, or the note. */
+export async function updateLocalPassKey(
+  id: string,
+  patch: Partial<Pick<PassKeyRecord, "expiresOn" | "maxUses" | "note" | "status">>,
+): Promise<PassKeyRecord | null> {
+  return withStoreLock(async () => {
+    const keys = await readPassKeys();
+    const index = keys.findIndex((entry) => entry.id === id);
+    if (index === -1) {
+      return null;
+    }
+
+    keys[index] = withCounts({ ...keys[index], ...patch });
     await writeJsonFile(getDataFilePath(PASS_KEYS_FILE), keys);
     return keys[index];
   });

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { isValidDateKey } from "@/lib/date";
 import { PASS_KEY_LENGTH, normalizePassKey } from "@/lib/pass-key";
 import { isValidRoomNumber, normalizeRoomNumber } from "@/lib/room";
-import { STAFF_PERMISSIONS } from "@/types/booking";
+import { MAX_USES_CAP, STAFF_PERMISSIONS } from "@/types/booking";
 
 export const MAX_GUESTS_PER_RESERVATION = 6;
 
@@ -89,10 +89,14 @@ export const restaurantDateSchema = z.object({
  */
 export const manageReservationSchema = z.object({
   passKey: passKeySchema,
+  /**
+   * Which dinner is meant, when a key holds more than one. Optional, because
+   * with a single booking there is nothing to disambiguate.
+   */
+  reservationNumber: z.string().trim().max(40).optional(),
 });
 
-export const updateSelectionsSchema = z.object({
-  passKey: passKeySchema,
+export const updateSelectionsSchema = manageReservationSchema.extend({
   selections: z.array(reservationSelectionSchema).min(1),
 });
 
@@ -162,6 +166,8 @@ export const menuCatalogSchema = z.object({
  * only way to reach them before they arrive.
  */
 export const premiumReservationSchema = z.object({
+  /** The key from the invitation. Without it, anyone with the URL could book. */
+  passKey: passKeySchema,
   guestName: z.string().trim().min(2, "Please enter your name.").max(120),
   guestCount: z.number().int().min(1).max(MAX_GUESTS_PER_RESERVATION),
   date: dateKeySchema,
@@ -230,17 +236,40 @@ export const updateStaffUserSchema = z.object({
  * ------------------------------------------------------------------ */
 
 export const issuePassKeySchema = z.object({
+  /** `premium` issues an invitation key instead of an in-house one. */
+  kind: menuKindSchema.optional(),
   roomNumber: z.string().trim().max(10).optional(),
   guestName: z.string().trim().max(120).optional(),
   nights: z.number().int().min(1).max(365).optional(),
-  /** Normally check-out: the key stops working after this evening. */
+  /**
+   * Normally check-out: the key stops working after this evening. Set
+   * explicitly by reception rather than derived, so an unusual stay can be
+   * described accurately.
+   */
   expiresOn: dateKeySchema.optional(),
+  /** Dinners the key may book. Defaults to what the stay length earns. */
+  maxUses: z.number().int().min(1).max(MAX_USES_CAP).optional(),
+  /**
+   * How many identical keys to issue in one go, for a family arriving
+   * together or a coach party at the desk.
+   */
+  quantity: z.number().int().min(1).max(20).optional(),
   note: z.string().trim().max(200).optional(),
   /**
    * Deliberately giving a key to a guest whose stay is too short. Recorded on
    * the key and in the audit log, so an exception is always traceable.
    */
   allowShortStay: z.boolean().optional(),
+});
+
+/**
+ * Editing a key already in a guest's hand — the stay-extension case. Only the
+ * things that can legitimately change once it is printed.
+ */
+export const updatePassKeySchema = z.object({
+  expiresOn: dateKeySchema.nullable().optional(),
+  maxUses: z.number().int().min(1).max(MAX_USES_CAP).optional(),
+  note: z.string().trim().max(200).optional(),
 });
 
 /* ------------------------------------------------------------------ *

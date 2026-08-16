@@ -21,7 +21,7 @@ A reservation app for **Vista Del Mar**, a hotel's à la carte restaurant.
 Stack: Next.js 16 (App Router, Turbopack), React 19, TypeScript, Tailwind v4, Mongoose 9, Zod 4,
 Vitest. Deployed on Vercel.
 
-**275 tests, 18 files. Lint, types and build are clean. Keep them that way.**
+**287 tests, 18 files. Lint, types and build are clean. Keep them that way.**
 
 ---
 
@@ -94,7 +94,32 @@ This is also why a tampered request cannot invent a dish name.
 - Cancelling is idempotent (status filter), so seats are never refunded twice.
 - A cancelled booking holds no seats, so editing one moves nothing.
 
-### 2.8 A pass-key is spent before the booking it pays for is written
+### 2.8 Nothing in a print may sit inside a live scrollbox
+
+A browser prints only the **visible** part of an `overflow` container. The
+service sheet lives in a horizontal scrollbox, so for two releases the printout
+was whatever happened to be scrolled into view: at the left edge the Comment
+column was cut off, at the right edge the first two columns were.
+
+Two rules keep it honest, both in the print block of `app/globals.css`:
+
+- `[data-print-scroll]` is forced to `overflow: visible; width: auto`, so the
+  scroll position cannot affect the page.
+- Column widths in print are **percentages, never `em`**. With
+  `table-layout: fixed`, fixed widths keep their size even when the total
+  exceeds the table, which pushed the sheet wider than the paper and moved the
+  clipping from the div to the page. Percentages cannot sum past 100%: the
+  identity columns claim a fixed share and the dish columns divide what is
+  left, growing thinner as dishes are added.
+
+`white-space` is also normalised across every cell in print, because a single
+`nowrap` header can hold a column open on its own.
+
+**When changing the sheet, check the print at three scroll positions** — hard
+left, middle, hard right — and at a few different dish counts. It has been
+reported fixed twice before it actually was.
+
+### 2.9 A pass-key is spent before the booking it pays for is written
 
 `consumePassKey` matches **only a key that is still active** and flips it to `used` in one
 conditional update. That single write is the whole mechanism: two requests arriving together with
@@ -109,7 +134,7 @@ Releasing is filtered by reservation number as well as key id, so a late request
 that has since been spent on something else. `lib/db/local-restore.test.ts` and the Mongo suite
 cover both directions, including two simultaneous bookings with one code.
 
-### 2.9 Restoring a cancellation is a fresh claim on the seats
+### 2.10 Restoring a cancellation is a fresh claim on the seats
 
 Cancelling gives the seats back to the evening. Somebody else may have taken them, or the evening
 may have been closed since — so `restoreReservation` claims them again with the same conditional
@@ -120,7 +145,15 @@ hands its claimed seats straight back.
 Never "just flip the status back to confirmed". That was the obvious implementation and it is
 wrong.
 
-### 2.10 No `setState` synchronously inside an effect
+### 2.11 A key belongs to exactly one flow
+
+`kind` is `standard` or `premium`, and **both** routes check it: an invitation
+key is refused at `/api/reservations`, an in-house key at
+`/api/premium/reservations`. Only one side was guarded at first, and a premium
+key happily booked an everyday evening from the everyday menu — spending itself
+in the process, so the invitation link it had been emailed on then 404'd.
+
+### 2.12 No `setState` synchronously inside an effect
 
 React 19's lint rule is on and treated as an error. Data that does not depend on client state is
 fetched **on the server** and passed as props. `sessionStorage` is read through
@@ -222,18 +255,50 @@ mangle accented or Cyrillic names.
 dinner and then goes inactive. It expires with the stay, so a guest cannot hold a table for an
 evening after they check out.
 
-The code is Crockford base32 (`VDM-K7QP-3M2X-R4TN`) — twelve characters, sixty bits, no `I`, `L`,
-`O` or `U`, case-insensitive, and dashes are decoration. Anything a guest types that looks like a
-misread slip (`O` for zero, `I` or `l` for one) is folded onto what they meant. All of that is in
-`lib/pass-key.ts` and tested there.
+The code is Crockford base32 (`VDM-K7QP3-M2XR4`) — ten characters, fifty bits, no `I`, `L`, `O` or
+`U`, case-insensitive, and dashes are decoration. Anything a guest types that looks like a misread
+card (`O` for zero, `I` or `l` for one) is folded onto what they meant. All of that is in
+`lib/pass-key.ts` and tested there. Keys issued under the previous twelve-character format are
+still accepted, which is why `isValidPassKeyFormat` tests a **range** rather than an exact length.
 
-Cancelling **hands the key back**, so a guest who cancels can book another evening instead of
-losing dinner for the whole stay over one tap. Restoring the cancellation takes the key again —
-unless they have already spent it, in which case the newer booking keeps it.
+**A key can carry more than one dinner.** A stay earns one per five nights, capped at three, and
+reception can override it at issue and edit it later when a stay is extended. `maxUses` and
+`usedCount` are what decide whether a key is spent — `status` stores only `revoked` — so the two can
+never drift apart. Both are absent on keys written before multi-use and read as a single use, spent
+or not according to the old `status`, so nothing needed migrating.
+
+**Invitation keys** (`kind: "premium"`) are the same mechanism pointed at `/premium`. They carry no
+stay, so the five-night rule does not apply to them, and they are emailed as a link —
+`/premium/<pass-key>` — so the guest never types the code. That address is a credential: the page is
+marked `noindex`, and an unusable or unknown key gets the same 404 as one that never existed. It
+does put the key in browser history and any Referer the page sends, which is an accepted trade for a
+single-dinner invitation and would not be for anything carrying money.
+
+**The key is checked before the guest chooses anything.** `/api/booking/pass-key` answers "will this
+work, until when, how many dinners left, and which evenings may I pick" on the first screen. It used
+to be judged only when the finished booking was submitted, so somebody with a spent key picked a
+date and a full menu for the whole table before being told. The check at booking time is still the
+authoritative one; this only fails early.
+
+Cancelling **hands one use back**, so a guest who cancels can book another evening instead of
+losing dinner over one tap. Restoring the cancellation takes it again — unless they have already
+spent it, in which case the newer booking keeps it. Because a key can hold several dinners,
+`/booking/manage` lists them and the guest says which one they mean; the reservation number may be
+omitted only when there is exactly one.
+
+Keys are printed as **credit-card-sized cards** (85.6 × 53.98 mm), laid out on a sheet with dashed
+cut lines. That print is a separate context from the service sheet — see rule 2.8 — and is switched
+on by a `data-printing-cards` attribute on the root for the duration of the print.
 
 Codes are stored in plain text on purpose: reception has to be able to read one back to a guest who
-has lost their slip. Sixty bits with no rate-limited surface worth attacking is the trade, and it
-is the operationally right one for a hotel desk. Revisit it if that changes.
+has lost their card. Fifty bits behind a rate limiter is the trade, and it is the operationally
+right one for a hotel desk. Revisit it if that changes.
+
+**Rate limiting** (`lib/rate-limit.ts`) sits in front of pass-key entry, booking, invitation booking
+and admin sign-in. It counts in memory, so on serverless each instance keeps its own and the real
+limit is the configured one times the number of warm instances. That is a deliberate scope: it stops
+a script hammering one endpoint, and is not a defence against a distributed attacker. Move the
+counters to Redis if that ever matters — the call sites do not change.
 
 **Staff accounts.** `/admin/users`. Each person signs in as themselves and holds a named set of
 permissions — take, edit, cancel and restore reservations; edit the menus; manage evenings; issue
@@ -269,18 +334,17 @@ guests to arrive ten minutes early.
 
 Roughly in the order I would tackle them for beta.
 
-1. **`/premium` is still unguarded.** Anyone with the URL can book. Fine for an emailed invitation,
-   not a secret link. Pass-keys now exist and would fit here almost unchanged — issue one with the
-   invitation instead of at check-in — which is the obvious next piece of work.
-2. **Invited guests cannot use `/booking/manage`**, because their booking has no pass-key. They must
-   contact the hotel to change anything. Same fix as the item above.
-3. **The five-night rule is enforced at issue, not from the PMS.** There is still no integration, so
+1. **The five-night rule is enforced at issue, not from the PMS.** There is still no integration, so
    reception types the number of nights when it hands over the key and the system refuses anything
    under five. A deliberate exception is allowed, recorded on the key and in the log. If a PMS
    integration ever lands, the stay length should come from it rather than from typing.
-4. **A guest who cancels can rebook a different evening** with the same key, as many times as they
-   like within their stay. That is intentional — one *live* dinner per stay, not one attempt — but
+2. **A guest who cancels can rebook a different evening** with the same key, as many times as they
+   like within their stay. That is intentional — the key limits *live* dinners, not attempts — but
    it is worth knowing before somebody reports it as a bug.
+3. **The invitation link puts the key in the URL.** Deliberate, so a guest goes from the email to
+   the booking in one tap, and documented in section 5. It means the code reaches browser history
+   and any Referer the page sends. Acceptable for a single dinner; revisit if invitations ever carry
+   anything else.
 4. **Tables have no capacity.** Nothing stops four rooms grouping onto a table that seats six.
    Staff assign the number so they would notice, but the system will not warn.
 5. **Cyrillic headings fall back to a system serif.** The display face is loaded with Latin subsets
@@ -291,10 +355,10 @@ Roughly in the order I would tackle them for beta.
    `Milk`, `Tree nuts`. Both work. Worth tidying to one vocabulary by hand.
 8. **The JSON store writes to `data/`**, which is not durable on serverless. Only used when
    `MONGODB_URI` is unset — i.e. local development. Production must have Mongo.
-9. **No rate limiting** on booking, admin login, or pass-key entry. The last of these is the one
-   that now matters most: it is the only thing standing between a determined guesser and the
-   sixty-bit keyspace. Sixty bits is far too large to brute-force over HTTP, but a limiter in front
-   of `/api/reservations` and `/api/booking/manage` is cheap insurance and should go in before beta.
+9. **Rate limiting counts in one process.** `lib/rate-limit.ts` covers pass-key entry, booking and
+   admin sign-in, but on serverless each instance keeps its own counters, so the effective limit is
+   the configured one times the number of warm instances. Enough to stop a script on one endpoint;
+   not a defence against a distributed attacker. Redis if that ever matters.
 10. **Staff passwords have no expiry, history or lockout.** Length is the only rule (ten
     characters). Fine for a small team sharing a desk; revisit if the team grows.
 11. **Reservation numbers** now use the `VDM-` prefix; older `ALC-` numbers still resolve, since
@@ -309,7 +373,7 @@ Roughly in the order I would tackle them for beta.
 
 ```bash
 npm run dev          # local, JSON store, admin/admin123
-npm test             # 275 tests; the Mongo suite runs an in-memory mongod
+npm test             # 287 tests; the Mongo suite runs an in-memory mongod
 npm run typecheck
 npm run lint
 npm run build

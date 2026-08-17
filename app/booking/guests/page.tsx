@@ -8,12 +8,15 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Alert, Skeleton } from "@/components/ui/feedback";
 import { useBookingGuard, writeBookingSession } from "@/hooks/use-booking-session";
+import { useI18n } from "@/components/i18n-provider";
+import { format, plural } from "@/lib/i18n";
 import { allowedGuestCount, pruneSelectionsToGuestCount } from "@/lib/booking-session";
 import { cx } from "@/components/ui/utils";
 
 export default function GuestsPage() {
   const router = useRouter();
   const { session, ready } = useBookingGuard(["room"]);
+  const { t, language } = useI18n();
   const [choice, setChoice] = useState<number | null>(null);
   const [error, setError] = useState("");
 
@@ -35,7 +38,7 @@ export default function GuestsPage() {
     event.preventDefault();
 
     if (!selected) {
-      setError("Please choose how many guests will be dining.");
+      setError(t.guests.choose);
       return;
     }
 
@@ -46,7 +49,7 @@ export default function GuestsPage() {
      */
     if (selected > allowed) {
       setChoice(null);
-      setError(`This pass-key is for up to ${allowed} ${allowed === 1 ? "guest" : "guests"}.`);
+      setError(plural(language, allowed, t.guests.tooMany));
       return;
     }
 
@@ -67,19 +70,20 @@ export default function GuestsPage() {
           as="h1"
           align="center"
           flourish
-          eyebrow={ready && session.roomNumber ? `Room ${session.roomNumber}` : "Room"}
-          title="How many guests?"
-          description="Every guest chooses their own menu on the next step."
+          eyebrow={
+            ready && session.roomNumber
+              ? format(t.guests.roomEyebrow, { room: session.roomNumber })
+              : t.common.room
+          }
+          title={t.guests.title}
+          description={t.guests.description}
         />
 
         {ready && session.passKeyMaxGuests > 0 ? (
           <p className="mt-4 rounded-control border border-line bg-surface-muted p-3 text-center text-sm text-ink-muted">
-            Your booking with us is for{" "}
-            <span className="font-semibold text-ink">
-              {session.passKeyMaxGuests} {session.passKeyMaxGuests === 1 ? "guest" : "guests"}
-            </span>
-            , so dinner can be booked for up to that many. Fewer is no trouble — speak to reception if your
-            party has grown.
+            {format(t.guests.bookingIsFor, {
+              guests: plural(language, session.passKeyMaxGuests, t.common.guestCount),
+            })}
           </p>
         ) : null}
 
@@ -95,71 +99,62 @@ export default function GuestsPage() {
             ))}
           </div>
         ) : (
-        <form onSubmit={handleSubmit} className="mt-6">
-          <fieldset>
-            <legend className="sr-only">Number of guests</legend>
-            <div
-              role="radiogroup"
-              aria-label="Number of guests"
-              className={cx("grid gap-3", guestOptions.length <= 2 ? "grid-cols-2" : "grid-cols-3")}
-            >
-              {guestOptions.map((option) => {
-                const isSelected = selected === option;
+          <form onSubmit={handleSubmit} className="mt-6">
+            <fieldset>
+              <legend className="sr-only">{t.guests.legend}</legend>
+              <div
+                role="radiogroup"
+                aria-label={t.guests.legend}
+                className={cx("grid gap-3", guestOptions.length <= 2 ? "grid-cols-2" : "grid-cols-3")}
+              >
+                {guestOptions.map((option) => {
+                  const isSelected = selected === option;
 
-                return (
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={isSelected}
-                    onClick={() => {
-                      setChoice(option);
-                      setError("");
-                    }}
-                    // `key` includes the selected state so React remounts the
-                    // button when it changes, which restarts the bloom. A CSS
-                    // animation on a persistent element would only play once.
-                    key={`${option}-${isSelected}`}
-                    className={cx(
-                      // A physical chip: presses in on touch, comes toward the
-                      // reader on a pointer, and blooms gold when chosen.
-                      "lift rounded-control border px-4 py-5 text-center text-2xl font-semibold",
-                      isSelected
-                        ? "bloom border-accent bg-primary text-primary-fg"
-                        : "border-line-strong bg-surface text-ink hover:border-accent",
-                    )}
-                    style={
-                      isSelected
-                        ? {
-                            transform:
-                              "perspective(var(--depth-perspective)) translate3d(0, 0, 18px) scale(1.03)",
-                            boxShadow: "var(--lift-raised)",
-                          }
-                        : undefined
-                    }
-                  >
-                    {option}
-                    <span className="sr-only"> {option === 1 ? "guest" : "guests"}</span>
-                  </button>
-                );
-              })}
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      role="radio"
+                      aria-checked={isSelected}
+                      onClick={() => {
+                        setChoice(option);
+                        setError("");
+                      }}
+                      className={cx(
+                        // A physical chip. The chosen one lifts toward the
+                        // reader on a pointer device only — see `.chosen-chip`
+                        // in globals.css. It used to do so on a phone too,
+                        // remounting to replay the animation, which moved the
+                        // buttons around the finger that had just pressed one.
+                        "lift chosen-chip rounded-control border px-4 py-5 text-center text-2xl font-semibold",
+                        isSelected
+                          ? "border-accent bg-primary text-primary-fg"
+                          : "border-line-strong bg-surface text-ink hover:border-accent",
+                      )}
+                    >
+                      {option}
+                      <span className="sr-only"> {plural(language, option, t.common.guestWord)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </fieldset>
+
+            {error ? (
+              <Alert tone="danger" className="mt-4">
+                {error}
+              </Alert>
+            ) : null}
+
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+              <ButtonLink href="/booking" size="lg" className="flex-1">
+                {t.common.back}
+              </ButtonLink>
+              <Button type="submit" size="lg" disabled={!selected} className="flex-1">
+                {t.common.continue}
+              </Button>
             </div>
-          </fieldset>
-
-          {error ? (
-            <Alert tone="danger" className="mt-4">
-              {error}
-            </Alert>
-          ) : null}
-
-          <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-            <ButtonLink href="/booking" size="lg" className="flex-1">
-              Back
-            </ButtonLink>
-            <Button type="submit" size="lg" disabled={!selected} className="flex-1">
-              Continue
-            </Button>
-          </div>
-        </form>
+          </form>
         )}
       </Card>
     </PageShell>

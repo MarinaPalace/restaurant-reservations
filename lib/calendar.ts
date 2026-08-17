@@ -147,10 +147,15 @@ export function buildIcsFile(reservation: ReservationRecord, locationName = REST
   ].join("\r\n");
 }
 
-export function describeReservationTime(dateKey: string, serviceTime?: string, serviceEndTime?: string) {
+export function describeReservationTime(
+  dateKey: string,
+  serviceTime?: string,
+  serviceEndTime?: string,
+  locale = "en-GB",
+) {
   const { start, end } = getReservationWindow(dateKey, serviceTime, serviceEndTime);
   const time = (date: Date) =>
-    new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
+    new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
 
-  return `${formatLongDate(dateKey)}, ${time(start)}–${time(end)}`;
+  return `${formatLongDate(dateKey, locale)}, ${time(start)}–${time(end)}`;
 }

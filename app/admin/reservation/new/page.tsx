@@ -28,7 +28,7 @@ export default async function NewReservationPage() {
   const today = todayKey();
 
   return (
-    <PageShell width="lg" headerHref="/admin">
+    <PageShell width="lg" headerHref="/admin" showLanguage={false}>
       <ReservationForm menu={menu} dates={dates.filter((entry) => entry.date >= today)} />
     </PageShell>
   );

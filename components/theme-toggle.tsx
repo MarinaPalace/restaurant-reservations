@@ -1,6 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
+import { useI18n } from "@/components/i18n-provider";
 import { cx } from "@/components/ui/utils";
 
 export const THEME_STORAGE_KEY = "theme";
@@ -50,10 +51,9 @@ function applyChoice(choice: ThemeChoice) {
   }
 }
 
-const CHOICES: { id: ThemeChoice; label: string; icon: React.ReactNode }[] = [
+const CHOICES: { id: ThemeChoice; icon: React.ReactNode }[] = [
   {
     id: "light",
-    label: "Light",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="size-4">
         <circle cx="12" cy="12" r="4" />
@@ -63,7 +63,6 @@ const CHOICES: { id: ThemeChoice; label: string; icon: React.ReactNode }[] = [
   },
   {
     id: "system",
-    label: "Auto",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="size-4">
         <rect x="2" y="4" width="20" height="13" rx="2" />
@@ -73,7 +72,6 @@ const CHOICES: { id: ThemeChoice; label: string; icon: React.ReactNode }[] = [
   },
   {
     id: "dark",
-    label: "Dark",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="size-4">
         <path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" />
@@ -89,11 +87,14 @@ export function ThemeToggle({ className }: { className?: string }) {
    * server render ("system") and the client in agreement.
    */
   const choice = useSyncExternalStore(subscribe, readChoice, () => "system" as ThemeChoice);
+  const { t } = useI18n();
+  // Named in the guest's language; the icons alone are ambiguous.
+  const labelOf = (id: ThemeChoice) => (id === "system" ? t.common.theme.auto : t.common.theme[id]);
 
   return (
     <div
       role="radiogroup"
-      aria-label="Colour theme"
+      aria-label={t.common.theme.label}
       className={cx("inline-flex items-center gap-0.5 rounded-full border border-line bg-surface p-0.5", className)}
     >
       {CHOICES.map((option) => {
@@ -105,7 +106,7 @@ export function ThemeToggle({ className }: { className?: string }) {
             type="button"
             role="radio"
             aria-checked={isActive}
-            title={option.label}
+            title={labelOf(option.id)}
             onClick={() => applyChoice(option.id)}
             className={cx(
               "flex size-8 items-center justify-center rounded-full transition-colors",
@@ -113,7 +114,7 @@ export function ThemeToggle({ className }: { className?: string }) {
             )}
           >
             {option.icon}
-            <span className="sr-only">{option.label}</span>
+            <span className="sr-only">{labelOf(option.id)}</span>
           </button>
         );
       })}

@@ -11,6 +11,9 @@ import { formatDeadline } from "@/lib/reservation-policy";
 import { NONE_OPTION_ID, NONE_OPTION_NAME } from "@/lib/menu-selection";
 import { useSearchParams } from "next/navigation";
 import { useBookingSession } from "@/hooks/use-booking-session";
+import { useI18n } from "@/components/i18n-provider";
+import { format, localeOf, plural } from "@/lib/i18n";
+import { translateApiError } from "@/lib/i18n/errors";
 import { PASS_KEY_PREFIX, formatPassKey, isValidPassKeyFormat, normalizePassKey } from "@/lib/pass-key";
 import { cx } from "@/components/ui/utils";
 import type { MenuCourse, ReservationRecord, ReservationSelection } from "@/types/booking";
@@ -56,6 +59,8 @@ function replaceEntry(loaded: Loaded, reservation: ReservationRecord, patch: Par
 export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
   const searchParams = useSearchParams();
   const session = useBookingSession();
+  const { t, language } = useI18n();
+  const locale = localeOf(language);
 
   /**
    * The key arrives in the link when the guest came from a screen that already
@@ -97,7 +102,7 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
     }
 
     if (!isValidPassKeyFormat(passKey)) {
-      setLookupError("Please enter the pass-key exactly as it appears on your slip.");
+      setLookupError(t.manage.keyFormat);
       return;
     }
 
@@ -115,7 +120,7 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
       });
 
       if (!response.ok) {
-        setLookupError("We could not find a reservation for that pass-key. Please check it and try again.");
+        setLookupError(t.manage.notFound);
         setLoaded(null);
         return;
       }
@@ -128,7 +133,7 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
       setDraft(only?.reservation.selections ?? []);
       setEditing(false);
     } catch {
-      setLookupError("We could not reach the restaurant. Please check your connection and try again.");
+      setLookupError(t.common.connectionProblem);
     } finally {
       setBusy(false);
     }
@@ -172,16 +177,16 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        setActionError(data.error || "We could not save your changes.");
+        setActionError(translateApiError(t, data) ?? t.manage.saveFailed);
         return;
       }
 
       setLoaded(replaceEntry(loaded, data.reservation));
       setDraft(data.reservation.selections);
       setEditing(false);
-      setNotice("Your menu choices have been updated.");
+      setNotice(t.manage.saved);
     } catch {
-      setActionError("We could not reach the restaurant. Please try again.");
+      setActionError(t.common.connectionProblem);
     } finally {
       setBusy(false);
     }
@@ -195,9 +200,7 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
     const { reservation } = activeEntry;
 
     const confirmed = window.confirm(
-      `Cancel reservation ${reservation.reservationNumber}? ` +
-        "Your pass-key will work again afterwards, so you can book another evening. " +
-        "If you cancel by mistake, reception can put it back.",
+      format(t.manage.cancelConfirm, { number: reservation.reservationNumber }),
     );
     if (!confirmed) {
       return;
@@ -219,19 +222,16 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        setActionError(data.error || "We could not cancel this reservation.");
+        setActionError(translateApiError(t, data) ?? t.manage.cancelFailed);
         return;
       }
 
       setLoaded(
         replaceEntry(loaded, { ...reservation, status: "cancelled" }, { canModify: false }),
       );
-      setNotice(
-        "Your reservation has been cancelled. Your pass-key works again, so you can book another evening — " +
-          "or call reception if this was a mistake.",
-      );
+      setNotice(t.manage.cancelled);
     } catch {
-      setActionError("We could not reach the restaurant. Please try again.");
+      setActionError(t.common.connectionProblem);
     } finally {
       setBusy(false);
     }
@@ -244,13 +244,13 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
           as="h1"
           align="center"
           flourish
-          eyebrow="Your reservation"
-          title="Manage your reservation"
-          description="Enter the pass-key you booked with — the one from your check-in slip."
+          eyebrow={t.manage.eyebrow}
+          title={t.manage.title}
+          description={t.manage.description}
         />
 
         <form onSubmit={lookup} noValidate className="mt-6 space-y-4">
-          <Field label="Pass-key" error={lookupError} hint="Capitals and dashes do not matter.">
+          <Field label={t.entry.passKeyLabel} error={lookupError} hint={t.manage.keyHint}>
             {(fieldProps) => (
               <Input
                 {...fieldProps}
@@ -278,14 +278,13 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
             )}
           </Field>
 
-          <Button type="submit" size="lg" className="w-full" loading={busy} loadingLabel="Looking up…">
-            Find my reservation
+          <Button type="submit" size="lg" className="w-full" loading={busy} loadingLabel={t.manage.lookingUp}>
+            {t.manage.find}
           </Button>
         </form>
 
         <p className="mt-6 rounded-control border border-line bg-surface-muted p-3 text-sm text-ink-muted">
-          Booked at reception rather than online, or lost your slip? Dial{" "}
-          <span className="font-semibold text-ink">9</span> from your room and they will change it for you.
+          {format(t.manage.bookedAtReception, { number: "9" })}
         </p>
       </Card>
     );
@@ -296,12 +295,12 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
       <Card elevated className="p-5 sm:p-6">
         <CardHeader
           as="h1"
-          eyebrow="Your reservations"
-          title="You have more than one dinner booked"
+          eyebrow={t.manage.listEyebrow}
+          title={t.manage.listTitle}
           description={
             loaded.usesRemaining > 0
-              ? `Choose the one you want to change. Your pass-key can still book ${loaded.usesRemaining} more.`
-              : "Choose the one you want to change."
+              ? `${t.manage.listChoose} ${plural(language, loaded.usesRemaining, t.manage.dinnersLeft)}`
+              : t.manage.listChoose
           }
         />
 
@@ -320,15 +319,19 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
                 className="flex w-full items-center justify-between gap-4 rounded-control border border-line-strong bg-surface p-4 text-left transition-colors hover:border-accent"
               >
                 <span>
-                  <span className="block font-semibold text-ink">{formatLongDate(entry.reservation.date)}</span>
+                  <span className="block font-semibold text-ink">
+                    {formatLongDate(entry.reservation.date, locale)}
+                  </span>
                   <span className="block text-sm text-ink-muted">
-                    {entry.reservation.reservationNumber} · {entry.reservation.guestCount}{" "}
-                    {entry.reservation.guestCount === 1 ? "guest" : "guests"}
-                    {entry.reservation.time ? ` · arrival ${entry.reservation.time}` : ""}
+                    {entry.reservation.reservationNumber} ·{" "}
+                    {plural(language, entry.reservation.guestCount, t.common.guestCount)}
+                    {entry.reservation.time
+                      ? ` · ${format(t.manage.arrival, { time: entry.reservation.time })}`
+                      : ""}
                   </span>
                 </span>
                 <Badge tone={entry.reservation.status === "cancelled" ? "info" : "success"}>
-                  {entry.reservation.status}
+                  {entry.reservation.status === "cancelled" ? t.manage.cancelledLabel : t.manage.confirmedLabel}
                 </Badge>
               </button>
             </li>
@@ -337,7 +340,7 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
 
         <div className="mt-6">
           <ButtonLink href="/booking" size="lg">
-            Book another evening
+            {t.manage.bookAnother}
           </ButtonLink>
         </div>
       </Card>
@@ -352,16 +355,22 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
     <Card elevated className="p-5 sm:p-6">
       <CardHeader
         as="h1"
-        eyebrow={`Reservation ${reservation.reservationNumber}`}
-        title={formatLongDate(reservation.date)}
+        eyebrow={format(t.manage.reservationNumber, { number: reservation.reservationNumber })}
+        title={formatLongDate(reservation.date, locale)}
         description={
           <>
-            Room {reservation.roomNumber} · {reservation.guestCount}{" "}
-            {reservation.guestCount === 1 ? "guest" : "guests"}
-            {reservation.time ? ` · arrival ${reservation.time}` : ""}
+            {format(t.manage.roomLine, {
+              room: reservation.roomNumber,
+              guests: plural(language, reservation.guestCount, t.common.guestCount),
+            })}
+            {reservation.time ? ` · ${format(t.manage.arrival, { time: reservation.time })}` : ""}
           </>
         }
-        actions={<Badge tone={isCancelled ? "info" : "success"}>{reservation.status}</Badge>}
+        actions={
+          <Badge tone={isCancelled ? "info" : "success"}>
+            {isCancelled ? t.manage.cancelledLabel : t.manage.confirmedLabel}
+          </Badge>
+        }
       />
 
       {notice ? (
@@ -376,15 +385,25 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
       ) : null}
 
       {!canModify && !isCancelled ? (
+        // The server's own wording is kept as the fallback: it knows about
+        // cases this screen does not, and English beats an empty box.
         <Alert tone="warning" className="mt-4">
-          {modificationBlockedReason}
+          {t.manage.closed || modificationBlockedReason}
         </Alert>
       ) : null}
 
       {canModify ? (
         <p className="mt-4 text-sm text-ink-muted">
-          You can change or cancel this booking yourself until{" "}
-          <strong className="text-ink">{formatDeadline(new Date(modificationDeadline))}</strong>.
+          {(() => {
+            const [before, after] = t.manage.untilDeadline.split("{deadline}");
+            return (
+              <>
+                {before}
+                <strong className="text-ink">{formatDeadline(new Date(modificationDeadline), locale)}</strong>
+                {after}
+              </>
+            );
+          })()}
         </p>
       ) : null}
 
@@ -396,7 +415,7 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
 
           return (
             <section key={guestIndex} className="rounded-control border border-line bg-surface-muted p-4">
-              <h2 className="eyebrow">Guest {guestIndex + 1}</h2>
+              <h2 className="eyebrow">{format(t.common.guestNumber, { number: guestIndex + 1 })}</h2>
               <ul className="mt-2 space-y-1 text-sm">
                 {entries.map((entry) => (
                   <li key={`${guestIndex}-${entry.courseId}`} className="flex justify-between gap-3">
@@ -421,7 +440,7 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
         <div className="mt-6 space-y-5">
           <div>
             <p id="edit-guest-label" className="text-sm font-medium text-ink">
-              Changing choices for
+              {t.manage.changingFor}
             </p>
             <div role="group" aria-labelledby="edit-guest-label" className="mt-2 flex flex-wrap gap-2">
               {guestIndexes.map((guestIndex) => (
@@ -437,7 +456,7 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
                       : "border-line-strong bg-surface text-ink hover:border-accent",
                   )}
                 >
-                  Guest {guestIndex + 1}
+                  {format(t.common.guestNumber, { number: guestIndex + 1 })}
                 </button>
               ))}
             </div>
@@ -451,7 +470,11 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
             return (
               <fieldset key={course.id} className="rounded-control border border-line p-4">
                 <legend className="px-1 text-sm font-semibold text-ink">{course.name}</legend>
-                <div role="radiogroup" aria-label={`${course.name} options`} className="mt-2 space-y-2">
+                <div
+                  role="radiogroup"
+                  aria-label={format(t.menuStep.courseOptions, { course: course.name })}
+                  className="mt-2 space-y-2"
+                >
                   {[...course.options, { id: NONE_OPTION_ID, name: NONE_OPTION_NAME, imageUrl: "" }].map((option) => {
                     const isSelected = selected?.optionId === option.id;
 
@@ -472,7 +495,7 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
                       >
                         <DishImage src={option.imageUrl} alt="" width={48} height={48} className="size-12 shrink-0" />
                         <span className="flex-1 text-sm font-medium">
-                          {option.id === NONE_OPTION_ID ? "No thank you" : option.name}
+                          {option.id === NONE_OPTION_ID ? t.menuStep.noThankYou : option.name}
                         </span>
                         <span aria-hidden="true">{isSelected ? "✓" : ""}</span>
                       </button>
@@ -494,10 +517,10 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
                 setActionError("");
               }}
             >
-              Discard changes
+              {t.manage.discard}
             </Button>
-            <Button size="lg" className="flex-1" onClick={saveChanges} loading={busy} loadingLabel="Saving…">
-              Save choices
+            <Button size="lg" className="flex-1" onClick={saveChanges} loading={busy} loadingLabel={t.common.saving}>
+              {t.manage.saveChoices}
             </Button>
           </div>
         </div>
@@ -506,15 +529,15 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
           {canModify ? (
             <>
               <Button variant="secondary" size="lg" className="flex-1" onClick={() => setEditing(true)}>
-                Change menu choices
+                {t.manage.changeChoices}
               </Button>
               <Button variant="danger" size="lg" className="flex-1" onClick={cancelReservation} loading={busy}>
-                Cancel reservation
+                {t.manage.cancelReservation}
               </Button>
             </>
           ) : (
             <ButtonLink href="/booking" size="lg" className="flex-1">
-              Back to the restaurant
+              {t.manage.backToRestaurant}
             </ButtonLink>
           )}
         </div>

@@ -1,12 +1,17 @@
+"use client";
+
 import Link from "next/link";
+import { useI18n } from "@/components/i18n-provider";
+import { format } from "@/lib/i18n";
 import { cx } from "@/components/ui/utils";
 
+/** The rail itself. Labels come from the dictionary, keyed by id. */
 export const BOOKING_STEPS = [
-  { id: "room", label: "Your stay", href: "/booking" },
-  { id: "guests", label: "Guests", href: "/booking/guests" },
-  { id: "date", label: "Date", href: "/booking/date" },
-  { id: "menu", label: "Menu", href: "/booking/menu" },
-  { id: "summary", label: "Confirm", href: "/booking/summary" },
+  { id: "room", href: "/booking" },
+  { id: "guests", href: "/booking/guests" },
+  { id: "date", href: "/booking/date" },
+  { id: "menu", href: "/booking/menu" },
+  { id: "summary", href: "/booking/summary" },
 ] as const;
 
 export type BookingStepId = (typeof BOOKING_STEPS)[number]["id"];
@@ -23,14 +28,20 @@ export type BookingStepId = (typeof BOOKING_STEPS)[number]["id"];
  * does not exist yet.
  */
 export function BookingSteps({ current }: { current: BookingStepId }) {
+  const { t } = useI18n();
   const currentIndex = BOOKING_STEPS.findIndex((step) => step.id === current);
   const progress = (currentIndex / (BOOKING_STEPS.length - 1)) * 100;
+  const labelOf = (id: BookingStepId) => t.steps[id];
 
   return (
-    <nav aria-label="Booking progress" className="mb-8">
+    <nav aria-label={t.steps.label} className="mb-8">
       {/* Named for a screen reader; the rail itself is decorative. */}
       <p className="sr-only">
-        Step {currentIndex + 1} of {BOOKING_STEPS.length}: {BOOKING_STEPS[currentIndex]?.label}
+        {format(t.steps.stepOf, {
+          current: currentIndex + 1,
+          total: BOOKING_STEPS.length,
+          name: labelOf(current),
+        })}
       </p>
 
       <div className="relative">
@@ -98,7 +109,7 @@ export function BookingSteps({ current }: { current: BookingStepId }) {
                   isCurrent ? "text-ink" : isComplete ? "text-ink-muted" : "text-ink-subtle",
                 )}
               >
-                {step.label}
+                {labelOf(step.id)}
               </span>
             );
 

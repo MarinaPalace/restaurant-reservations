@@ -48,8 +48,8 @@ export function canGuestModify(
   return { allowed: true, deadline };
 }
 
-export function formatDeadline(deadline: Date) {
-  return new Intl.DateTimeFormat("en-GB", {
+export function formatDeadline(deadline: Date, locale = "en-GB") {
+  return new Intl.DateTimeFormat(locale, {
     weekday: "long",
     day: "numeric",
     month: "long",

@@ -10,6 +10,7 @@ import { KitchenReport } from "@/app/admin/kitchen-report";
 import { formatLongDate, isValidDateKey, startOfMonth, todayKey } from "@/lib/date";
 import { compareRoomNumbers } from "@/lib/room";
 import {
+  menuKindOf,
   withRemainingSeats,
   type MenuCourse,
   type ReservationRecord,
@@ -48,6 +49,24 @@ export function AdminDateManager({
         .sort((a, b) => compareRoomNumbers(a.roomNumber, b.roomNumber)),
     [reservations, selectedDate],
   );
+
+  /**
+   * The catalogue this evening is actually served from.
+   *
+   * The dashboard is handed both menus, because it has to be able to show any
+   * evening — but the sheet must only column up one of them. The premium menu
+   * starts life as a copy of the everyday one, so passing both gave every dish
+   * a *second* column, headed the same and permanently empty: the premium
+   * copies, which nobody on an everyday evening can order. It was reported as a
+   * duplicate column, and that is exactly what it was.
+   *
+   * Dishes from the other menu are not lost either way: `buildOptionColumns`
+   * adds a column for any option a booking actually chose.
+   */
+  const eveningMenu = useMemo(() => {
+    const kind = selectedEntry?.premium ? "premium" : "standard";
+    return menu.filter((course) => menuKindOf(course) === kind);
+  }, [menu, selectedEntry?.premium]);
 
   const getDayState = (dateKey: string): DayState => {
     const entry = dates.find((item) => item.date === dateKey);
@@ -495,7 +514,7 @@ export function AdminDateManager({
         date={selectedDate}
         serviceTime={selectedEntry?.serviceTime}
         reservations={selectedDayReservations}
-        menu={menu}
+        menu={eveningMenu}
         onAssignTable={assignTable}
         onCancel={cancelReservation}
         onRestore={restoreReservation}

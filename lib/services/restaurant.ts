@@ -6,6 +6,7 @@ import { RestaurantDateModel } from "@/lib/models/restaurant-date";
 import { localizeMenuCatalog } from "@/lib/menu-localization";
 import { decodeStoredImage, isStoredImage, toPublicImageUrl } from "@/lib/menu-images";
 import {
+  menuKindOf,
   withRemainingSeats,
   type MenuCourse,
   type MenuKind,
@@ -92,10 +93,12 @@ function toMenuCourse(course: MongoDocument, options: MongoDocument[]): MenuCour
  * The full catalogue including inactive entries — for the admin editor, which
  * has to be able to see and re-enable what it switched off.
  */
-/** Absent reads as the everyday menu, so older courses need no migration. */
-export function menuKindOf(course: Pick<MenuCourse, "menu">): MenuKind {
-  return course.menu === "premium" ? "premium" : "standard";
-}
+/**
+ * Absent reads as the everyday menu, so older courses need no migration. It is
+ * defined in `types/booking.ts` — the dashboard needs it in the browser, and
+ * this module pulls in Mongoose — and re-exported here for existing callers.
+ */
+export { menuKindOf };
 
 export async function getFullMenuCatalog(menu?: MenuKind): Promise<MenuCourse[]> {
   const all = await loadFullCatalog();

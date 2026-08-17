@@ -21,7 +21,7 @@ A reservation app for **Vista Del Mar**, a hotel's à la carte restaurant.
 Stack: Next.js 16 (App Router, Turbopack), React 19, TypeScript, Tailwind v4, Mongoose 9, Zod 4,
 Vitest. Deployed on Vercel.
 
-**352 tests, 21 files. Lint, types and build are clean. Keep them that way.**
+**382 tests, 22 files. Lint, types and build are clean. Keep them that way.**
 
 ---
 
@@ -119,7 +119,40 @@ Two rules keep it honest, both in the print block of `app/globals.css`:
 left, middle, hard right — and at a few different dish counts. It has been
 reported fixed twice before it actually was.
 
-### 2.9 Nothing in the suite looks at print CSS
+### 2.9 Hiding a thing for print is not the same as removing it
+
+`visibility: hidden` keeps the box. Both prints in this app were built that way,
+and both were wrong in ways nobody connected to the cause:
+
+- Printing nine pass-key cards produced the cards, then **two or three blank
+  pages** — the arrivals table underneath, invisible but still occupying paper.
+  Reception reported it as "the PDF always has empty pages".
+- The service sheet was pinned to the top of page one with `position: absolute`,
+  and an absolutely positioned box does not paginate. A long evening broke
+  differently depending on the browser.
+
+The fix is in the `@supports selector(:has(*))` block in `globals.css`: anything
+that is not the printed subtree, an ancestor of it, or inside it is
+`display: none`; the ancestors become `display: contents`; and the subtree flows
+normally from the top of the page. The old visibility rules stay as the
+fallback for browsers without `:has()`, which is why both approaches are in the
+file.
+
+Two more things that cost paper, both fixed there too:
+
+- **`tfoot` repeats on every printed page.** The service sheet's totals row
+  therefore printed under each page, reading as if each page were a total of
+  itself. It is `display: table-row-group` in print, so it appears once, at the
+  end. `thead` still repeats, which is genuinely useful.
+- **Controls print at touch-target size.** The table number in the first column
+  is a button carrying the app's 32px minimum — 8mm of blank paper per row, and
+  the reason twenty tables needed two pages. Buttons, inputs and selects inside
+  `[data-print-area]` are stripped to their text in print.
+
+An evening of **thirty tables now fits one sheet**, with the kitchen slip on its
+own page as intended. Measured, not guessed: see "verifying a print" below.
+
+### 2.10 Nothing in the suite looks at print CSS
 
 Types, lint, 314 tests and the build all passed while the entire print
 stylesheet was missing. Rewriting the motion layer, `globals.css` was spliced on
@@ -137,7 +170,7 @@ is a truncation with extra steps, and it deleted work from three commits.
 check `grep -c data-print app/globals.css` is still in the twenties, and print
 the service sheet and a pass-key card by hand. Nothing else will tell you.
 
-### 2.10 A pass-key is spent before the booking it pays for is written
+### 2.11 A pass-key is spent before the booking it pays for is written
 
 `consumePassKey` matches **only a key that is still active** and flips it to `used` in one
 conditional update. That single write is the whole mechanism: two requests arriving together with
@@ -152,7 +185,7 @@ Releasing is filtered by reservation number as well as key id, so a late request
 that has since been spent on something else. `lib/db/local-restore.test.ts` and the Mongo suite
 cover both directions, including two simultaneous bookings with one code.
 
-### 2.11 Restoring a cancellation is a fresh claim on the seats
+### 2.12 Restoring a cancellation is a fresh claim on the seats
 
 Cancelling gives the seats back to the evening. Somebody else may have taken them, or the evening
 may have been closed since — so `restoreReservation` claims them again with the same conditional
@@ -163,7 +196,7 @@ hands its claimed seats straight back.
 Never "just flip the status back to confirmed". That was the obvious implementation and it is
 wrong.
 
-### 2.12 A key belongs to one flow, and every gate must know it
+### 2.13 A key belongs to one flow, and every gate must know it
 
 `kind` is `standard` or `premium`. **Three** places check it, and each was
 found the hard way:
@@ -180,7 +213,7 @@ found the hard way:
 Adding a gate is not enough. Every gate in front of it has to learn the rule
 too, or the new one only moves where the failure happens.
 
-### 2.13 Nothing may move under a finger
+### 2.14 Nothing may move under a finger
 
 Two rules in the motion layer, both written after the menu screen became close
 to unusable on a phone: guests reported that pressing a dish made "everything
@@ -211,11 +244,31 @@ just been tapped.
 `.lift` also carried a standing `will-change: transform`, one composited layer
 per dish on the page. Removed.
 
+**On touch, the interface arrives and then holds still.** That is now a rule of
+its own, in the `@media (hover: none)` block:
+
+- **No press transform.** Sinking a control 8px into the page reads well under a
+  mouse, where the pointer is beside the thing it presses. Under a thumb the
+  control moves *while it is being touched*, and on an older phone the repaint
+  lands after the finger has lifted somewhere else — guests were pressing the
+  same button two and three times. Touch gets an instant opacity change instead:
+  no transform, no transition, nothing to arrive late.
+- **No ambient loops.** The drifting gradient and the sweeping sheen cost a
+  composite pass forever on hardware with none to spare, for an effect nobody
+  looks at. They remain on pointer devices.
+- **The chosen party-size chip lifts on pointer devices only** (`.chosen-chip`).
+  It used to lift on the phone too — and remounted itself to replay the
+  animation — so the picker rearranged under the thumb at every tap.
+
+The entrances (`stage`, `settle`, `rise`, the drawn rule) still play once on
+arrival everywhere. Motion on a phone is for the moment a screen appears, not
+for every time it is touched.
+
 **When touching the motion layer, drive the menu screen on a phone** — or at
 least in a device emulator with touch and a slow CPU. None of this shows up in
 types, lint or tests.
 
-### 2.14 No `setState` synchronously inside an effect
+### 2.15 No `setState` synchronously inside an effect
 
 React 19's lint rule is on and treated as an error. Data that does not depend on client state is
 fetched **on the server** and passed as props. `sessionStorage` is read through
@@ -271,6 +324,8 @@ lib/
   services/           booking-rules, reservations, restaurant/menu,
                       pass-keys, staff-users, audit-log.
   pass-key.ts         Code generation, normalisation, formatting.
+  i18n/               The guest interface in seven languages: en.ts is the
+                      master, the rest are partials merged over it.
   reservation-ticket.ts  Dish counts ⇄ per-guest choices, and the dish summary.
   date.ts room.ts contact.ts calendar.ts kitchen-report.ts …
 proxy.ts              Optimistic /admin redirect only.
@@ -339,6 +394,14 @@ per-room guest numbers — splitting it would mean inventing them. The service s
 and the audit log show them joined as `402 + 405`, the same way a table rooms joined themselves is
 shown. The field is optional and absent everywhere else, and a room listed twice is refused.
 
+**The sheet columns one menu, not both.** The dashboard is handed the *full* catalogue, because it
+has to be able to show any evening — but the service sheet must column up only the menu that
+evening is served from, which `date-manager.tsx` filters by the date's `premium` flag. Passing both
+gave every dish a second column, headed the same and permanently empty: the premium copies, which
+nobody on an everyday evening can order. The premium menu starts life as a copy of the everyday
+one, so the two sets matched dish for dish and it read as a duplicated column — which is exactly
+what it was. Not to be confused with the blank column below, which is a different thing.
+
 **Dishes nobody ordered.** Every menu option keeps a column on screen, so staff can see the whole
 menu and satisfy themselves a dish really has no takers — but a column of blanks takes no space on
 the printed sheet. Zeros are deliberately blanked rather than shown, which means an unordered dish
@@ -351,6 +414,32 @@ words (`lib/dish-name.ts` drops filler first), and only the sheet prints — eve
 hidden because staff cut the page up. The kitchen slip follows on its own page: dish, quantity,
 total plates, allergy notes; no tables or rooms. CSV exports carry a UTF-8 BOM so Excel does not
 mangle accented or Cyrillic names.
+
+**The guest interface is translated; the staff one is not.** Seven languages — English, Bulgarian,
+German, French, Polish, Romanian, Russian — in `lib/i18n/`. The menu itself has been translatable
+for a long time, but the words around it were not: a Bulgarian guest read their courses in
+Bulgarian and every button in English, which is the half of the screen that says what to do next.
+
+- **One choice, one cookie.** The picker sits in the header of every guest screen and writes
+  `vdm-language`. The layout resolves it once per request and hands the dictionary to both the
+  server tree and, through `I18nProvider`, the client one — so a screen renders in Polish on the
+  first paint rather than switching after hydration. With no cookie, `Accept-Language` decides;
+  English is the last resort rather than the first, because a guest arriving from the QR code on a
+  printed card has made no choice yet.
+- **Plain strings with `{placeholders}`, never functions.** The dictionary crosses the server /
+  client boundary, and functions do not survive that. `format` fills the gaps and `plural` picks a
+  form through `Intl.PluralRules` — Russian and Polish need three, Romanian three, and `count === 1`
+  is wrong in most of the languages here.
+- **A translation is a deep partial merged over English, key by key.** A half-written language
+  shows English for the rest rather than blanks or key names, and a key added to `en.ts` can never
+  break a build. `lib/i18n/i18n.test.ts` still holds every language to the full set, and checks
+  that no translation invents a placeholder the English sentence does not have.
+- **Server messages stay English on the wire.** The API already answered with a `code`; screens
+  look that up in the dictionary (`lib/i18n/errors.ts`) and fall back to the server's own sentence
+  for codes they do not know. An English message in a log or a support ticket is worth more than a
+  Polish one nobody at the desk reads.
+- Dates, months, weekday headers and deadlines are formatted with the guest's locale —
+  `formatLongDate`, `formatMonthLabel`, `formatDeadline` and `describeReservationTime` all take one.
 
 **Pass-keys.** Reception issues one at check-in, for a stay of five nights or more; the panel is at
 `/admin/pass-keys` and prints a slip with the code and the booking address. A key books **one**
@@ -496,7 +585,7 @@ history is on its own page at `/admin/reservation/<number>`. Writing to the log 
 thing being logged — a failed log write is reported to the console and swallowed.
 
 **Restoring a cancellation.** Cancelled bookings show a *Restore* button in the service sheet, for
-accounts with `reservations:restore`. See rule 2.9 — it is a real seat claim and can fail.
+accounts with `reservations:restore`. See rule 2.12 — it is a real seat claim and can fail.
 
 **Guest self-service.** `/booking/manage` — **pass-key only**, no reservation number and no room
 number, then swap courses or cancel. The key is **never typed twice**: it arrives in the link from
@@ -530,8 +619,9 @@ Roughly in the order I would tackle them for beta.
    anything else.
 4. **Tables have no capacity.** Nothing stops four rooms grouping onto a table that seats six.
    Staff assign the number so they would notice, but the system will not warn.
-5. **Cyrillic headings fall back to a system serif.** The display face is loaded with Latin subsets
-   only. Body text is unaffected. One-line fix if you want it.
+5. **Only the monospace face lacks Cyrillic.** The body and display faces load it — two of the
+   seven guest languages need it — but `Geist_Mono` does not, so a pass-key or a reservation number
+   rendered in Cyrillic would fall back. Neither ever is: both are `[A-Z0-9-]`.
 6. **Photos are stored as base64 in the record.** Fine at current scale thanks to the cached image
    route; if the menu grows large, move to blob storage.
 7. **Allergen vocabulary is mixed.** Existing dishes use `Dairy`, `Tree Nuts`; the picker offers
@@ -574,6 +664,19 @@ npm run check:admin -- 'password'
 
 **Before pushing:** typecheck, lint, tests and build must all be clean. The Mongo suite downloads a
 `mongod` binary on first run.
+
+**Verifying a print.** Nothing in the suite covers print CSS (rule 2.10), and "it looks right in
+the preview" has been wrong twice. Print it to PDF and count the pages:
+
+```bash
+# with the app running, and a session cookie in cookies.txt
+chrome --headless=new --no-pdf-header-footer --print-to-pdf=out.pdf file:///sheet.html
+```
+
+Save the page's HTML, **inline the stylesheet** — a `file://` page silently drops an
+`http://localhost` stylesheet, and then you are measuring a page with no CSS at all — and count
+`/Type /Page` in the PDF. An evening of thirty tables must come out as two pages: the sheet, then
+the kitchen slip. Nine pass-key cards must come out as one.
 
 **Verifying by hand is worth it.** Several bugs in this project passed the type checker and the
 unit tests but failed the moment a real request hit them — the premium-date hole, the dropped table

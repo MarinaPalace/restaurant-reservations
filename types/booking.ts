@@ -4,6 +4,17 @@
  */
 export type MenuKind = "standard" | "premium";
 
+/**
+ * Which catalogue a course belongs to. Absent reads as the everyday menu, so
+ * courses saved before premium existed need no migration.
+ *
+ * It lives here rather than in `lib/services/restaurant.ts` because the
+ * dashboard needs it in the browser, and that module pulls in Mongoose.
+ */
+export function menuKindOf(course: Pick<MenuCourse, "menu">): MenuKind {
+  return course.menu === "premium" ? "premium" : "standard";
+}
+
 export type MenuTranslation = {
   name?: string;
   description?: string;

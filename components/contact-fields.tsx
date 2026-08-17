@@ -1,6 +1,7 @@
 "use client";
 
 import { Field, Input } from "@/components/ui/field";
+import { useI18n } from "@/components/i18n-provider";
 import { MESSAGING_APPS } from "@/lib/contact";
 import { cx } from "@/components/ui/utils";
 import type { ReservationContact } from "@/types/booking";
@@ -19,16 +20,15 @@ export function ContactFields({
   onChange: (contact: ReservationContact) => void;
   error?: string;
 }) {
+  const { t } = useI18n();
   const isEmail = contact.method === "email";
 
   return (
     <fieldset className="rounded-control border border-line bg-surface-muted p-4">
-      <legend className="px-1 text-sm font-semibold text-ink">Contact details</legend>
-      <p className="text-sm text-ink-muted">
-        In case the restaurant needs to reach you about this reservation.
-      </p>
+      <legend className="px-1 text-sm font-semibold text-ink">{t.contact.legend}</legend>
+      <p className="text-sm text-ink-muted">{t.contact.why}</p>
 
-      <div role="radiogroup" aria-label="How should we contact you?" className="mt-4 flex gap-2">
+      <div role="radiogroup" aria-label={t.contact.how} className="mt-4 flex gap-2">
         {(["email", "phone"] as const).map((method) => (
           <button
             key={method}
@@ -43,14 +43,14 @@ export function ContactFields({
                 : "border-line-strong bg-surface text-ink hover:border-accent",
             )}
           >
-            {method === "email" ? "Email" : "Phone"}
+            {method === "email" ? t.contact.email : t.contact.phone}
           </button>
         ))}
       </div>
 
       <div className="mt-4">
         {isEmail ? (
-          <Field label="Email address" error={error}>
+          <Field label={t.contact.emailLabel} error={error}>
             {(fieldProps) => (
               <Input
                 {...fieldProps}
@@ -66,7 +66,7 @@ export function ContactFields({
           </Field>
         ) : (
           <>
-            <Field label="Phone number" hint="Include the country code, e.g. +359 88 123 4567" error={error}>
+            <Field label={t.contact.phoneLabel} hint={t.contact.phoneHint} error={error}>
               {(fieldProps) => (
                 <Input
                   {...fieldProps}
@@ -83,7 +83,7 @@ export function ContactFields({
 
             <div className="mt-4">
               <p id="messaging-app-label" className="text-sm font-medium text-ink">
-                Preferred app
+                {t.contact.preferredApp}
               </p>
               <div
                 role="radiogroup"
@@ -107,7 +107,7 @@ export function ContactFields({
                           : "border-line-strong bg-surface text-ink hover:border-accent",
                       )}
                     >
-                      {app.label}
+                      {app.id === "phone" ? t.contact.phoneOrSms : app.label}
                     </button>
                   );
                 })}

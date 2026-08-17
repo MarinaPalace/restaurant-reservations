@@ -176,6 +176,10 @@ UTF-8 BOM so accented and Cyrillic dish names survive the open.
   Cancelled bookings are excluded from the counts. Cells showing zero are left blank so the counts
   that matter stand out.
 
+The columns come from the menu that evening is served from — the everyday one, or the premium one
+for an invitation evening. A dish nobody has ordered still keeps its column on screen, so you can
+satisfy yourself it really has no takers; on paper it takes no space.
+
 **Invitation bookings (`/premium`).** A separate flow for guests who are not staying yet — people
 invited weeks ahead who must choose now. They give a **name** instead of a room, order from a
 **separate premium menu**, and may only pick evenings staff have opened for them. Mark an evening
@@ -190,16 +194,30 @@ with a copy of the everyday menu as a starting point. Nothing is stored, and inv
 nothing, until you press **Save menu**; from then on the two are entirely separate, and editing one
 never changes the other.
 
-**Printing.** Print gives you only the sheet — no calendar, no navigation — in **A4 landscape**, sized to
-land an evening on a single page: the course-grouping row is dropped, dish names are trimmed to
-three words ("Slow roasted lamb"), and the type is set small. The kitchen slip follows on its own
-page — a compact list of every dish with its quantity, total plates, and any allergy notes. Cut it
-off and hand it over; it carries no tables or room numbers.
+**Printing.** Print gives you only the sheet — no calendar, no navigation — in **A4 landscape**,
+sized to land an evening on a single page: the course-grouping row is dropped, dish names are
+trimmed to three words ("Slow roasted lamb"), the type is set small, and the table-number buttons
+print as plain numbers rather than at their on-screen touch size. **Thirty tables fit on one
+page**, with the totals row appearing once, at the end. The kitchen slip follows on its own page —
+a compact list of every dish with its quantity, total plates, and any allergy notes. Cut it off and
+hand it over; it carries no tables or room numbers.
 
-**One language for staff.** Guests may book in any translated language, but the course and option
-names stored on a reservation are always the master English wording, resolved from the catalogue
-by id rather than trusted from the client. Bookings taken before this are resolved the same way
-when the sheet is drawn, so old records read in English too.
+Pass-key cards print the same way: nine to a sheet with cut lines, and nothing else — no trailing
+blank pages from the list behind them.
+
+**Seven languages for guests, English for staff.** The whole guest interface — buttons, labels,
+messages, dates and month names — is translated into English, Bulgarian, German, French, Polish,
+Romanian and Russian. The picker is in the header of every guest screen and the choice is
+remembered; a guest who has not chosen gets the language their browser asks for. The menu follows
+the same choice, so the dishes and the buttons never disagree.
+
+Staff screens stay in English, and so does the data: the course and option names stored on a
+reservation are always the master English wording, resolved from the catalogue by id rather than
+trusted from the client. Bookings taken before this are resolved the same way when the sheet is
+drawn, so old records read in English too.
+
+To add a language, copy `lib/i18n/en.ts`, translate the values, and register it in
+`lib/i18n/index.ts`. Anything left untranslated falls back to English one key at a time.
 
 **Calendar reminders.** The confirmation screen offers Google Calendar and an `.ics` download for
 Apple Calendar and Outlook, including the per-guest menu choices and an alarm three hours before

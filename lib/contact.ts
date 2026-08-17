@@ -39,6 +39,42 @@ export function isValidPhone(value: string) {
   return digits.length >= 7 && digits.length <= 15;
 }
 
+/**
+ * The same judgement as {@link describeContactProblem}, as a code rather than
+ * an English sentence — so a guest screen can say it in their own language.
+ * The two are kept side by side deliberately: the server keeps answering in
+ * English, which is what ends up in logs and at the desk.
+ */
+export type ContactProblem =
+  | "missing"
+  | "emailMissing"
+  | "emailInvalid"
+  | "phoneMissing"
+  | "phoneInvalid"
+  | "methodMissing";
+
+export function contactProblemOf(contact: ReservationContact | undefined | null): ContactProblem | null {
+  if (!contact) {
+    return "missing";
+  }
+
+  if (contact.method === "email") {
+    if (!contact.email?.trim()) {
+      return "emailMissing";
+    }
+    return isValidEmail(contact.email) ? null : "emailInvalid";
+  }
+
+  if (contact.method === "phone") {
+    if (!contact.phone?.trim()) {
+      return "phoneMissing";
+    }
+    return isValidPhone(contact.phone) ? null : "phoneInvalid";
+  }
+
+  return "methodMissing";
+}
+
 export function describeContactProblem(contact: ReservationContact | undefined | null): string | null {
   if (!contact) {
     return "Please leave an email address or a phone number.";

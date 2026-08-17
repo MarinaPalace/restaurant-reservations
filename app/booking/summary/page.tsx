@@ -10,13 +10,18 @@ import { Alert } from "@/components/ui/feedback";
 import { Field, Input, Textarea } from "@/components/ui/field";
 import { ContactFields } from "@/components/contact-fields";
 import { useBookingGuard, storeConfirmation } from "@/hooks/use-booking-session";
-import { describeContactProblem, normalizeContact } from "@/lib/contact";
+import { useI18n } from "@/components/i18n-provider";
+import { format, localeOf } from "@/lib/i18n";
+import { translateApiError } from "@/lib/i18n/errors";
+import { contactProblemOf, normalizeContact } from "@/lib/contact";
 import { formatLongDate } from "@/lib/date";
 import type { ReservationContact } from "@/types/booking";
 
 export default function SummaryPage() {
   const router = useRouter();
   const { session, ready } = useBookingGuard(["room", "guests", "date", "selections"]);
+  const { t, language } = useI18n();
+  const locale = localeOf(language);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [contact, setContact] = useState<ReservationContact>({ method: "email", email: "", messagingApp: "phone" });
@@ -42,9 +47,9 @@ export default function SummaryPage() {
       return;
     }
 
-    const contactProblem = describeContactProblem(contact);
+    const contactProblem = contactProblemOf(contact);
     if (contactProblem) {
-      setContactError(contactProblem);
+      setContactError(t.contact.problems[contactProblem]);
       return;
     }
 
@@ -82,7 +87,7 @@ export default function SummaryPage() {
 
         // The party they tried to join is the problem, not the booking.
         if (data.code === "TABLE_JOIN_FAILED") {
-          setError(data.error);
+          setError(translateApiError(t, data) ?? t.errors.tableJoinFailed);
           setSubmitting(false);
           return;
         }
@@ -91,12 +96,12 @@ export default function SummaryPage() {
         // step where they can correct it rather than leaving them stuck on a
         // summary they cannot submit.
         if (typeof data.code === "string" && data.code.startsWith("PASS_KEY_")) {
-          setError(data.error);
+          setError(translateApiError(t, data) ?? t.errors.passKeyInvalid);
           setSubmitting(false);
           return;
         }
 
-        setError(data.error || "Something went wrong while creating your reservation. Please try again.");
+        setError(translateApiError(t, data) ?? t.summary.failed);
         setSubmitting(false);
         return;
       }
@@ -104,7 +109,7 @@ export default function SummaryPage() {
       storeConfirmation(data.reservation);
       router.push("/booking/confirmation");
     } catch {
-      setError("We could not reach the restaurant. Please check your connection and try again.");
+      setError(t.common.connectionProblem);
       setSubmitting(false);
     }
   };
@@ -113,21 +118,21 @@ export default function SummaryPage() {
     <PageShell width="md">
       <BookingSteps current="summary" />
       <Card elevated className="aurora p-5 sm:p-8">
-        <CardHeader as="h1" align="center" flourish eyebrow="Your table" title="Review your reservation" />
+        <CardHeader as="h1" align="center" flourish eyebrow={t.summary.eyebrow} title={t.summary.title} />
 
         <dl className="mt-6 grid grid-cols-2 gap-4 rounded-control bg-surface-muted p-4">
           <div>
-            <dt className="text-xs font-medium uppercase tracking-wide text-ink-subtle">Room</dt>
+            <dt className="text-xs font-medium uppercase tracking-wide text-ink-subtle">{t.common.room}</dt>
             <dd className="mt-1 text-lg font-semibold text-ink">{session.roomNumber || "—"}</dd>
           </div>
           <div>
-            <dt className="text-xs font-medium uppercase tracking-wide text-ink-subtle">Guests</dt>
+            <dt className="text-xs font-medium uppercase tracking-wide text-ink-subtle">{t.common.guests}</dt>
             <dd className="mt-1 text-lg font-semibold text-ink">{guestCount}</dd>
           </div>
           <div className="col-span-2">
-            <dt className="text-xs font-medium uppercase tracking-wide text-ink-subtle">Date</dt>
+            <dt className="text-xs font-medium uppercase tracking-wide text-ink-subtle">{t.common.date}</dt>
             <dd className="mt-1 text-lg font-semibold text-ink">
-              {session.date ? <time dateTime={session.date}>{formatLongDate(session.date)}</time> : "—"}
+              {session.date ? <time dateTime={session.date}>{formatLongDate(session.date, locale)}</time> : "—"}
             </dd>
           </div>
         </dl>
@@ -135,9 +140,9 @@ export default function SummaryPage() {
         <div className="mt-6 space-y-4">
           {groupedSelections.map(({ guestIndex, entries }) => (
             <section key={guestIndex} className="rounded-control border border-line bg-surface-muted p-4">
-              <h2 className="eyebrow">Guest {guestIndex + 1}</h2>
+              <h2 className="eyebrow">{format(t.common.guestNumber, { number: guestIndex + 1 })}</h2>
               {entries.length === 0 ? (
-                <p className="mt-2 text-sm text-ink-muted">No menu choices selected yet.</p>
+                <p className="mt-2 text-sm text-ink-muted">{t.summary.noChoices}</p>
               ) : (
                 <ul className="mt-3 space-y-2">
                   {entries.map((entry) => (
@@ -156,15 +161,12 @@ export default function SummaryPage() {
         </div>
 
         <div className="mt-6 space-y-4">
-          <Field
-            label="Allergies or requests"
-            hint="Anything the kitchen should know. Optional."
-          >
+          <Field label={t.summary.notesLabel} hint={t.summary.notesHint}>
             {(fieldProps) => (
               <Textarea
                 {...fieldProps}
                 maxLength={500}
-                placeholder="e.g. one guest is allergic to nuts"
+                placeholder={t.summary.notesPlaceholder}
                 value={notes}
                 onChange={(event) => setNotes(event.target.value)}
               />
@@ -179,20 +181,17 @@ export default function SummaryPage() {
                 checked={shareTable}
                 onChange={(event) => setShareTable(event.target.checked)}
               />
-              We are dining with another room
+              {t.summary.shareTable}
             </label>
 
             {shareTable ? (
               <div className="mt-3">
-                <Field
-                  label="Their reservation number"
-                  hint="Ask them for the number on their confirmation, e.g. VDM-3E94B8."
-                >
+                <Field label={t.summary.joinLabel} hint={t.summary.joinHint}>
                   {(fieldProps) => (
                     <Input
                       {...fieldProps}
                       value={joinNumber}
-                      placeholder="e.g. VDM-3E94B8"
+                      placeholder={t.summary.joinPlaceholder}
                       autoCapitalize="characters"
                       onChange={(event) => setJoinNumber(event.target.value.toUpperCase())}
                     />
@@ -220,7 +219,7 @@ export default function SummaryPage() {
 
         <div className="mt-6 flex flex-col gap-3 sm:flex-row">
           <ButtonLink href="/booking/menu" size="lg" className="flex-1">
-            Back
+            {t.common.back}
           </ButtonLink>
           <Button
             size="lg"
@@ -228,9 +227,9 @@ export default function SummaryPage() {
             onClick={handleConfirm}
             disabled={!ready}
             loading={submitting}
-            loadingLabel="Confirming…"
+            loadingLabel={t.summary.confirming}
           >
-            Confirm reservation
+            {t.summary.confirm}
           </Button>
         </div>
       </Card>

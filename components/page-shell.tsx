@@ -18,16 +18,19 @@ export function PageShell({
   width = "md",
   className,
   headerHref,
+  showLanguage = true,
 }: {
   children: ReactNode;
   width?: keyof typeof WIDTHS;
   className?: string;
   /** Where the wordmark links to — the admin area points back at itself. */
   headerHref?: string;
+  /** Staff screens are English, so they do not carry the language control. */
+  showLanguage?: boolean;
 }) {
   return (
     <>
-      <SiteHeader href={headerHref} className={WIDTHS[width]} />
+      <SiteHeader href={headerHref} className={WIDTHS[width]} showLanguage={showLanguage} />
       <main id="main" className="flex flex-1 flex-col px-4 py-6 sm:py-8">
         <div className={cx("mx-auto w-full", WIDTHS[width], className)}>{children}</div>
       </main>

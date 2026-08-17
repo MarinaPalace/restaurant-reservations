@@ -512,6 +512,18 @@ body {
     box-shadow: var(--lift-raised);
     transform: perspective(var(--depth-perspective)) translate3d(0, -3px, 20px);
   }
+
+  /**
+   * The chosen chip stands forward of the others.
+   *
+   * Pointer devices only, and deliberately: on a phone this ran on the button
+   * the guest had just pressed, so the party-size picker rearranged itself
+   * under the thumb every single time.
+   */
+  .chosen-chip[aria-checked="true"] {
+    transform: perspective(var(--depth-perspective)) translate3d(0, 0, 18px) scale(1.03);
+    box-shadow: var(--lift-raised);
+  }
 }
 
 /**
@@ -612,6 +624,46 @@ body {
 }
 
 /* ---------------------------------------------------------------- *
+ * Touch: it arrives, and then it holds still
+ * ---------------------------------------------------------------- *
+ *
+ * A phone gets the entrance — the panel settling in, the rule drawing itself —
+ * and after that nothing moves unless the guest asks it to move.
+ *
+ * The press effect is the reason. Sinking a control 8px into the page reads
+ * beautifully under a mouse, where the pointer is beside the thing it is
+ * pressing. Under a thumb the control moves *while it is being touched*, and on
+ * an older phone the repaint arrives late enough that the finger has already
+ * lifted somewhere else — guests reported pressing the same button two or three
+ * times before it took. Touch gets an instant change of tone instead: no
+ * transform, no transition, nothing to arrive late.
+ *
+ * The ambient loops go too. A gradient drifting on an eleven-second cycle and a
+ * sheen sweeping every seven costs a composite pass forever, on hardware that
+ * has none to spare, for an effect nobody is looking at. They stay on pointer
+ * devices, which are laptops and desks.
+ */
+@media (hover: none) {
+  .lift:is(button, a, summary, label, [role="radio"], [role="button"]):active {
+    transform: none !important;
+    box-shadow: var(--lift-resting);
+    /* Opacity rather than a brightness filter: it reads the same on ivory and
+       on the dark palette, where darkening a near-black surface shows nothing. */
+    opacity: 0.86;
+    transition: none;
+  }
+
+  .aurora::before,
+  .pulse-gold {
+    animation: none !important;
+  }
+
+  .sheen::after {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------- *
  * Opting out
  * ---------------------------------------------------------------- *
  *
@@ -685,6 +737,11 @@ body {
    * Print only the sheet. Everything else — the calendar, the stats, the
    * navigation — is hidden rather than merely un-styled, because staff cut the
    * printout up and hand the bottom of it to the kitchen.
+   *
+   * This is the fallback, for browsers without `:has()`. It has a real cost —
+   * `visibility: hidden` leaves the boxes behind, so the rest of the screen
+   * still takes up pages — which is why the block further down replaces it
+   * wholesale wherever `:has()` is supported.
    */
   body * {
     visibility: hidden !important;
@@ -744,16 +801,29 @@ body {
        than the page, or the page itself does the clipping instead. */
     min-width: 0 !important;
     max-width: 100% !important;
-    font-size: 7.6pt;
-    line-height: 1.15;
+    font-size: 7.2pt;
+    line-height: 1.1;
   }
 
   [data-print-area] th,
   [data-print-area] td {
-    padding: 2px 3px !important;
+    padding: 1px 2px !important;
     /* Nothing may hold a column open wider than its share. */
     white-space: normal !important;
     overflow-wrap: anywhere;
+  }
+
+  /*
+   * The totals belong at the end of the sheet, once.
+   *
+   * A `tfoot` is a *footer group*: browsers repeat it at the foot of every
+   * printed page, so a service with more rows than one page printed the grand
+   * total under each of them, as if each page were a total of itself. The
+   * header still repeats — that one is genuinely useful, because the second
+   * page of dish columns is unreadable without it.
+   */
+  [data-print-area] tfoot {
+    display: table-row-group;
   }
 
   /* Course grouping is dropped in print: with short dish labels the columns
@@ -810,8 +880,55 @@ body {
     break-before: page;
   }
 
+  /*
+   * Headings are display type on screen — the date is set at 36px — and that
+   * is most of a centimetre of paper before a single row is printed. An
+   * evening of twenty tables has to fit one sheet, so the title is set at
+   * reading size and the space around it is closed up.
+   */
+  [data-print-area] h1,
+  [data-print-area] h2 {
+    font-size: 12pt !important;
+    line-height: 1.2 !important;
+    margin: 0 0 1mm !important;
+  }
+
   [data-print-area] h3 {
-    font-size: 11pt;
+    font-size: 10pt;
+    margin: 0 0 1mm !important;
+  }
+
+  [data-print-area] .eyebrow {
+    font-size: 6.5pt;
+    letter-spacing: 0.12em;
+  }
+
+  /* The tuned-down margins above only help if the wrappers stop adding their
+     own. Everything here is one block of information, not a page layout. */
+  [data-print-area] > * {
+    margin: 0 !important;
+  }
+
+  /*
+   * Controls print as their values.
+   *
+   * The table number in the first column is a button so staff can set it by
+   * clicking, and it carries the 32px minimum every touch target in this app
+   * has. On paper that is 8mm of nothing per row — twenty tables of it filled
+   * a second page on their own, which is why an evening that easily fits one
+   * sheet was printing as two.
+   */
+  [data-print-area] button,
+  [data-print-area] input,
+  [data-print-area] select {
+    min-height: 0 !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    background: none !important;
+    font: inherit !important;
+    line-height: inherit !important;
+    color: inherit !important;
   }
 
   /* Ink on paper, whatever theme the screen was showing. */
@@ -858,6 +975,68 @@ body {
 
 [data-print="only"] {
   display: none;
+}
+
+/* ------------------------------------------------------------------ *
+ * Print isolation, without the blank pages
+ * ------------------------------------------------------------------ *
+ *
+ * `visibility: hidden` hides a thing but keeps its box. The pass-key screen is
+ * a long arrivals table, so printing nine cards produced the cards on page one
+ * and then two or three pages of invisible table — reception reported it as
+ * "the PDF always has empty pages at the end", and that is exactly what they
+ * were. The service sheet had the mirror-image problem: it was pinned to the
+ * top of page one with `position: absolute`, and an absolutely positioned box
+ * does not paginate, so a long evening broke in ways that changed with the
+ * browser.
+ *
+ * Removing the boxes instead fixes both. Anything that is neither the printed
+ * subtree, nor an ancestor of it, nor inside it, is `display: none`; the
+ * ancestors become `display: contents`, so they contribute no box of their own
+ * but keep their children; and the subtree itself flows normally from the top
+ * of the first page, paginating like ordinary content.
+ *
+ * `:has()` is what makes "an ancestor of the sheet" expressible in CSS at all.
+ * Where it is unsupported the visibility rules above still apply, unchanged.
+ */
+@supports selector(:has(*)) {
+  @media print {
+    body * {
+      visibility: visible !important;
+    }
+
+    /* --- the service sheet --------------------------------------- */
+
+    html:not([data-printing-cards])
+      body:has([data-print-area])
+      *:not(:has([data-print-area])):not([data-print-area]):not([data-print-area] *) {
+      display: none !important;
+    }
+
+    html:not([data-printing-cards]) body:has([data-print-area]) *:has([data-print-area]) {
+      display: contents !important;
+    }
+
+    html:not([data-printing-cards]) [data-print-area] {
+      position: static !important;
+    }
+
+    /* --- pass-key cards ------------------------------------------ */
+
+    html[data-printing-cards]
+      body
+      *:not(:has([data-print-cards])):not([data-print-cards]):not([data-print-cards] *) {
+      display: none !important;
+    }
+
+    html[data-printing-cards] body *:has([data-print-cards]) {
+      display: contents !important;
+    }
+
+    html[data-printing-cards] [data-print-cards] {
+      position: static !important;
+    }
+  }
 }
 
 /*
@@ -913,7 +1092,9 @@ body {
     outline-offset: 1.5mm;
   }
 
-  /* Everything that is not a card goes away while cards are printing. */
+  /* Everything that is not a card goes away while cards are printing. The
+     `:has()` block above removes those boxes outright where it is supported;
+     this is the fallback, and on its own it leaves blank pages behind. */
   [data-printing-cards] body * {
     visibility: hidden !important;
   }

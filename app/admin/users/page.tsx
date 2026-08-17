@@ -26,7 +26,7 @@ export default async function AdminUsersPage() {
   const users = [getEnvironmentAdmin(), ...(await listStaffUsers())];
 
   return (
-    <PageShell width="xl" headerHref="/admin">
+    <PageShell width="xl" headerHref="/admin" showLanguage={false}>
       <UserManager
         initialUsers={users}
         currentUserId={user.id}

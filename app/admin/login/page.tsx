@@ -93,7 +93,7 @@ function AdminLoginForm() {
 
 export default function AdminLoginPage() {
   return (
-    <PageShell width="sm">
+    <PageShell width="sm" showLanguage={false}>
       <Suspense fallback={null}>
         <AdminLoginForm />
       </Suspense>

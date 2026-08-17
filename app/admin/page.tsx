@@ -56,7 +56,7 @@ export default async function AdminPage() {
   ].filter((link) => hasPermission(user, link.permission));
 
   return (
-    <PageShell width="xl" headerHref="/admin">
+    <PageShell width="xl" headerHref="/admin" showLanguage={false}>
       <Card className="p-5 sm:p-6">
         <CardHeader
           as="h1"

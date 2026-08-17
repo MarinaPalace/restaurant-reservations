@@ -63,7 +63,7 @@ export default async function ReservationDetailPage({
   const missingCourses = findMissingCourses(reservation.selections, menu, reservation.guestCount);
 
   return (
-    <PageShell width="md" headerHref="/admin">
+    <PageShell width="md" headerHref="/admin" showLanguage={false}>
       <Card className="p-5 sm:p-6">
         <CardHeader
           as="h1"

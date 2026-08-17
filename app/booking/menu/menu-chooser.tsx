@@ -8,7 +8,8 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Alert } from "@/components/ui/feedback";
 import { useBookingGuard, writeBookingSession } from "@/hooks/use-booking-session";
-import { LANGUAGE_NAMES, listLanguages } from "@/lib/languages";
+import { useI18n } from "@/components/i18n-provider";
+import { format } from "@/lib/i18n";
 import { localizeMenuCatalog } from "@/lib/menu-localization";
 import { NONE_OPTION_ID, NONE_OPTION_NAME } from "@/lib/menu-selection";
 import { Tilt } from "@/components/motion/tilt";
@@ -18,6 +19,7 @@ import type { MenuCourse, MenuOption, ReservationSelection } from "@/types/booki
 export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
   const router = useRouter();
   const { session, ready } = useBookingGuard(["room", "guests", "date"]);
+  const { t, language: uiLanguage } = useI18n();
 
   const [activeGuestIndex, setActiveGuestIndex] = useState(0);
   const [error, setError] = useState("");
@@ -33,9 +35,16 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
   const guestCount = Math.max(session.guestCount, 1);
   const selections = session.selections;
 
-  const availableLanguages = useMemo(() => listLanguages(courses), [courses]);
-  // Derived, not stored: no effect and no render cascade when it changes.
-  const language = availableLanguages.includes(session.language) ? session.language : "en";
+  /**
+   * The dishes follow the language chosen in the header, which is where the
+   * control now lives for the whole flow.
+   *
+   * Deliberately *not* the copy in the booking session: that field defaults to
+   * "en" rather than to nothing, so preferring it would have pinned the menu to
+   * English for a guest whose language came from their browser and who never
+   * touched the picker — the dishes in English under a German interface.
+   */
+  const language = uiLanguage;
   const localizedCourses = useMemo(() => localizeMenuCatalog(courses, language), [courses, language]);
 
   const requiredCourses = useMemo(
@@ -124,7 +133,7 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
     if (!currentGuestComplete) {
       const missing = firstUnansweredCourse(activeGuestIndex);
       return {
-        label: missing ? `Choose ${missing.name}` : "Continue",
+        label: missing ? format(t.menuStep.chooseCourse, { course: missing.name }) : t.common.continue,
         onClick: () => {
           if (missing) {
             document.getElementById(`course-${missing.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -136,12 +145,12 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
 
     if (nextIncompleteGuest !== undefined) {
       return {
-        label: `Continue to guest ${nextIncompleteGuest + 1}`,
+        label: format(t.menuStep.continueToGuest, { number: nextIncompleteGuest + 1 }),
         onClick: () => goToGuest(nextIncompleteGuest),
       };
     }
 
-    return { label: "Review reservation", onClick: () => router.push("/booking/summary") };
+    return { label: t.menuStep.review, onClick: () => router.push("/booking/summary") };
   })();
 
   return (
@@ -150,35 +159,19 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
         <CardHeader
           as="h1"
           flourish
-          eyebrow="Menu"
-          title="Choose your menu"
-          description="Each guest picks one option per course."
-          actions={
-            <label className="flex items-center gap-2 rounded-full border border-line-strong bg-surface px-3 py-2 text-sm">
-              <span className="font-medium text-ink-muted">Language</span>
-              <select
-                value={language}
-                onChange={(event) => writeBookingSession({ language: event.target.value })}
-                className="bg-transparent font-medium text-ink outline-none"
-              >
-                {availableLanguages.map((code) => (
-                  <option key={code} value={code}>
-                    {LANGUAGE_NAMES[code] ?? code.toUpperCase()}
-                  </option>
-                ))}
-              </select>
-            </label>
-          }
+          eyebrow={t.common.menu}
+          title={t.menuStep.title}
+          description={t.menuStep.description}
         />
 
         {guestCount > 1 ? (
           <div className="mt-6">
             <div className="mb-2 flex items-center justify-between text-sm text-ink-muted">
               <span id="guest-picker-label" className="font-medium">
-                Guest
+                {t.menuStep.guest}
               </span>
               <span aria-live="polite">
-                {completedCount} of {guestCount} complete
+                {format(t.menuStep.completeCount, { done: completedCount, total: guestCount })}
               </span>
             </div>
             {/* Toggle buttons rather than a tablist: a real tab pattern would
@@ -203,9 +196,11 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
                           : "border-line-strong bg-surface text-ink hover:border-accent",
                     )}
                   >
-                    Guest {guestIndex + 1}
+                    {format(t.common.guestNumber, { number: guestIndex + 1 })}
                     {complete ? <span aria-hidden="true"> ✓</span> : null}
-                    <span className="sr-only">{complete ? " (complete)" : " (incomplete)"}</span>
+                    <span className="sr-only">
+                      {complete ? ` (${t.menuStep.complete})` : ` (${t.menuStep.incomplete})`}
+                    </span>
                   </button>
                 );
               })}
@@ -216,17 +211,22 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
 
       {localizedCourses.length === 0 ? (
         <Card className="mt-6 p-6">
-          <Alert tone="info">The menu is not published yet. Please contact guest services.</Alert>
+          <Alert tone="info">{t.menuStep.notPublished}</Alert>
         </Card>
       ) : (
         <div id="course-list" className="mt-6 space-y-5 scroll-mt-4">
           {guestCount > 1 ? (
             <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 className="text-lg font-semibold text-ink">Choices for guest {activeGuestIndex + 1}</h2>
+              <h2 className="text-lg font-semibold text-ink">
+                {format(t.menuStep.choicesForGuest, { number: activeGuestIndex + 1 })}
+              </h2>
               <p aria-live="polite" className="text-sm text-ink-muted">
                 {currentGuestComplete
-                  ? "All courses chosen for this guest."
-                  : `${chosenForActiveGuest} of ${requiredCourses.length} courses chosen`}
+                  ? t.menuStep.allChosen
+                  : format(t.menuStep.coursesChosen, {
+                      done: chosenForActiveGuest,
+                      total: requiredCourses.length,
+                    })}
               </p>
             </div>
           ) : null}
@@ -262,7 +262,8 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
 
                   <div className="tilt-layer absolute inset-x-0 bottom-0 p-5 sm:p-7">
                     <p className="text-[0.6875rem] font-medium uppercase tracking-[0.24em] text-gold">
-                      Course {course.order} · {course.required ? "Required" : "Optional"}
+                      {format(t.menuStep.courseNumber, { number: course.order })} ·{" "}
+                      {course.required ? t.menuStep.required : t.menuStep.optional}
                     </p>
                     <h3 className="display mt-1.5 text-[clamp(1.9rem,7vw,2.9rem)] text-white drop-shadow-sm">
                       {course.name}
@@ -283,13 +284,13 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
 
                 <fieldset className="p-4 sm:p-6">
                   <legend className="sr-only">
-                    {course.name} options for guest {activeGuestIndex + 1}
+                    {format(t.menuStep.optionsForGuest, { course: course.name, number: activeGuestIndex + 1 })}
                   </legend>
                   {/* Two across from `sm`, so a dish reads as a plate rather
                       than a row in a table. */}
                   <div
                     role="radiogroup"
-                    aria-label={`${course.name} options`}
+                    aria-label={format(t.menuStep.courseOptions, { course: course.name })}
                     className="grid gap-3 sm:grid-cols-2"
                   >
                     {course.options.map((option) => {
@@ -372,13 +373,14 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
                             {/* Only shown when the kitchen has filled it in. */}
                             {option.ingredients ? (
                               <span className="mt-2 block text-xs text-pretty text-ink-muted">
-                                <span className="font-medium">Ingredients:</span> {option.ingredients}
+                                <span className="font-medium">{t.common.ingredients}:</span> {option.ingredients}
                               </span>
                             ) : null}
 
                             {option.allergens.length ? (
                               <span className="mt-2 block text-xs text-ink-subtle">
-                                <span className="font-medium">Allergens:</span> {option.allergens.join(", ")}
+                                <span className="font-medium">{t.common.allergens}:</span>{" "}
+                                {option.allergens.join(", ")}
                               </span>
                             ) : null}
                           </span>
@@ -416,14 +418,14 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
                             <span aria-hidden="true">—</span>
                           </span>
                           <span className="min-w-0 flex-1">
-                            <span className="block text-base font-semibold">No thank you</span>
+                            <span className="block text-base font-semibold">{t.menuStep.noThankYou}</span>
                             <span
                               className={cx(
                                 "mt-1 block text-sm",
                                 isSelected ? "text-primary-fg/80" : "text-ink-subtle",
                               )}
                             >
-                              Skip this course
+                              {t.menuStep.skipCourse}
                             </span>
                           </span>
                           <span aria-hidden="true" className="text-lg">
@@ -455,7 +457,7 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
         <div className="flex items-center gap-2">
           <ButtonLink href="/booking/date" size="lg" className="shrink-0 px-4">
             <span aria-hidden="true">←</span>
-            <span className="sr-only">Back to the date</span>
+            <span className="sr-only">{t.menuStep.backToDate}</span>
           </ButtonLink>
           <Button size="lg" className="flex-1" onClick={primaryAction.onClick} disabled={!ready}>
             {primaryAction.label}
@@ -465,8 +467,8 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
         {guestCount > 1 ? (
           <p aria-live="polite" className="mt-1.5 text-center text-xs text-ink-muted">
             {allComplete
-              ? "Everyone has chosen."
-              : `${completedCount} of ${guestCount} guests have finished choosing.`}
+              ? t.menuStep.everyoneChosen
+              : format(t.menuStep.guestsFinished, { done: completedCount, total: guestCount })}
           </p>
         ) : null}
       </div>

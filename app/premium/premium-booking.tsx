@@ -14,7 +14,10 @@ import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { buildGoogleCalendarUrl, describeReservationTime } from "@/lib/calendar";
 import { formatLongDate, startOfMonth } from "@/lib/date";
 import { NONE_OPTION_ID, NONE_OPTION_NAME } from "@/lib/menu-selection";
-import { describeContactProblem, normalizeContact } from "@/lib/contact";
+import { contactProblemOf, normalizeContact } from "@/lib/contact";
+import { useI18n } from "@/components/i18n-provider";
+import { format, localeOf, plural } from "@/lib/i18n";
+import { translateApiError } from "@/lib/i18n/errors";
 import { MAX_GUESTS_PER_RESERVATION } from "@/lib/validation/booking";
 import { pruneSelectionsToGuestCount } from "@/lib/booking-session";
 import { cx } from "@/components/ui/utils";
@@ -57,6 +60,8 @@ export function PremiumBooking({
   const [contact, setContact] = useState<ReservationContact>({ method: "email", email: "", messagingApp: "phone" });
 
   const [activeGuest, setActiveGuest] = useState(0);
+  const { t, language } = useI18n();
+  const locale = localeOf(language);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [confirmed, setConfirmed] = useState<ReservationRecord | null>(null);
@@ -122,12 +127,12 @@ export function PremiumBooking({
     }
 
     if (guestName.trim().length < 2) {
-      setError("Please tell us who the reservation is for.");
+      setError(t.premium.nameMissing);
       return;
     }
 
     if (!date) {
-      setError("Please choose one of the evenings offered.");
+      setError(t.premium.dateMissing);
       return;
     }
 
@@ -139,13 +144,13 @@ export function PremiumBooking({
     }
 
     if (!isValidPassKeyFormat(passKey)) {
-      setError("Please enter the pass-key from your invitation.");
+      setError(t.premium.keyMissing);
       return;
     }
 
-    const contactProblem = describeContactProblem(contact);
+    const contactProblem = contactProblemOf(contact);
     if (contactProblem) {
-      setError(contactProblem);
+      setError(t.contact.problems[contactProblem]);
       return;
     }
 
@@ -170,14 +175,14 @@ export function PremiumBooking({
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        setError(data.error || "Something went wrong. Please try again.");
+        setError(translateApiError(t, data) ?? t.errors.generic);
         setSubmitting(false);
         return;
       }
 
       setConfirmed(data.reservation);
     } catch {
-      setError("We could not reach the restaurant. Please check your connection and try again.");
+      setError(t.common.connectionProblem);
       setSubmitting(false);
     }
   };
@@ -190,13 +195,13 @@ export function PremiumBooking({
           as="h1"
           align="center"
           flourish
-          eyebrow="You are expected"
-          title="Reservation confirmed"
-          description={`Thank you, ${confirmed.guestName}. We look forward to welcoming you.`}
+          eyebrow={t.premium.expectedEyebrow}
+          title={t.premium.confirmedTitle}
+          description={format(t.premium.confirmedThanks, { name: confirmed.guestName ?? "" })}
         />
 
         <div className="mt-6 rounded-control border border-gold/50 bg-accent-soft p-4 text-center">
-          <p className="eyebrow">Reservation number</p>
+          <p className="eyebrow">{t.confirmation.number}</p>
           <p className="mt-2 font-mono text-3xl font-semibold tracking-[0.2em] text-ink">
             {confirmed.reservationNumber}
           </p>
@@ -204,13 +209,13 @@ export function PremiumBooking({
 
         <dl className="mt-5 space-y-3 rounded-control bg-surface-muted p-4 text-sm">
           <div className="flex justify-between gap-3">
-            <dt className="text-ink-subtle">Evening</dt>
+            <dt className="text-ink-subtle">{t.premium.evening}</dt>
             <dd className="text-right font-semibold text-ink">
-              {describeReservationTime(confirmed.date, confirmed.time, confirmed.endTime)}
+              {describeReservationTime(confirmed.date, confirmed.time, confirmed.endTime, locale)}
             </dd>
           </div>
           <div className="flex justify-between gap-3">
-            <dt className="text-ink-subtle">Guests</dt>
+            <dt className="text-ink-subtle">{t.common.guests}</dt>
             <dd className="font-semibold text-ink">{confirmed.guestCount}</dd>
           </div>
         </dl>
@@ -221,7 +226,7 @@ export function PremiumBooking({
           rel="noopener noreferrer"
           className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-control bg-primary px-4 text-sm font-semibold text-primary-fg transition-colors hover:bg-primary-hover"
         >
-          Add to Google Calendar
+          {t.premium.addToCalendar}
         </a>
       </Card>
     );
@@ -232,8 +237,8 @@ export function PremiumBooking({
       <Card className="p-6 sm:p-8">
         <Brand stacked className="mb-6" />
         <EmptyState
-          title="No evenings are open just yet"
-          description="This invitation has no dates available at the moment. Please try again shortly, or contact the hotel."
+          title={t.premium.noEveningsTitle}
+          description={t.premium.noEveningsDescription}
         />
       </Card>
     );
@@ -247,14 +252,14 @@ export function PremiumBooking({
           as="h1"
           align="center"
           flourish
-          eyebrow="An invitation"
-          title="Reserve your evening"
-          description="Please choose your evening and your menu. We keep your choices for the kitchen, so everything is ready when you arrive."
+          eyebrow={t.premium.invitationEyebrow}
+          title={t.premium.invitationTitle}
+          description={t.premium.invitationDescription}
         />
       </Card>
 
       <Card className="p-5 sm:p-6">
-        <CardHeader eyebrow="Your party" title="Who is coming" />
+        <CardHeader eyebrow={t.premium.partyEyebrow} title={t.premium.partyTitle} />
 
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           {/*
@@ -262,10 +267,7 @@ export function PremiumBooking({
             somebody following the invitation never has to type it.
           */}
           {!initialPassKey ? (
-            <Field
-              label="Pass-key from your invitation"
-              hint="Capitals and dashes do not matter."
-            >
+            <Field label={t.premium.keyLabel} hint={t.manage.keyHint}>
               {(fieldProps) => (
                 <Input
                   {...fieldProps}
@@ -290,20 +292,20 @@ export function PremiumBooking({
             </Field>
           ) : null}
 
-          <Field label="Name the reservation is under">
+          <Field label={t.premium.nameLabel}>
             {(fieldProps) => (
               <Input
                 {...fieldProps}
                 autoComplete="name"
                 maxLength={120}
-                placeholder="e.g. Maria Petrova"
+                placeholder={t.premium.namePlaceholder}
                 value={guestName}
                 onChange={(event) => setGuestName(event.target.value)}
               />
             )}
           </Field>
 
-          <Field label="Guests">
+          <Field label={t.common.guests}>
             {(fieldProps) => (
               <Select
                 {...fieldProps}
@@ -312,7 +314,7 @@ export function PremiumBooking({
               >
                 {Array.from({ length: MAX_GUESTS_PER_RESERVATION }, (_, index) => index + 1).map((count) => (
                   <option key={count} value={count}>
-                    {count} {count === 1 ? "guest" : "guests"}
+                    {plural(language, count, t.common.guestCount)}
                   </option>
                 ))}
               </Select>
@@ -327,14 +329,14 @@ export function PremiumBooking({
 
       <Card className="p-5 sm:p-6">
         <CardHeader
-          eyebrow="Evening"
-          title="Choose your date"
-          description="Only the evenings held for this invitation can be selected."
+          eyebrow={t.premium.evening}
+          title={t.premium.dateTitle}
+          description={t.premium.dateDescription}
         />
 
         <div className="mt-5">
           <MonthCalendar
-            label="Evenings held for you"
+            label={t.premium.calendarLabel}
             month={month}
             onMonthChange={setMonth}
             selectedDate={date || null}
@@ -343,6 +345,9 @@ export function PremiumBooking({
               setError("");
             }}
             getDayState={getDayState}
+            locale={locale}
+            previousMonthLabel={t.dateStep.previousMonth}
+            nextMonthLabel={t.dateStep.nextMonth}
           />
         </div>
 
@@ -350,36 +355,36 @@ export function PremiumBooking({
           {selectedDate ? (
             <>
               <p className="font-semibold text-ink">
-                <time dateTime={selectedDate.date}>{formatLongDate(selectedDate.date)}</time>
+                <time dateTime={selectedDate.date}>{formatLongDate(selectedDate.date, locale)}</time>
               </p>
               {selectedDate.serviceTime ? (
                 <p className="mt-1 font-medium text-accent-ink">
-                  Everyone is seated at {selectedDate.serviceTime}. Please arrive a few minutes early.
+                  {format(t.premium.seatedAt, { time: selectedDate.serviceTime })}
                 </p>
               ) : null}
-              <p className="mt-1">{selectedDate.remainingSeats} places remaining.</p>
+              <p className="mt-1">{format(t.premium.placesRemaining, { count: selectedDate.remainingSeats })}</p>
             </>
           ) : (
-            <p>Select one of the highlighted evenings.</p>
+            <p>{t.premium.selectEvening}</p>
           )}
         </div>
       </Card>
 
       <Card className="p-5 sm:p-6">
         <CardHeader
-          eyebrow="Menu"
-          title="Choose your dishes"
-          description="One choice per guest, per course."
+          eyebrow={t.common.menu}
+          title={t.premium.menuTitle}
+          description={t.menuStep.description}
         />
 
         {menu.length === 0 ? (
           <Alert tone="info" className="mt-5">
-            The menu for this evening is not published yet. Please come back shortly.
+            {t.premium.menuNotPublished}
           </Alert>
         ) : (
           <>
             {guestCount > 1 ? (
-              <div className="mt-5 flex flex-wrap gap-2" role="group" aria-label="Guest">
+              <div className="mt-5 flex flex-wrap gap-2" role="group" aria-label={t.menuStep.guest}>
                 {guestIndexes.map((guestIndex) => (
                   <button
                     key={guestIndex}
@@ -395,7 +400,7 @@ export function PremiumBooking({
                           : "border-line-strong bg-surface text-ink hover:border-accent",
                     )}
                   >
-                    Guest {guestIndex + 1}
+                    {format(t.common.guestNumber, { number: guestIndex + 1 })}
                     {isGuestComplete(guestIndex) ? <span aria-hidden="true"> ✓</span> : null}
                   </button>
                 ))}
@@ -415,7 +420,11 @@ export function PremiumBooking({
                       <p className="mt-1 text-sm text-pretty text-ink-muted">{course.description}</p>
                     ) : null}
 
-                    <div role="radiogroup" aria-label={`${course.name} options`} className="mt-3 space-y-2">
+                    <div
+                      role="radiogroup"
+                      aria-label={format(t.menuStep.courseOptions, { course: course.name })}
+                      className="mt-3 space-y-2"
+                    >
                       {[...course.options, { id: NONE_OPTION_ID, name: NONE_OPTION_NAME, imageUrl: "" }].map(
                         (option) => {
                           const isSelected = selected?.optionId === option.id;
@@ -445,7 +454,7 @@ export function PremiumBooking({
                               />
                               <span className="min-w-0 flex-1">
                                 <span className="block pr-16 text-base font-semibold">
-                                  {option.id === NONE_OPTION_ID ? "No thank you" : option.name}
+                                  {option.id === NONE_OPTION_ID ? t.menuStep.noThankYou : option.name}
                                 </span>
                                 {full?.description ? (
                                   <span
@@ -464,7 +473,7 @@ export function PremiumBooking({
                                       isSelected ? "text-primary-fg/80" : "text-ink-muted",
                                     )}
                                   >
-                                    <span className="font-medium">Ingredients:</span> {full.ingredients}
+                                    <span className="font-medium">{t.common.ingredients}:</span> {full.ingredients}
                                   </span>
                                 ) : null}
                                 {full?.allergens.length ? (
@@ -474,7 +483,8 @@ export function PremiumBooking({
                                       isSelected ? "text-primary-fg/80" : "text-ink-subtle",
                                     )}
                                   >
-                                    <span className="font-medium">Allergens:</span> {full.allergens.join(", ")}
+                                    <span className="font-medium">{t.common.allergens}:</span>{" "}
+                                    {full.allergens.join(", ")}
                                   </span>
                                 ) : null}
                               </span>
@@ -497,7 +507,7 @@ export function PremiumBooking({
         )}
 
         <div className="mt-5">
-          <Field label="Allergies or requests" hint="Anything the kitchen should know. Optional.">
+          <Field label={t.summary.notesLabel} hint={t.summary.notesHint}>
             {(fieldProps) => (
               <Textarea
                 {...fieldProps}
@@ -512,8 +522,8 @@ export function PremiumBooking({
 
       {error ? <Alert tone="danger">{error}</Alert> : null}
 
-      <Button size="lg" className="w-full" onClick={submit} loading={submitting} loadingLabel="Confirming…">
-        Confirm my reservation
+      <Button size="lg" className="w-full" onClick={submit} loading={submitting} loadingLabel={t.summary.confirming}>
+        {t.premium.confirm}
       </Button>
     </div>
   );

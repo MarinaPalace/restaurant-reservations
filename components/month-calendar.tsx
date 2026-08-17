@@ -12,15 +12,23 @@ import {
 } from "@/lib/date";
 import { cx } from "@/components/ui/utils";
 
-const WEEKDAYS = [
-  { short: "Mon", long: "Monday" },
-  { short: "Tue", long: "Tuesday" },
-  { short: "Wed", long: "Wednesday" },
-  { short: "Thu", long: "Thursday" },
-  { short: "Fri", long: "Friday" },
-  { short: "Sat", long: "Saturday" },
-  { short: "Sun", long: "Sunday" },
-];
+/**
+ * Weekday names in the reader's language, Monday first.
+ *
+ * Built from a known Monday rather than written out, so a guest reading Polish
+ * gets "pon." above the column instead of "Mon" — the calendar was the last
+ * thing on the booking flow still speaking English at them.
+ */
+function weekdayNames(locale: string) {
+  const short = new Intl.DateTimeFormat(locale, { weekday: "short" });
+  const long = new Intl.DateTimeFormat(locale, { weekday: "long" });
+
+  // 2024-01-01 was a Monday.
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(2024, 0, 1 + index, 12);
+    return { short: short.format(date), long: long.format(date) };
+  });
+}
 
 export type DayState = {
   /** Not selectable, but still reachable by keyboard and announced. */
@@ -47,6 +55,9 @@ export function MonthCalendar({
   getDayState,
   minMonth,
   label,
+  locale = "en-GB",
+  previousMonthLabel = "Previous month",
+  nextMonthLabel = "Next month",
 }: {
   month: Date;
   onMonthChange: (month: Date) => void;
@@ -55,8 +66,13 @@ export function MonthCalendar({
   getDayState: (dateKey: string, date: Date) => DayState;
   minMonth?: Date;
   label: string;
+  /** Guest screens pass the chosen language; staff screens keep English. */
+  locale?: string;
+  previousMonthLabel?: string;
+  nextMonthLabel?: string;
 }) {
   const days = useMemo(() => buildCalendarGrid(month), [month]);
+  const weekdays = useMemo(() => weekdayNames(locale), [locale]);
   const weeks = useMemo(
     () => Array.from({ length: 6 }, (_, index) => days.slice(index * 7, index * 7 + 7)),
     [days],
@@ -128,18 +144,18 @@ export function MonthCalendar({
           type="button"
           onClick={() => onMonthChange(addMonths(month, -1))}
           disabled={!canGoBack}
-          aria-label="Previous month"
+          aria-label={previousMonthLabel}
           className="flex size-11 items-center justify-center rounded-control border border-line-strong bg-surface text-lg text-ink transition-colors hover:border-accent disabled:cursor-not-allowed disabled:opacity-40"
         >
           <span aria-hidden="true">←</span>
         </button>
         <div aria-live="polite" className="text-base font-semibold text-ink">
-          {formatMonthLabel(month)}
+          {formatMonthLabel(month, locale)}
         </div>
         <button
           type="button"
           onClick={() => onMonthChange(addMonths(month, 1))}
-          aria-label="Next month"
+          aria-label={nextMonthLabel}
           className="flex size-11 items-center justify-center rounded-control border border-line-strong bg-surface text-lg text-ink transition-colors hover:border-accent"
         >
           <span aria-hidden="true">→</span>
@@ -150,7 +166,7 @@ export function MonthCalendar({
           arrow keys to move between days. */}
       <div role="grid" aria-label={label} className="flex flex-col gap-1.5 sm:gap-2">
         <div role="row" className="grid grid-cols-7 gap-1.5 sm:gap-2">
-          {WEEKDAYS.map((weekday) => (
+          {weekdays.map((weekday) => (
             <div
               key={weekday.short}
               role="columnheader"
@@ -187,7 +203,7 @@ export function MonthCalendar({
                   // stay reachable by keyboard so their reason is announced.
                   aria-disabled={state.disabled || undefined}
                   aria-selected={isSelected}
-                  aria-label={`${formatLongDate(dateKey)}${state.status ? `, ${state.status}` : ""}`}
+                  aria-label={`${formatLongDate(dateKey, locale)}${state.status ? `, ${state.status}` : ""}`}
                   onKeyDown={(event) => handleKeyDown(event, date)}
                   onClick={() => {
                     if (!state.disabled) {

@@ -11,6 +11,9 @@ import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
 import { Alert } from "@/components/ui/feedback";
 import { useBookingSession, writeBookingSession } from "@/hooks/use-booking-session";
+import { useI18n } from "@/components/i18n-provider";
+import { format, localeOf, plural } from "@/lib/i18n";
+import { translateApiError } from "@/lib/i18n/errors";
 import { isValidRoomNumber } from "@/lib/booking-session";
 import { PASS_KEY_PREFIX, formatPassKey, isValidPassKeyFormat, normalizePassKey } from "@/lib/pass-key";
 import { manageHref } from "@/lib/pass-key-links";
@@ -46,6 +49,8 @@ function BookingEntry() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const session = useBookingSession();
+  const { t, language } = useI18n();
+  const locale = localeOf(language);
 
   // A key can arrive in the link — from the QR code on the printed card.
   const fromLink = searchParams.get("k");
@@ -80,7 +85,7 @@ function BookingEntry() {
     const normalizedKey = normalizePassKey(passKeyValue);
 
     if (!isValidPassKeyFormat(normalizedKey)) {
-      setPassKeyError("Please enter the pass-key from your card.");
+      setPassKeyError(t.entry.passKeyMissing);
       return;
     }
 
@@ -97,7 +102,7 @@ function BookingEntry() {
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok || !data.ok) {
-        setPassKeyError(data.error ?? "That pass-key is not valid. Please check it and try again.");
+        setPassKeyError(translateApiError(t, data) ?? t.entry.passKeyInvalid);
         setChecking(false);
         return;
       }
@@ -129,7 +134,7 @@ function BookingEntry() {
       setChangingKey(false);
       setChecking(false);
     } catch {
-      setPassKeyError("We could not reach the restaurant. Please check your connection and try again.");
+      setPassKeyError(t.common.connectionProblem);
       setChecking(false);
     }
   };
@@ -147,7 +152,7 @@ function BookingEntry() {
 
     const trimmedRoom = roomValue.trim();
     if (!isValidRoomNumber(trimmedRoom)) {
-      setRoomError("Please enter your room number, for example 402 or L10.");
+      setRoomError(t.entry.roomInvalid);
       return;
     }
 
@@ -179,25 +184,18 @@ function BookingEntry() {
           moderate because the admin panel uses it too.
         */}
         <div className="text-center">
-          <p className="eyebrow">Reservations</p>
+          <p className="eyebrow">{t.entry.eyebrow}</p>
           <h1 className="display mt-3 text-balance text-[clamp(2.6rem,11vw,4rem)] leading-[0.95] tracking-[-0.025em] text-ink">
-            Reserve
+            {t.entry.titleLine1}
             <br />
-            <span className="italic text-accent">your dinner</span>
+            <span className="italic text-accent">{t.entry.titleLine2}</span>
           </h1>
           <hr className="rule-gold rule-animate mx-auto mt-5 w-28" aria-hidden="true" />
-          <p className="mx-auto mt-4 max-w-[22rem] text-pretty text-ink-muted">
-            Dinner is part of your stay. Your pass-key is on the card you were given — scan it, or type it
-            below.
-          </p>
+          <p className="mx-auto mt-4 max-w-[22rem] text-pretty text-ink-muted">{t.entry.intro}</p>
         </div>
 
         <form onSubmit={handleSubmit} noValidate className="stage mt-6 space-y-6">
-          <Field
-            label="Pass-key"
-            error={passKeyError}
-            hint="From your card. Capitals and dashes do not matter."
-          >
+          <Field label={t.entry.passKeyLabel} error={passKeyError} hint={t.entry.passKeyHint}>
             {(fieldProps) => (
               <Input
                 {...fieldProps}
@@ -237,12 +235,17 @@ function BookingEntry() {
             <>
               <Alert tone="success">
                 {verified
-                  ? `Pass-key accepted. ${
-                      verified.usesRemaining === 1
-                        ? "One dinner left on it"
-                        : `${verified.usesRemaining} dinners left on it`
-                    }${expiresOn ? `, up to ${formatLongDate(expiresOn)}` : ""}.`
-                  : `Pass-key accepted${expiresOn ? `, valid up to ${formatLongDate(expiresOn)}` : ""}.`}
+                  ? format(
+                      plural(
+                        language,
+                        verified.usesRemaining,
+                        expiresOn ? t.entry.acceptedDinnersUntil : t.entry.acceptedDinners,
+                      ),
+                      { date: expiresOn ? formatLongDate(expiresOn, locale) : "" },
+                    )
+                  : expiresOn
+                    ? format(t.entry.acceptedUntil, { date: formatLongDate(expiresOn, locale) })
+                    : t.entry.accepted}
               </Alert>
 
               {/*
@@ -259,14 +262,10 @@ function BookingEntry() {
                 }}
                 className="text-sm font-medium text-accent underline underline-offset-2"
               >
-                Use a different pass-key
+                {t.entry.useAnotherKey}
               </button>
 
-              <Field
-                label="Your room number"
-                error={roomError}
-                hint="The room you are in now — tell us if you have moved since checking in."
-              >
+              <Field label={t.entry.roomLabel} error={roomError} hint={t.entry.roomHint}>
                 {(fieldProps) => (
                   <Input
                     {...fieldProps}
@@ -274,7 +273,7 @@ function BookingEntry() {
                     autoComplete="off"
                     autoFocus={!session.roomNumber}
                     maxLength={10}
-                    placeholder="e.g. 402 or L10"
+                    placeholder={t.entry.roomPlaceholder}
                     value={roomValue}
                     onChange={(event) => {
                       setRoomNumber(event.target.value.replace(/[^A-Za-z0-9-]/g, "").toUpperCase());
@@ -293,32 +292,42 @@ function BookingEntry() {
               */}
               {bookedDates.length > 0 ? (
                 <Alert tone="warning">
-                  You already have a reservation on{" "}
-                  {bookedDates.map((date) => formatLongDate(date)).join(", ")}. To change it,{" "}
-                  <Link href={manageLink} className="font-semibold underline underline-offset-2">
-                    manage your reservation
-                  </Link>{" "}
-                  instead. Carry on only if you are booking a second table.
+                  {format(t.entry.alreadyBooked, {
+                    dates: bookedDates.map((date) => formatLongDate(date, locale)).join(", "),
+                  })}{" "}
+                  {/* Split around the link, so a translation can put the link
+                      where its own grammar wants it rather than at the end. */}
+                  {(() => {
+                    const [before, after] = t.entry.alreadyBookedManage.split("{link}");
+                    return (
+                      <>
+                        {before}
+                        <Link href={manageLink} className="font-semibold underline underline-offset-2">
+                          {t.entry.alreadyBookedLink}
+                        </Link>
+                        {after}
+                      </>
+                    );
+                  })()}
                 </Alert>
               ) : null}
             </>
           ) : null}
 
-          <Button type="submit" size="lg" className="w-full" loading={checking} loadingLabel="Checking…">
-            {accepted ? "Continue" : "Check my pass-key"}
+          <Button type="submit" size="lg" className="w-full" loading={checking} loadingLabel={t.common.checking}>
+            {accepted ? t.common.continue : t.entry.checkKey}
           </Button>
         </form>
 
         <p className="mt-6 text-center text-sm text-ink-muted">
-          Already booked?{" "}
+          {t.entry.manageQuestion}{" "}
           <Link href={manageLink} className="font-medium text-accent underline underline-offset-2">
-            Change or cancel your reservation
+            {t.entry.manageLink}
           </Link>
         </p>
 
         <p className="mt-4 rounded-control border border-line bg-surface-muted p-3 text-sm text-ink-muted">
-          No pass-key, or it is not working? Dial <span className="font-semibold text-ink">9</span> from your room to
-          reach guest services.
+          {format(t.entry.noKey, { number: "9" })}
         </p>
       </Card>
     </PageShell>

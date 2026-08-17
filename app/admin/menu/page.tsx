@@ -33,7 +33,7 @@ export default async function AdminMenuPage({ searchParams }: PageProps<"/admin/
   const { courses, isDraft } = await getMenuCatalogForEditing(menu);
 
   return (
-    <PageShell width="xl" headerHref="/admin">
+    <PageShell width="xl" headerHref="/admin" showLanguage={false}>
       <MenuEditor key={menu} initialCourses={courses} menu={menu} startedFromCopy={isDraft} />
     </PageShell>
   );

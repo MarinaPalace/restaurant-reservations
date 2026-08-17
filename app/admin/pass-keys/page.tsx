@@ -51,7 +51,7 @@ export default async function AdminPassKeysPage() {
   );
 
   return (
-    <PageShell width="xl" headerHref="/admin">
+    <PageShell width="xl" headerHref="/admin" showLanguage={false}>
       <PassKeyManager
         initialPassKeys={passKeys}
         initialQrCodes={initialQrCodes}

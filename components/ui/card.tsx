@@ -72,8 +72,12 @@ export function CardHeader({
         >
           {title}
         </Heading>
+        {/* rule-animate draws the flourish in, so it arrives rather than appears. */}
         {flourish ? (
-          <hr className={cx("rule-gold mt-4 w-24", align === "center" && "mx-auto")} aria-hidden="true" />
+          <hr
+            className={cx("rule-gold rule-animate mt-4 w-24", align === "center" && "mx-auto")}
+            aria-hidden="true"
+          />
         ) : null}
         {description ? <div className="mt-3 text-pretty text-ink-muted">{description}</div> : null}
       </div>

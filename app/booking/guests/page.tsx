@@ -108,7 +108,6 @@ export default function GuestsPage() {
 
                 return (
                   <button
-                    key={option}
                     type="button"
                     role="radio"
                     aria-checked={isSelected}
@@ -116,12 +115,16 @@ export default function GuestsPage() {
                       setChoice(option);
                       setError("");
                     }}
+                    // `key` includes the selected state so React remounts the
+                    // button when it changes, which restarts the bloom. A CSS
+                    // animation on a persistent element would only play once.
+                    key={`${option}-${isSelected}`}
                     className={cx(
-                      // A physical chip: it comes toward the reader on hover
-                      // and presses in when chosen.
+                      // A physical chip: presses in on touch, comes toward the
+                      // reader on a pointer, and blooms gold when chosen.
                       "lift rounded-control border px-4 py-5 text-center text-2xl font-semibold",
                       isSelected
-                        ? "border-accent bg-primary text-primary-fg"
+                        ? "bloom border-accent bg-primary text-primary-fg"
                         : "border-line-strong bg-surface text-ink hover:border-accent",
                     )}
                     style={

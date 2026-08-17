@@ -224,7 +224,7 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
             );
 
             return (
-              <Tilt key={course.id} maxTilt={2.5} lift={8} className="rounded-card">
+              <Tilt key={course.id} maxTilt={2.5} lift={8} className="reveal rounded-card">
               <Card id={`course-${course.id}`} as="section" className="lift overflow-hidden scroll-mt-4">
                 <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-start">
                   <DishImage src={course.imageUrl} alt="" width={160} height={112} className="h-28 w-full sm:w-40" />
@@ -373,7 +373,7 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
         Sticky, so the way forward is always on screen. The complaint this
         answers was having to scroll back to the top to move to the next guest.
       */}
-      <div className="sticky bottom-0 z-10 mt-6 border-t border-line bg-canvas/95 py-3 backdrop-blur">
+      <div className="glass sticky bottom-0 z-10 mt-6 border-t border-line py-3">
         <div className="flex flex-col gap-3 sm:flex-row">
           <ButtonLink href="/booking/date" size="lg" className="sm:flex-1">
             Back

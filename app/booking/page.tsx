@@ -170,7 +170,7 @@ function BookingEntry() {
     <PageShell width="sm">
       <BookingSteps current="room" />
       {/* The one hero gesture on this screen: the panel settling into place. */}
-      <Card elevated className="sheen p-6 sm:p-8">
+      <Card elevated className="aurora sheen p-6 sm:p-8">
         <Brand stacked className="mb-6" />
 
         <CardHeader

@@ -62,13 +62,13 @@ export default function ConfirmationPage() {
   return (
     <PageShell width="sm">
       {/* The moment worth marking, so this is the one card that also sheens. */}
-      <Card elevated className="sheen p-6 sm:p-8">
+      <Card elevated className="aurora sheen p-6 sm:p-8">
         <BrandMark className="mx-auto size-12 text-accent" />
 
         <div className="mt-5 text-center">
           <div
             aria-hidden="true"
-            className="mx-auto mb-4 flex size-14 items-center justify-center rounded-full bg-success-soft text-3xl text-success"
+            className="pulse-gold mx-auto mb-4 flex size-14 items-center justify-center rounded-full bg-success-soft text-3xl text-success"
           >
             ✓
           </div>

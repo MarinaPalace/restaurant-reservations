@@ -6,8 +6,7 @@ import { Button, ButtonLink } from "@/components/ui/button";
 import { Alert, Badge, EmptyState } from "@/components/ui/feedback";
 import { Field, Input, Textarea } from "@/components/ui/field";
 import { PassKeyCard } from "@/app/admin/pass-keys/pass-key-card";
-import { formatPassKey } from "@/lib/pass-key";
-import { passKeyTargetUrl } from "@/lib/pass-key-links";
+import { formatPassKey, normalizePassKey } from "@/lib/pass-key";
 import { formatShortDate, todayKey } from "@/lib/date";
 import { cx } from "@/components/ui/utils";
 import { MAX_GUESTS_PER_RESERVATION } from "@/lib/validation/booking";
@@ -29,10 +28,6 @@ import {
 
 type Props = {
   initialPassKeys: PassKeyRecord[];
-  /** Where in-house guests go. The QR points here with the key attached. */
-  bookingUrl: string;
-  /** The invitation address; the key is appended so the link opens directly. */
-  invitationUrl: string;
   restaurantName: string;
   /** QR codes for the keys already issued, drawn on the server, by key id. */
   initialQrCodes: Record<string, string>;
@@ -92,8 +87,6 @@ function statusLabel(key: PassKeyRecord, today: string) {
 
 export function PassKeyManager({
   initialPassKeys,
-  bookingUrl,
-  invitationUrl,
   restaurantName,
   initialQrCodes,
   canDelete,
@@ -109,17 +102,37 @@ export function PassKeyManager({
   const [issued, setIssued] = useState<PassKeyRecord[]>([]);
   const [editing, setEditing] = useState<PassKeyRecord | null>(null);
   const [filter, setFilter] = useState<Status>("all");
+  const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // Newly issued keys arrive with their codes from the API; the rest came with
   // the page. Either way the card never draws its own.
   const [qrCodes, setQrCodes] = useState<Record<string, string>>(initialQrCodes);
 
-  const visible = useMemo(
-    () => (filter === "all" ? passKeys : passKeys.filter((key) => key.status === filter)),
-    [passKeys, filter],
-  );
+  const visible = useMemo(() => {
+    const byStatus = filter === "all" ? passKeys : passKeys.filter((key) => key.status === filter);
 
-  const cardUrl = (key: PassKeyRecord) => passKeyTargetUrl(key, { bookingUrl, invitationUrl });
+    /**
+     * Reception searches by whatever is in front of them: the reference on the
+     * hotel booking, the room, a name, or the code on the card the guest is
+     * holding. The key is matched in canonical form so a code typed with or
+     * without dashes both find it.
+     */
+    const needle = query.trim().toLowerCase();
+    if (!needle) {
+      return byStatus;
+    }
+
+    const codeNeedle = normalizePassKey(query);
+
+    return byStatus.filter((key) => {
+      const haystack = [key.reservationRef, key.roomNumber, key.guestName]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(needle) || (codeNeedle.length > 0 && key.code.includes(codeNeedle));
+    });
+  }, [passKeys, filter, query]);
 
   /**
    * Printing cards and printing the list are different page setups, so the
@@ -578,7 +591,6 @@ export function PassKeyManager({
               <div key={key.id} data-card-cut="">
                 <PassKeyCard
                   passKey={key}
-                  bookingUrl={cardUrl(key)}
                   qrDataUri={qrCodes[key.id] ?? null}
                   restaurantName={restaurantName}
                 />
@@ -609,12 +621,30 @@ export function PassKeyManager({
           }
         />
 
+        <div className="mt-5 max-w-md">
+          <Field label="Search" hint="Reservation number, room, guest name, or the code on the card.">
+            {(fieldProps) => (
+              <Input
+                {...fieldProps}
+                type="search"
+                placeholder="40218, 402, Petrova, VDM-K7QP3-M2XR4"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            )}
+          </Field>
+        </div>
+
         {visible.length === 0 ? (
           <div className="mt-6">
             <EmptyState
               title="No pass-keys here"
               description={
-                filter === "all" ? "Issue one above when a guest checks in." : "Nothing with that status yet."
+                query.trim()
+                  ? "Nothing matches that search."
+                  : filter === "all"
+                    ? "Issue one above when a guest checks in."
+                    : "Nothing with that status yet."
               }
             />
           </div>
@@ -707,123 +737,220 @@ export function PassKeyManager({
           </div>
         )}
 
-        {editing ? (
-          <EditPassKey
-            key={editing.id}
-            passKey={editing}
-            busy={busy}
-            today={today}
-            onSave={(patch) => saveEdit(editing, patch)}
-            onCancel={() => setEditing(null)}
-          />
-        ) : null}
       </Card>
+
+      {editing ? (
+        <EditPassKeyDialog
+          key={editing.id}
+          passKey={editing}
+          busy={busy}
+          today={today}
+          error={error}
+          onSave={(patch) => saveEdit(editing, patch)}
+          onClose={() => setEditing(null)}
+        />
+      ) : null}
     </>
   );
 }
 
 /**
- * Extending a stay: move the check-out date, and the dinners follow. The guest
- * keeps the card they were already given.
+ * Editing a key already in a guest's hand, in a dialog over the list.
+ *
+ * A pop-up rather than a panel under the table: reception finds a key by
+ * searching, and an editor that appears below a long list is somewhere they
+ * then have to go looking for.
+ *
+ * Room and reservation number are both editable — the room because guests are
+ * moved constantly, the reference because it gets mistyped at check-in — and
+ * they are the two things reception searches by, so a wrong one makes a key
+ * hard to find again.
  */
-function EditPassKey({
+function EditPassKeyDialog({
   passKey,
   busy,
   today,
+  error,
   onSave,
-  onCancel,
+  onClose,
 }: {
   passKey: PassKeyRecord;
   busy: boolean;
   today: string;
-  onSave: (patch: { expiresOn?: string | null; maxUses?: number; maxGuests?: number | null }) => void;
-  onCancel: () => void;
+  error: string;
+  onSave: (patch: {
+    roomNumber?: string | null;
+    reservationRef?: string | null;
+    guestName?: string | null;
+    expiresOn?: string | null;
+    maxUses?: number;
+    maxGuests?: number | null;
+  }) => void;
+  onClose: () => void;
 }) {
+  const [roomNumber, setRoomNumber] = useState(passKey.roomNumber ?? "");
+  const [reservationRef, setReservationRef] = useState(passKey.reservationRef ?? "");
+  const [guestName, setGuestName] = useState(passKey.guestName ?? "");
   const [expiresOn, setExpiresOn] = useState(passKey.expiresOn ?? "");
   const [maxUses, setMaxUses] = useState(String(passKey.maxUses));
   const [maxGuests, setMaxGuests] = useState(passKey.maxGuests ? String(passKey.maxGuests) : "");
 
   const nights = nightsBetween(passKey.checkInOn, expiresOn);
 
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    onSave({
+      roomNumber: roomNumber.trim() || null,
+      reservationRef: reservationRef.trim() || null,
+      guestName: guestName.trim() || null,
+      expiresOn: expiresOn || null,
+      maxUses: Number(maxUses) || passKey.maxUses,
+      maxGuests: Number(maxGuests) || null,
+    });
+  };
+
   return (
-    <div className="mt-6 rounded-control border border-accent bg-surface-muted p-4">
-      <h3 className="font-semibold text-ink">
-        Editing <span className="font-mono">{formatPassKey(passKey.code)}</span>
-      </h3>
-      <p className="mt-1 text-sm text-ink-muted">
-        {passKey.usedCount} dinner(s) already booked with this key.
-      </p>
-
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
-        <Field
-          label="Check-out"
-          hint={nights === undefined ? undefined : `${nights} night${nights === 1 ? "" : "s"}`}
-        >
-          {(fieldProps) => (
-            <Input
-              {...fieldProps}
-              type="date"
-              min={today}
-              value={expiresOn}
-              onChange={(event) => {
-                setExpiresOn(event.target.value);
-                // Extending a stay usually earns another dinner; reception can
-                // still overrule the suggestion below.
-                const next = nightsBetween(passKey.checkInOn, event.target.value);
-                if (next !== undefined) {
-                  setMaxUses(String(Math.max(suggestedUsesForNights(next), passKey.usedCount || 1)));
-                }
-              }}
-            />
-          )}
-        </Field>
-
-        <Field label="Dinners on this key" hint={`Cannot go below the ${passKey.usedCount} already booked.`}>
-          {(fieldProps) => (
-            <Input
-              {...fieldProps}
-              inputMode="numeric"
-              maxLength={1}
-              value={maxUses}
-              onChange={(event) => setMaxUses(event.target.value.replace(/[^1-9]/g, "").slice(0, 1))}
-            />
-          )}
-        </Field>
-
-        <Field
-          label="Guests on the hotel booking"
-          hint={`Dinner can be booked for up to this many. Blank means up to ${MAX_GUESTS_PER_RESERVATION}.`}
-        >
-          {(fieldProps) => (
-            <Input
-              {...fieldProps}
-              inputMode="numeric"
-              maxLength={1}
-              placeholder="—"
-              value={maxGuests}
-              onChange={(event) => setMaxGuests(event.target.value.replace(/[^1-9]/g, "").slice(0, 1))}
-            />
-          )}
-        </Field>
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-3">
-        <Button
-          loading={busy}
-          loadingLabel="Saving…"
-          onClick={() =>
-            onSave({
-              expiresOn: expiresOn || null,
-              maxUses: Number(maxUses) || passKey.maxUses,
-              maxGuests: Number(maxGuests) || null,
-            })
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 sm:items-center"
+      // A click on the backdrop closes it; a click inside must not bubble out.
+      onClick={onClose}
+      data-print="hide"
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-pass-key-title"
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            onClose();
           }
-        >
-          Save changes
-        </Button>
-        <Button variant="secondary" onClick={onCancel}>
-          Cancel
-        </Button>
+        }}
+        className="w-full max-w-xl rounded-card border border-line bg-surface p-5 shadow-card sm:p-6"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 id="edit-pass-key-title" className="text-lg font-semibold text-ink">
+              Edit pass-key
+            </h3>
+            <p className="mt-1 font-mono text-sm font-semibold text-ink">{formatPassKey(passKey.code)}</p>
+            <p className="mt-1 text-sm text-ink-muted">
+              {passKey.usedCount} dinner(s) already booked with this key.
+              {passKey.kind === "premium" ? " Invitation key." : ""}
+            </p>
+          </div>
+          <Button variant="ghost" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+
+        <form onSubmit={submit} className="mt-5 grid gap-4 sm:grid-cols-2">
+          <Field label="Reservation №" hint="The hotel's booking reference.">
+            {(fieldProps) => (
+              <Input
+                {...fieldProps}
+                autoFocus
+                inputMode="numeric"
+                maxLength={20}
+                value={reservationRef}
+                onChange={(event) => setReservationRef(event.target.value)}
+              />
+            )}
+          </Field>
+
+          <Field label="Room" hint="Change this when a guest is moved.">
+            {(fieldProps) => (
+              <Input
+                {...fieldProps}
+                maxLength={10}
+                value={roomNumber}
+                onChange={(event) =>
+                  setRoomNumber(event.target.value.replace(/[^A-Za-z0-9-]/g, "").toUpperCase())
+                }
+              />
+            )}
+          </Field>
+
+          <div className="sm:col-span-2">
+            <Field label="Guest name">
+              {(fieldProps) => (
+                <Input
+                  {...fieldProps}
+                  maxLength={120}
+                  value={guestName}
+                  onChange={(event) => setGuestName(event.target.value)}
+                />
+              )}
+            </Field>
+          </div>
+
+          <Field
+            label="Check-out"
+            hint={nights === undefined ? "The key stops working after this date." : `${nights} night${nights === 1 ? "" : "s"}`}
+          >
+            {(fieldProps) => (
+              <Input
+                {...fieldProps}
+                type="date"
+                min={today}
+                value={expiresOn}
+                onChange={(event) => {
+                  setExpiresOn(event.target.value);
+                  // A longer stay usually earns another dinner; still overridable.
+                  const next = nightsBetween(passKey.checkInOn, event.target.value);
+                  if (next !== undefined) {
+                    setMaxUses(String(Math.max(suggestedUsesForNights(next), passKey.usedCount || 1)));
+                  }
+                }}
+              />
+            )}
+          </Field>
+
+          <Field label="Dinners" hint={`Cannot go below the ${passKey.usedCount} already booked.`}>
+            {(fieldProps) => (
+              <Input
+                {...fieldProps}
+                inputMode="numeric"
+                maxLength={1}
+                value={maxUses}
+                onChange={(event) => setMaxUses(event.target.value.replace(/[^1-9]/g, "").slice(0, 1))}
+              />
+            )}
+          </Field>
+
+          <div className="sm:col-span-2">
+            <Field
+              label="Guests on the hotel booking"
+              hint={`Dinner can be booked for up to this many. Blank means up to ${MAX_GUESTS_PER_RESERVATION}.`}
+            >
+              {(fieldProps) => (
+                <Input
+                  {...fieldProps}
+                  inputMode="numeric"
+                  maxLength={1}
+                  placeholder="—"
+                  value={maxGuests}
+                  onChange={(event) => setMaxGuests(event.target.value.replace(/[^1-9]/g, "").slice(0, 1))}
+                />
+              )}
+            </Field>
+          </div>
+
+          {error ? (
+            <div className="sm:col-span-2">
+              <Alert tone="danger">{error}</Alert>
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap gap-3 sm:col-span-2">
+            <Button type="submit" size="lg" loading={busy} loadingLabel="Saving…">
+              Save changes
+            </Button>
+            <Button variant="secondary" size="lg" onClick={onClose}>
+              Cancel
+            </Button>
+          </div>
+        </form>
       </div>
     </div>
   );

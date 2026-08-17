@@ -369,8 +369,22 @@ so a reprinted card and a fresh one always agree. Cards print
 in house colour — they need `print-color-adjust: exact`, because browsers drop backgrounds to save
 toner — while every other print in the app stays ink on white.
 
-Already-issued keys can be ticked and reprinted. **Deleting** one is an administrator's action, like
-deleting a reservation; revoking is the everyday one and keeps the record.
+Already-issued keys can be ticked and reprinted, and the list is **searchable** by reservation
+number, room, guest name or the code on the card — matched in canonical form, so a code typed with
+or without dashes finds it either way. **Editing** opens a dialog over the list rather than a panel
+under it, because reception gets there by searching and a form that appears below a long table is
+somewhere they then have to go hunting for. Room, reservation number and name are all editable: the
+room changes constantly, and a reference mistyped at check-in makes a key hard to find again. Every
+field change is named individually in the log.
+
+**Deleting** a key is an administrator's action, like deleting a reservation; revoking is the
+everyday one and keeps the record.
+
+The **card** prints no web address. It was being cropped, and the QR is how a guest reaches the app
+anyway. What is on it: the house name, the code, the guest's name, the dinners and expiry, and then
+the room bottom-left with the hotel's reference bottom-right — the reference being the half that
+survives a guest being moved, so reception can still match a card to a booking when the room printed
+on it is out of date.
 
 **Staff accounts.** `/admin/users`. Each person signs in as themselves and holds a named set of
 permissions — take, edit, cancel and restore reservations; edit the menus; manage evenings; issue

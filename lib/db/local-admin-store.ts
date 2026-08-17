@@ -301,7 +301,12 @@ export async function reclaimLocalPassKey(
 /** Applies an edit from the panel: expiry, dinners allowed, or the note. */
 export async function updateLocalPassKey(
   id: string,
-  patch: Partial<Pick<PassKeyRecord, "expiresOn" | "maxUses" | "maxGuests" | "note" | "status">>,
+  patch: Partial<
+    Pick<
+      PassKeyRecord,
+      "roomNumber" | "reservationRef" | "guestName" | "expiresOn" | "maxUses" | "maxGuests" | "note" | "status"
+    >
+  >,
 ): Promise<PassKeyRecord | null> {
   return withStoreLock(async () => {
     const keys = await readPassKeys();

@@ -506,7 +506,15 @@ export class UpdatePassKeyError extends Error {
  */
 export async function updatePassKey(
   id: string,
-  patch: { expiresOn?: string | null; maxUses?: number; maxGuests?: number | null; note?: string },
+  patch: {
+    roomNumber?: string | null;
+    reservationRef?: string | null;
+    guestName?: string | null;
+    expiresOn?: string | null;
+    maxUses?: number;
+    maxGuests?: number | null;
+    note?: string;
+  },
 ): Promise<{ before: PassKeyRecord; after: PassKeyRecord }> {
   const before = await getPassKeyById(id);
   if (!before) {
@@ -519,6 +527,15 @@ export async function updatePassKey(
 
   const next: PassKeyRecord = {
     ...before,
+    roomNumber:
+      patch.roomNumber === undefined
+        ? before.roomNumber
+        : patch.roomNumber
+          ? normalizeRoomNumber(patch.roomNumber)
+          : undefined,
+    reservationRef:
+      patch.reservationRef === undefined ? before.reservationRef : (patch.reservationRef || undefined),
+    guestName: patch.guestName === undefined ? before.guestName : (patch.guestName || undefined),
     expiresOn: patch.expiresOn === undefined ? before.expiresOn : (patch.expiresOn ?? undefined),
     maxUses: patch.maxUses ?? before.maxUses,
     maxGuests: patch.maxGuests === undefined ? before.maxGuests : (patch.maxGuests ?? undefined),
@@ -531,6 +548,9 @@ export async function updatePassKey(
 
   if (!isMongoConfigured()) {
     const saved = await updateLocalPassKey(id, {
+      roomNumber: next.roomNumber,
+      reservationRef: next.reservationRef,
+      guestName: next.guestName,
       expiresOn: next.expiresOn,
       maxUses: next.maxUses,
       maxGuests: next.maxGuests,
@@ -553,6 +573,9 @@ export async function updatePassKey(
       $set: {
         maxUses: next.maxUses,
         status: next.status,
+        ...(patch.roomNumber === undefined ? {} : { roomNumber: next.roomNumber ?? null }),
+        ...(patch.reservationRef === undefined ? {} : { reservationRef: next.reservationRef ?? null }),
+        ...(patch.guestName === undefined ? {} : { guestName: next.guestName ?? null }),
         ...(patch.expiresOn === undefined ? {} : { expiresOn: patch.expiresOn ?? null }),
         ...(patch.maxGuests === undefined ? {} : { maxGuests: patch.maxGuests ?? null }),
         ...(patch.note === undefined ? {} : { note: patch.note || null }),

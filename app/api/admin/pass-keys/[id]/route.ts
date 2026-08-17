@@ -32,6 +32,18 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const { before, after } = await updatePassKey(id, parsed.data);
 
     const changes: string[] = [];
+    if (parsed.data.roomNumber !== undefined && before.roomNumber !== after.roomNumber) {
+      changes.push(`room ${before.roomNumber ?? "—"} → ${after.roomNumber ?? "—"}`);
+    }
+    if (parsed.data.reservationRef !== undefined && before.reservationRef !== after.reservationRef) {
+      changes.push(`reservation № ${before.reservationRef ?? "—"} → ${after.reservationRef ?? "—"}`);
+    }
+    if (parsed.data.guestName !== undefined && before.guestName !== after.guestName) {
+      changes.push(`name ${before.guestName ?? "—"} → ${after.guestName ?? "—"}`);
+    }
+    if (parsed.data.maxGuests !== undefined && before.maxGuests !== after.maxGuests) {
+      changes.push(`guests ${before.maxGuests ?? "—"} → ${after.maxGuests ?? "—"}`);
+    }
     if (parsed.data.expiresOn !== undefined && before.expiresOn !== after.expiresOn) {
       changes.push(`valid until ${before.expiresOn ?? "no expiry"} → ${after.expiresOn ?? "no expiry"}`);
     }

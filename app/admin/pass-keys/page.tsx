@@ -54,8 +54,6 @@ export default async function AdminPassKeysPage() {
     <PageShell width="xl" headerHref="/admin">
       <PassKeyManager
         initialPassKeys={passKeys}
-        bookingUrl={bookingUrl}
-        invitationUrl={invitationUrl}
         initialQrCodes={initialQrCodes}
         canDelete={hasPermission(user, "reservations:delete")}
         restaurantName={RESTAURANT_NAME}

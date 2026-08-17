@@ -43,13 +43,10 @@ const TEXT_INSET = "24mm";
 
 export function PassKeyCard({
   passKey,
-  bookingUrl,
   qrDataUri,
   restaurantName,
 }: {
   passKey: PassKeyRecord;
-  /** The address printed on the card, and what the QR encodes. */
-  bookingUrl: string;
   /**
    * The QR code, already drawn on the server and inlined. Passed in rather
    * than fetched: there is then no request to fail while a card is printing,
@@ -152,20 +149,43 @@ export function PassKeyCard({
           </p>
         </div>
 
-        <footer style={{ fontSize: "2.2mm", lineHeight: 1.25, color: INK_SOFT }}>
-          <p className="truncate font-semibold" style={{ color: INK }}>
-            {bookingUrl}
-          </p>
-          <p className="truncate" style={{ marginTop: "0.4mm" }}>
+        {/*
+          No address is printed. It was being cropped, and it is redundant
+          anyway — the QR is how a guest gets to the app.
+        */}
+        <footer style={{ fontSize: "2.2mm", lineHeight: 1.3, color: INK_SOFT }}>
+          {passKey.guestName ? (
+            <p className="truncate font-semibold" style={{ color: INK }}>
+              {passKey.guestName}
+            </p>
+          ) : null}
+
+          <p className="truncate">
             {dinners}
             {passKey.maxGuests ? ` · up to ${passKey.maxGuests} at table` : ""}
             {passKey.expiresOn ? ` · until ${formatShortDate(passKey.expiresOn)}` : ""}
           </p>
-          {passKey.roomNumber || passKey.guestName ? (
-            <p className="truncate" style={{ color: GOLD }}>
-              {passKey.roomNumber ? `Room ${passKey.roomNumber}` : passKey.guestName}
-            </p>
-          ) : null}
+
+          {/*
+            Room on the left, the hotel's reference on the right. The reference
+            is the half that survives a guest being moved, so reception can
+            still match a card to a booking when the room on it is out of date.
+          */}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "baseline",
+              gap: "2mm",
+              marginTop: "0.3mm",
+              color: GOLD,
+            }}
+          >
+            <span className="truncate">{passKey.roomNumber ? `Room ${passKey.roomNumber}` : " "}</span>
+            <span className="truncate" style={{ fontVariantNumeric: "tabular-nums" }}>
+              {passKey.reservationRef ? `Ref ${passKey.reservationRef}` : ""}
+            </span>
+          </div>
         </footer>
       </div>
     </article>

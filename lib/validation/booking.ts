@@ -283,6 +283,13 @@ export const issuePassKeyBatchSchema = z.object({
  * things that can legitimately change once it is printed.
  */
 export const updatePassKeySchema = z.object({
+  /**
+   * Rooms change often, and a reference typed wrong at check-in has to be
+   * correctable — reception looks keys up by both.
+   */
+  roomNumber: z.string().trim().max(10).nullable().optional(),
+  reservationRef: z.string().trim().max(20).nullable().optional(),
+  guestName: z.string().trim().max(120).nullable().optional(),
   expiresOn: dateKeySchema.nullable().optional(),
   maxUses: z.number().int().min(1).max(MAX_USES_CAP).optional(),
   /** Party sizes change before arrival, so this stays editable. */

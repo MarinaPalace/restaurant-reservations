@@ -22,7 +22,6 @@ import { formatLongDate } from "@/lib/date";
 const PREFIX = `${PASS_KEY_PREFIX}-`;
 
 type Checked = {
-  kind: "standard" | "premium";
   expiresOn: string | null;
   usesRemaining: number;
   bookedDates: string[];
@@ -35,6 +34,12 @@ type Checked = {
  * the invitation page, an in-house key asks for a room and carries on here.
  * There is deliberately no separate address to guess at — the old open
  * `/premium` page showed the menu and the evenings to anyone who found it.
+ *
+ * **A key that has already been accepted is never asked for again.** It arrives
+ * either in the link — from the QR on the printed card — or from the session,
+ * and coming back to this step by the Back button, a reload or browser history
+ * restores it rather than presenting an empty box. A guest who scanned a card
+ * should never end up typing the code by hand.
  */
 function BookingEntry() {
   const router = useRouter();
@@ -44,19 +49,32 @@ function BookingEntry() {
   // A key can arrive in the link — from the QR code on the printed card.
   const fromLink = searchParams.get("k");
 
-  const [passKey, setPassKey] = useState<string | null>(
-    fromLink && isValidPassKeyFormat(fromLink) ? formatPassKey(fromLink) : null,
-  );
+  const [typed, setTyped] = useState<string | null>(null);
   const [roomNumber, setRoomNumber] = useState<string | null>(null);
   const [passKeyError, setPassKeyError] = useState("");
   const [roomError, setRoomError] = useState("");
   const [checking, setChecking] = useState(false);
-  const [checked, setChecked] = useState<Checked | null>(null);
+  const [verified, setVerified] = useState<Checked | null>(null);
+  /** Set once the guest starts changing the key, which un-accepts it. */
+  const [changingKey, setChangingKey] = useState(false);
+
+  /**
+   * A key already accepted earlier in this session. Trusted only to avoid
+   * asking for it twice — the booking itself is checked server-side either
+   * way, so a tampered value buys nothing.
+   */
+  const restored = !changingKey && !verified && Boolean(session.passKey);
+  const accepted = verified !== null || restored;
 
   const roomValue = roomNumber ?? session.roomNumber;
-  const passKeyValue = passKey ?? (session.passKey ? formatPassKey(session.passKey) : PREFIX);
+  const passKeyValue =
+    typed ??
+    (fromLink && isValidPassKeyFormat(fromLink)
+      ? formatPassKey(fromLink)
+      : session.passKey
+        ? formatPassKey(session.passKey)
+        : PREFIX);
 
-  /** Step one: is this key real, and whose flow does it belong to? */
   const checkKey = async () => {
     const normalizedKey = normalizePassKey(passKeyValue);
 
@@ -95,12 +113,19 @@ function BookingEntry() {
         passKeyBookedDates: data.bookedDates ?? [],
         passKeyMaxGuests: data.maxGuests ?? 0,
       });
-      setChecked({
-        kind: data.kind,
+
+      /**
+       * The key goes into the address too, so a reload still carries it — the
+       * same reason the QR code puts it there.
+       */
+      router.replace(`/booking?k=${encodeURIComponent(formatPassKey(normalizedKey))}`, { scroll: false });
+
+      setVerified({
         expiresOn: data.expiresOn ?? null,
         usesRemaining: data.usesRemaining ?? 0,
         bookedDates: data.bookedDates ?? [],
       });
+      setChangingKey(false);
       setChecking(false);
     } catch {
       setPassKeyError("We could not reach the restaurant. Please check your connection and try again.");
@@ -114,7 +139,7 @@ function BookingEntry() {
       return;
     }
 
-    if (!checked) {
+    if (!accepted) {
       await checkKey();
       return;
     }
@@ -128,6 +153,9 @@ function BookingEntry() {
     writeBookingSession({ roomNumber: trimmedRoom });
     router.push("/booking/guests");
   };
+
+  const bookedDates = verified?.bookedDates ?? session.passKeyBookedDates;
+  const expiresOn = verified?.expiresOn ?? (session.passKeyExpiresOn || null);
 
   return (
     <PageShell width="sm">
@@ -158,16 +186,16 @@ function BookingEntry() {
                 autoCapitalize="characters"
                 autoCorrect="off"
                 spellCheck={false}
-                autoFocus={!fromLink}
+                autoFocus={!fromLink && !session.passKey}
                 maxLength={24}
                 placeholder={`${PREFIX}XXXXX-XXXXX`}
                 value={passKeyValue}
-                readOnly={Boolean(checked)}
+                readOnly={accepted}
                 onChange={(event) => {
                   // The prefix is part of every key, so it is put back if the
                   // guest deletes it while editing.
-                  const typed = event.target.value.toUpperCase();
-                  setPassKey(typed.startsWith(PREFIX) ? typed : PREFIX + normalizePassKey(typed));
+                  const value = event.target.value.toUpperCase();
+                  setTyped(value.startsWith(PREFIX) ? value : PREFIX + normalizePassKey(value));
                   setPassKeyError("");
                 }}
                 onFocus={(event) => {
@@ -178,23 +206,41 @@ function BookingEntry() {
                 }}
                 onBlur={(event) => {
                   const normalized = normalizePassKey(event.target.value);
-                  setPassKey(isValidPassKeyFormat(normalized) ? formatPassKey(normalized) : event.target.value);
+                  setTyped(isValidPassKeyFormat(normalized) ? formatPassKey(normalized) : event.target.value);
                 }}
                 className="text-xl tracking-wider"
               />
             )}
           </Field>
 
-          {/* The room is only asked for once the key is known to be in-house. */}
-          {checked ? (
+          {accepted ? (
             <>
               <Alert tone="success">
-                Pass-key accepted.{" "}
-                {checked.usesRemaining === 1
-                  ? "One dinner left on it"
-                  : `${checked.usesRemaining} dinners left on it`}
-                {checked.expiresOn ? `, up to ${formatLongDate(checked.expiresOn)}` : ""}.
+                {verified
+                  ? `Pass-key accepted. ${
+                      verified.usesRemaining === 1
+                        ? "One dinner left on it"
+                        : `${verified.usesRemaining} dinners left on it`
+                    }${expiresOn ? `, up to ${formatLongDate(expiresOn)}` : ""}.`
+                  : `Pass-key accepted${expiresOn ? `, valid up to ${formatLongDate(expiresOn)}` : ""}.`}
               </Alert>
+
+              {/*
+                The only way to change an accepted key — and it keeps whatever
+                is already in the box, so a scanned code is never retyped.
+              */}
+              <button
+                type="button"
+                onClick={() => {
+                  setChangingKey(true);
+                  setVerified(null);
+                  setTyped(passKeyValue);
+                  setRoomError("");
+                }}
+                className="text-sm font-medium text-accent underline underline-offset-2"
+              >
+                Use a different pass-key
+              </button>
 
               <Field
                 label="Your room number"
@@ -206,7 +252,7 @@ function BookingEntry() {
                     {...fieldProps}
                     name="roomNumber"
                     autoComplete="off"
-                    autoFocus
+                    autoFocus={!session.roomNumber}
                     maxLength={10}
                     placeholder="e.g. 402 or L10"
                     value={roomValue}
@@ -225,10 +271,10 @@ function BookingEntry() {
                 but it is far more often a guest meaning to change what they
                 already booked.
               */}
-              {checked.bookedDates.length > 0 ? (
+              {bookedDates.length > 0 ? (
                 <Alert tone="warning">
                   You already have a reservation on{" "}
-                  {checked.bookedDates.map((date) => formatLongDate(date)).join(", ")}. To change it,{" "}
+                  {bookedDates.map((date) => formatLongDate(date)).join(", ")}. To change it,{" "}
                   <Link href="/booking/manage" className="font-semibold underline underline-offset-2">
                     manage your reservation
                   </Link>{" "}
@@ -239,7 +285,7 @@ function BookingEntry() {
           ) : null}
 
           <Button type="submit" size="lg" className="w-full" loading={checking} loadingLabel="Checking…">
-            {checked ? "Continue" : "Check my pass-key"}
+            {accepted ? "Continue" : "Check my pass-key"}
           </Button>
         </form>
 

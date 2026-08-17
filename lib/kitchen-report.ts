@@ -358,6 +358,82 @@ export function buildPrepList(columns: OptionColumn[], totals: Record<string, nu
     }));
 }
 
+/* ------------------------------------------------------------------ *
+ * Fitting the sheet to a page
+ * ------------------------------------------------------------------ */
+
+/**
+ * How large the printed sheet may be set.
+ *
+ * The sheet is printed **portrait** and read at arm's length in a working
+ * kitchen, so it wants to be as large as it can be — but it also has to stay on
+ * one page, and how much room it needs depends on the evening: a column per
+ * dish across, a row per table down. Rather than set one size small enough for
+ * the worst night, the size is chosen from what is actually on the sheet.
+ *
+ * The estimate is deliberate arithmetic rather than a measurement. Print
+ * layout cannot be measured from the screen — different type sizes, different
+ * paddings, a different page — so anything read from the DOM would be
+ * measuring the wrong thing and would be wrong in a way nobody could see until
+ * it came out of the printer.
+ */
+export type SheetPrintSize = "lg" | "md" | "sm" | "xs";
+
+/** A4 portrait, less the 10mm print margin on each side. */
+const PAGE_WIDTH_MM = 190;
+const PAGE_HEIGHT_MM = 277;
+const PT_TO_MM = 0.3528;
+
+/**
+ * The share of the width the identity columns hold: table, rooms, guests and
+ * the comment. The dish columns divide what is left — see rule 2.8, they are
+ * percentages so they can never sum past the page.
+ */
+const IDENTITY_SHARE = 0.44;
+
+/** The heading block above the table: title, date, covers and plates. */
+const HEADING_MM = 22;
+
+/**
+ * Rows are not all one line. A shared table lists several rooms and a booking
+ * may carry an allergy note, both of which wrap — so the estimate allows a
+ * third of a line on average rather than assuming the best case.
+ */
+const WRAP_ALLOWANCE = 1.3;
+
+const SIZES: { id: SheetPrintSize; fontPt: number }[] = [
+  { id: "lg", fontPt: 11 },
+  { id: "md", fontPt: 10 },
+  { id: "sm", fontPt: 9 },
+  { id: "xs", fontPt: 8 },
+];
+
+function fitsOnOnePage(fontPt: number, rows: number, dishColumns: number) {
+  const lineMm = fontPt * PT_TO_MM;
+  // Text, its leading, the cell padding and the row border.
+  const rowMm = lineMm * 1.25 * WRAP_ALLOWANCE + 1.6;
+  // Dish names are trimmed to three words and wrap in a narrow column.
+  const headerMm = lineMm * 1.15 * 3 + 3;
+
+  const heightMm = HEADING_MM + headerMm + rows * rowMm + rowMm;
+
+  // Every dish column has to hold a two-figure count without wrapping it.
+  const dishColumnMm = (PAGE_WIDTH_MM * (1 - IDENTITY_SHARE)) / Math.max(dishColumns, 1);
+  const neededMm = lineMm * 1.2 + 2;
+
+  return heightMm <= PAGE_HEIGHT_MM && dishColumnMm >= neededMm;
+}
+
+/**
+ * The largest type this evening can be printed at and still fit one page.
+ * Falls back to the smallest size rather than growing a second page: a sheet
+ * the kitchen has to reassemble from two pages is worse than a small one.
+ */
+export function chooseSheetPrintSize(input: { rows: number; dishColumns: number }): SheetPrintSize {
+  const fitting = SIZES.find((size) => fitsOnOnePage(size.fontPt, input.rows, input.dishColumns));
+  return (fitting ?? SIZES[SIZES.length - 1]).id;
+}
+
 export function countPlates(totals: Record<string, number>) {
   return Object.values(totals).reduce((sum, count) => sum + count, 0);
 }

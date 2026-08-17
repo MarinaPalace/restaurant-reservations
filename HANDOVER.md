@@ -21,7 +21,7 @@ A reservation app for **Vista Del Mar**, a hotel's à la carte restaurant.
 Stack: Next.js 16 (App Router, Turbopack), React 19, TypeScript, Tailwind v4, Mongoose 9, Zod 4,
 Vitest. Deployed on Vercel.
 
-**382 tests, 22 files. Lint, types and build are clean. Keep them that way.**
+**386 tests, 22 files. Lint, types and build are clean. Keep them that way.**
 
 ---
 
@@ -149,8 +149,24 @@ Two more things that cost paper, both fixed there too:
   the reason twenty tables needed two pages. Buttons, inputs and selects inside
   `[data-print-area]` are stripped to their text in print.
 
-An evening of **thirty tables now fits one sheet**, with the kitchen slip on its
-own page as intended. Measured, not guessed: see "verifying a print" below.
+**The sheet is portrait, and set as large as the evening allows.** Landscape
+came from treating it as a wide matrix, but width was never the scarce thing —
+190mm holds the columns comfortably, while the rows want depth, and portrait
+gives 277mm of it. That depth is what pays for readable type: the sheet is set
+at 8–11pt rather than 7.2pt, chosen per evening by `chooseSheetPrintSize` from
+the number of tables and the number of dishes, and applied through
+`data-print-size` and a ladder in the print block. A quiet evening prints at
+11pt; a full one steps down rather than spilling, because a sheet split over two
+pages is worse than a small one. The arithmetic is a pure function with tests —
+print layout cannot be measured from the screen, so measuring the DOM would be
+measuring the wrong page.
+
+Pass-key cards follow the same page: two across, five down, ten to a sheet.
+
+An evening of **thirty tables fits one page at 10pt**, with the kitchen slip on
+its own page as intended, and the slip is set at 12pt because it has a page to
+itself and is read from a bench. Measured, not guessed: see "verifying a print"
+below.
 
 ### 2.10 Nothing in the suite looks at print CSS
 
@@ -602,6 +618,10 @@ guests to arrive ten minutes early.
 
 ---
 
+`docs/service-tracking.md` is a design note for restaurant check-in and per-course service
+tracking — asked for, deliberately not built, and written down so the next session starts from a
+decision rather than a blank page.
+
 ## 6. Known limitations and open items
 
 Roughly in the order I would tackle them for beta.
@@ -676,7 +696,8 @@ chrome --headless=new --no-pdf-header-footer --print-to-pdf=out.pdf file:///shee
 Save the page's HTML, **inline the stylesheet** — a `file://` page silently drops an
 `http://localhost` stylesheet, and then you are measuring a page with no CSS at all — and count
 `/Type /Page` in the PDF. An evening of thirty tables must come out as two pages: the sheet, then
-the kitchen slip. Nine pass-key cards must come out as one.
+the kitchen slip. Nine pass-key cards must come out as one. Check both ends of
+the size ladder — a quiet evening at 11pt and a full one at 8pt.
 
 **Verifying by hand is worth it.** Several bugs in this project passed the type checker and the
 unit tests but failed the moment a real request hit them — the premium-date hole, the dropped table

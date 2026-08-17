@@ -17,6 +17,7 @@ import {
   buildPrepList,
   buildRoomRows,
   buildTableCsv,
+  chooseSheetPrintSize,
   countDeclined,
   countPlates,
   groupOptionColumns,
@@ -82,6 +83,16 @@ export function KitchenReport({
   );
   const totals = useMemo(() => buildOptionTotals(roomRows, optionColumns), [roomRows, optionColumns]);
   const prepList = useMemo(() => buildPrepList(optionColumns, totals), [optionColumns, totals]);
+
+  /**
+   * How large the sheet may be printed. Rows and dish columns are what decide
+   * it — see `chooseSheetPrintSize`. Printing is the only thing this affects;
+   * the screen is unchanged.
+   */
+  const printSize = useMemo(
+    () => chooseSheetPrintSize({ rows: tableRows.length, dishColumns: optionColumns.length }),
+    [tableRows.length, optionColumns.length],
+  );
 
   const covers = reservations
     .filter((reservation) => reservation.status === "confirmed")
@@ -243,7 +254,7 @@ export function KitchenReport({
   };
 
   return (
-    <div data-print-area="">
+    <div data-print-area="" data-print-size={printSize}>
       <Card className="p-5 sm:p-6" as="section">
       <CardHeader
         eyebrow="Kitchen report"

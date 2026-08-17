@@ -194,16 +194,18 @@ with a copy of the everyday menu as a starting point. Nothing is stored, and inv
 nothing, until you press **Save menu**; from then on the two are entirely separate, and editing one
 never changes the other.
 
-**Printing.** Print gives you only the sheet — no calendar, no navigation — in **A4 landscape**,
+**Printing.** Print gives you only the sheet — no calendar, no navigation — in **A4 portrait**,
 sized to land an evening on a single page: the course-grouping row is dropped, dish names are
-trimmed to three words ("Slow roasted lamb"), the type is set small, and the table-number buttons
-print as plain numbers rather than at their on-screen touch size. **Thirty tables fit on one
-page**, with the totals row appearing once, at the end. The kitchen slip follows on its own page —
+trimmed to three words ("Slow roasted lamb"), and the table-number buttons print as plain numbers
+rather than at their on-screen touch size. The type is set **as large as the evening allows** — a
+quiet night prints at 11pt, and a busy one steps down through 10, 9 and 8 rather than spilling onto
+a second page. **Thirty tables fit on one page at 10pt**, with the totals row appearing once, at
+the end. The kitchen slip follows on its own page —
 a compact list of every dish with its quantity, total plates, and any allergy notes. Cut it off and
 hand it over; it carries no tables or room numbers.
 
-Pass-key cards print the same way: nine to a sheet with cut lines, and nothing else — no trailing
-blank pages from the list behind them.
+Pass-key cards print the same way: ten to a portrait sheet with cut lines, and nothing else — no
+trailing blank pages from the list behind them.
 
 **Seven languages for guests, English for staff.** The whole guest interface — buttons, labels,
 messages, dates and month names — is translated into English, Bulgarian, German, French, Polish,

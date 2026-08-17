@@ -769,13 +769,21 @@ body {
   }
 
   /*
-   * The service sheet is a wide matrix — a column per dish — so it is printed
-   * landscape and set small. Everything for one evening has to land on a
-   * single A4, because a waiter carries one sheet, not three.
+   * Portrait, and set as large as the evening allows.
+   *
+   * Landscape came from treating the sheet as a wide matrix — a column per
+   * dish — but the width was never the scarce thing: the identity columns and
+   * the dish columns both work in 190mm, while the *rows* want depth. Portrait
+   * gives 277mm of it, which is what buys the larger type. It is also the way
+   * paper is stacked at the pass.
+   *
+   * How large is decided per evening by `chooseSheetPrintSize`, which sets
+   * `data-print-size` — see the ladder below. Everything for one evening still
+   * has to land on a single page, because a waiter carries one sheet.
    */
   @page {
-    size: A4 landscape;
-    margin: 8mm;
+    size: A4 portrait;
+    margin: 10mm;
   }
 
   /*
@@ -801,16 +809,45 @@ body {
        than the page, or the page itself does the clipping instead. */
     min-width: 0 !important;
     max-width: 100% !important;
-    font-size: 7.2pt;
-    line-height: 1.1;
+    /* The ladder below sets this per evening; this is the floor. */
+    font-size: var(--sheet-font, 8pt);
+    line-height: 1.2;
   }
 
   [data-print-area] th,
   [data-print-area] td {
-    padding: 1px 2px !important;
+    padding: var(--sheet-padding, 1px 2px) !important;
     /* Nothing may hold a column open wider than its share. */
     white-space: normal !important;
     overflow-wrap: anywhere;
+  }
+
+  /*
+   * The size ladder.
+   *
+   * A quiet evening prints large enough to read at arm's length; a full one
+   * steps down rather than spilling onto a second page, which is the one thing
+   * the sheet may not do. `lib/kitchen-report.ts` picks the step from the
+   * number of tables and the number of dishes, and has the arithmetic.
+   */
+  [data-print-area][data-print-size="lg"] {
+    --sheet-font: 11pt;
+    --sheet-padding: 3px 3px;
+  }
+
+  [data-print-area][data-print-size="md"] {
+    --sheet-font: 10pt;
+    --sheet-padding: 2px 3px;
+  }
+
+  [data-print-area][data-print-size="sm"] {
+    --sheet-font: 9pt;
+    --sheet-padding: 2px 2px;
+  }
+
+  [data-print-area][data-print-size="xs"] {
+    --sheet-font: 8pt;
+    --sheet-padding: 1px 2px;
   }
 
   /*
@@ -855,18 +892,21 @@ body {
    * column divides what is left, growing thinner as dishes are added instead
    * of pushing the sheet off the paper.
    *
-   * Specified here: 5 + 9 + 9 + 14 = 37% at most, so dishes always keep 63%.
+   * Specified here: 7 + 13 + 8 + 16 = 44% at most, so dishes always keep 56%.
+   * The identity columns take a larger share than they did in landscape: the
+   * page is 90mm narrower, and "402 + 405" in 11pt has to fit the Rooms column
+   * without shredding into one word per line.
    */
   [data-print="table"] {
-    width: 5%;
+    width: 7%;
   }
 
   [data-print="who"] {
-    width: 9%;
+    width: 13%;
   }
 
   [data-print="note"] {
-    width: 14%;
+    width: 16%;
   }
 
   /* Deliberately no width: dish columns share whatever is left, equally. */
@@ -880,6 +920,17 @@ body {
     break-before: page;
   }
 
+  /* It is a short list read from a bench, and it has a whole page — so it is
+     set larger than the sheet whatever size the sheet ended up at. */
+  [data-print="prep"] table {
+    font-size: 12pt;
+  }
+
+  [data-print="prep"] th,
+  [data-print="prep"] td {
+    padding: 3px 4px !important;
+  }
+
   /*
    * Headings are display type on screen — the date is set at 36px — and that
    * is most of a centimetre of paper before a single row is printed. An
@@ -888,13 +939,13 @@ body {
    */
   [data-print-area] h1,
   [data-print-area] h2 {
-    font-size: 12pt !important;
+    font-size: 13pt !important;
     line-height: 1.2 !important;
     margin: 0 0 1mm !important;
   }
 
   [data-print-area] h3 {
-    font-size: 10pt;
+    font-size: 11pt;
     margin: 0 0 1mm !important;
   }
 
@@ -1054,15 +1105,18 @@ body {
   [data-printing-cards] [data-print-cards] {
     display: grid !important;
     /*
-     * Three across, three down — nine cards to a sheet.
+     * Two across, five down — ten cards to a sheet.
      *
-     * The page stays A4 *landscape*, the size the service sheet already asks
-     * for. A named `@page` for portrait would be tidier, but named pages are
-     * unevenly supported and only one `@page` size can win per document, so
-     * the layout is fitted to the page rather than fighting it.
+     * The page is A4 *portrait*, the size the service sheet asks for. A named
+     * `@page` would be tidier, but named pages are unevenly supported and only
+     * one `@page` size can win per document, so the layout is fitted to the
+     * page rather than fighting it. Three across needs 257mm and portrait has
+     * 190mm; two fit with room for the cut lines.
      */
-    grid-template-columns: repeat(3, 85.6mm);
-    gap: 4mm;
+    grid-template-columns: repeat(2, 85.6mm);
+    /* Ten cards to a portrait page needs five rows of 54mm, which leaves 7mm
+       for the gaps — hence 1.5mm rather than the 4mm landscape could afford. */
+    gap: 1.5mm;
     justify-content: center;
     align-content: start;
   }
@@ -1089,7 +1143,7 @@ body {
   /* A dashed hairline between cards is easier to cut along than a solid rule. */
   [data-printing-cards] [data-card-cut] {
     outline: 0.3mm dashed #999;
-    outline-offset: 1.5mm;
+    outline-offset: 0.6mm;
   }
 
   /* Everything that is not a card goes away while cards are printing. The

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { canonicalizeSelections } from "@/lib/menu-selection";
 import {
   buildCourseColumns,
+  chooseSheetPrintSize,
   buildPrepList,
   groupRoomRowsByTable,
   buildGuestCsv,
@@ -446,5 +447,28 @@ describe("rooms combined onto one table", () => {
     expect(cancelledRows[0].counts.o4).toBe(1);
     expect(cancelledRows[0].guests).toBe(1);
     expect(cancelledRows[0].cancelled).toBe(false);
+  });
+});
+
+describe("fitting the sheet on one page", () => {
+  it("prints a quiet evening large", () => {
+    expect(chooseSheetPrintSize({ rows: 10, dishColumns: 6 })).toBe("lg");
+  });
+
+  it("steps down as the tables fill up", () => {
+    const sizes = [12, 24, 34, 44].map((rows) => chooseSheetPrintSize({ rows, dishColumns: 10 }));
+
+    // Never larger than the row before it, and never off the bottom of the page.
+    expect(sizes).toEqual([...sizes].sort((a, b) => "lgmdsmxs".indexOf(a) - "lgmdsmxs".indexOf(b)));
+    expect(new Set(sizes).size).toBeGreaterThan(1);
+  });
+
+  it("steps down when a long menu narrows the dish columns", () => {
+    expect(chooseSheetPrintSize({ rows: 8, dishColumns: 24 })).toBe("xs");
+  });
+
+  /** A sheet spread over two pages is worse than a small one. */
+  it("never gives up and grows a second page", () => {
+    expect(chooseSheetPrintSize({ rows: 200, dishColumns: 60 })).toBe("xs");
   });
 });

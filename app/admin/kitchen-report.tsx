@@ -164,6 +164,20 @@ export function KitchenReport({
 
   const can = (permission: StaffPermission) => permissions.includes(permission);
 
+  /**
+   * Dishes nobody ordered.
+   *
+   * Every option keeps a column on screen, so staff can see the whole menu and
+   * satisfy themselves a dish really has no takers. On paper that is noise: a
+   * blank column for a dish the kitchen is not cooking costs width on a sheet
+   * that has to fit one page, and it reads as a duplicate of the column beside
+   * it. Marked here and hidden by the print rules in globals.css.
+   *
+   * The course-grouping row is already dropped in print, so its `colSpan`
+   * values do not need to follow.
+   */
+  const unordered = (optionId: string) => (totals[optionId] ? undefined : "true");
+
   const actionsCell = (reservationNumber: string, cancelled: boolean) => {
     // Who cancelled it, so the question does not have to be asked around the
     // desk. The full history is on the reservation's own page.
@@ -375,6 +389,7 @@ export function KitchenReport({
                       key={column.id}
                       scope="col"
                       data-print="dish"
+                      data-unordered={unordered(column.id)}
                       // Full wording on hover; the column shows the short label.
                       title={column.label}
                       className={cx(
@@ -420,6 +435,7 @@ export function KitchenReport({
                     {optionColumns.map((column, index) => (
                       <td
                         key={column.id}
+                        data-unordered={unordered(column.id)}
                         className={cx(
                           "px-2 py-2 text-center tabular-nums",
                           optionColumns[index + 1]?.courseId !== column.courseId && "border-r border-line",
@@ -465,6 +481,7 @@ export function KitchenReport({
                   {optionColumns.map((column, index) => (
                     <td
                       key={column.id}
+                      data-unordered={unordered(column.id)}
                       className={cx(
                         "px-2 py-3 text-center text-base tabular-nums",
                         optionColumns[index + 1]?.courseId !== column.courseId && "border-r border-line",

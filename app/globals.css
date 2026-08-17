@@ -642,3 +642,256 @@ body {
     backdrop-filter: none !important;
   }
 }
+
+/* The kitchen report is printed daily: drop the chrome, force legible ink on
+   white, and keep a reservation from being split across two pages. */
+@media print {
+  /*
+   * Print only the sheet. Everything else — the calendar, the stats, the
+   * navigation — is hidden rather than merely un-styled, because staff cut the
+   * printout up and hand the bottom of it to the kitchen.
+   */
+  body * {
+    visibility: hidden !important;
+  }
+
+  [data-print-area],
+  [data-print-area] * {
+    visibility: visible !important;
+  }
+
+  [data-print-area] {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  /* The kitchen slip is cut off the bottom, so keep it whole. */
+  [data-print="prep"] {
+    break-inside: avoid;
+  }
+
+  /*
+   * The service sheet is a wide matrix — a column per dish — so it is printed
+   * landscape and set small. Everything for one evening has to land on a
+   * single A4, because a waiter carries one sheet, not three.
+   */
+  @page {
+    size: A4 landscape;
+    margin: 8mm;
+  }
+
+  /*
+   * The single most important rule here.
+   *
+   * On screen each table sits in a horizontal scrollbox. A browser prints only
+   * the *visible* part of an overflow container, so the printout used to be
+   * whatever happened to be scrolled into view: at the left edge the Comment
+   * column was cut, at the right edge the first two columns were. Neutralising
+   * the scrollbox makes the printed sheet independent of where the scrollbar
+   * was left, which it must always be.
+   */
+  [data-print-scroll] {
+    overflow: visible !important;
+    width: auto !important;
+    max-width: none !important;
+  }
+
+  [data-print-area] table {
+    table-layout: fixed;
+    width: 100%;
+    /* `min-w-full` on screen; in print it must never force the table wider
+       than the page, or the page itself does the clipping instead. */
+    min-width: 0 !important;
+    max-width: 100% !important;
+    font-size: 7.6pt;
+    line-height: 1.15;
+  }
+
+  [data-print-area] th,
+  [data-print-area] td {
+    padding: 2px 3px !important;
+    /* Nothing may hold a column open wider than its share. */
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+  }
+
+  /* Course grouping is dropped in print: with short dish labels the columns
+     speak for themselves, and the row costs vertical space. */
+  [data-print="course-row"] {
+    display: none !important;
+  }
+
+  /**
+   * A dish nobody ordered takes no column on paper.
+   *
+   * On screen every option keeps its column, so staff can see the whole menu
+   * and satisfy themselves a dish really has no takers. On the sheet the
+   * kitchen cooks from it is noise: it costs width on a page that must not
+   * spill, and a blank column reads as a duplicate of the one beside it —
+   * which is exactly how it was reported.
+   */
+  [data-unordered="true"] {
+    display: none !important;
+  }
+
+  /*
+   * Column widths are percentages, never `em`.
+   *
+   * With `table-layout: fixed`, columns given a fixed `em` width keep it even
+   * when the total exceeds the table — so a night with many dishes pushed the
+   * table wider than the page and something got cut. Percentages cannot sum
+   * past the page: the identity columns claim a fixed share, and every dish
+   * column divides what is left, growing thinner as dishes are added instead
+   * of pushing the sheet off the paper.
+   *
+   * Specified here: 5 + 9 + 9 + 14 = 37% at most, so dishes always keep 63%.
+   */
+  [data-print="table"] {
+    width: 5%;
+  }
+
+  [data-print="who"] {
+    width: 9%;
+  }
+
+  [data-print="note"] {
+    width: 14%;
+  }
+
+  /* Deliberately no width: dish columns share whatever is left, equally. */
+  [data-print="dish"] {
+    overflow-wrap: anywhere;
+    hyphens: auto;
+  }
+
+  /* The kitchen slip starts a fresh page, so the service sheet keeps its own. */
+  [data-print="prep"] {
+    break-before: page;
+  }
+
+  [data-print-area] h3 {
+    font-size: 11pt;
+  }
+
+  /* Ink on paper, whatever theme the screen was showing. */
+  :root,
+  :root[data-theme="dark"] {
+    --canvas: #ffffff;
+    --canvas-veil: #ffffff;
+    --surface: #ffffff;
+    --surface-muted: #ffffff;
+    --surface-sunken: #ffffff;
+    --ink: #000000;
+    --ink-muted: #333333;
+    --ink-subtle: #444444;
+    --line: #999999;
+    --line-strong: #666666;
+    --card-shadow: none;
+    color-scheme: light;
+  }
+
+  body {
+    background: #ffffff;
+  }
+
+  [data-print="hide"] {
+    display: none !important;
+  }
+
+  [data-print="only"] {
+    display: block !important;
+  }
+
+  table {
+    break-inside: auto;
+  }
+
+  tr {
+    break-inside: avoid;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+}
+
+[data-print="only"] {
+  display: none;
+}
+
+/*
+ * Pass-key cards.
+ *
+ * A separate print context from the service sheet, and deliberately so: that
+ * one is A4 landscape and hides everything outside the sheet, this one is
+ * portrait and hides everything outside the card sheet. Sharing a block would
+ * mean one page setup fighting the other.
+ *
+ * Only applies while the page has asked for it, so printing the pass-key
+ * screen for its list still behaves normally.
+ */
+@media print {
+  [data-printing-cards] [data-print-cards] {
+    display: grid !important;
+    /*
+     * Three across, three down — nine cards to a sheet.
+     *
+     * The page stays A4 *landscape*, the size the service sheet already asks
+     * for. A named `@page` for portrait would be tidier, but named pages are
+     * unevenly supported and only one `@page` size can win per document, so
+     * the layout is fitted to the page rather than fighting it.
+     */
+    grid-template-columns: repeat(3, 85.6mm);
+    gap: 4mm;
+    justify-content: center;
+    align-content: start;
+  }
+
+  [data-printing-cards] [data-pass-key-card] {
+    /*
+     * Cards keep their colour. Everything else in this app prints as ink on
+     * white — a service sheet is a working document — but a card is handed to
+     * a guest, so `print-color-adjust: exact` overrides the browser's habit of
+     * dropping backgrounds to save toner.
+     */
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    break-inside: avoid;
+  }
+
+  /* The wash and the rule are backgrounds and borders, so they need saying too. */
+  [data-printing-cards] [data-card-wash],
+  [data-printing-cards] [data-card-rule] {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* A dashed hairline between cards is easier to cut along than a solid rule. */
+  [data-printing-cards] [data-card-cut] {
+    outline: 0.3mm dashed #999;
+    outline-offset: 1.5mm;
+  }
+
+  /* Everything that is not a card goes away while cards are printing. */
+  [data-printing-cards] body * {
+    visibility: hidden !important;
+  }
+
+  [data-printing-cards] [data-print-cards],
+  [data-printing-cards] [data-print-cards] * {
+    visibility: visible !important;
+  }
+
+  [data-printing-cards] [data-print-cards] {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+}

@@ -63,11 +63,20 @@ export function CardHeader({
     >
       <div className={cx("min-w-0", align === "center" && "text-center")}>
         {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
+        {/*
+          Fluid rather than two fixed steps at a breakpoint, so the size grows
+          with the screen instead of jumping at 640px. Kept moderate because
+          this component is shared with the admin panel, where a display face
+          at hero scale would read as decoration in a working tool. Guest
+          screens that want more push it themselves.
+        */}
         <Heading
           id={titleId}
           className={cx(
             "display mt-2 text-balance text-ink",
-            Heading === "h1" ? "text-[2.1rem] sm:text-5xl" : "text-3xl sm:text-4xl",
+            Heading === "h1"
+              ? "text-[clamp(2.1rem,5.5vw,3.1rem)] tracking-[-0.015em]"
+              : "text-[clamp(1.6rem,4vw,2.25rem)]",
           )}
         >
           {title}

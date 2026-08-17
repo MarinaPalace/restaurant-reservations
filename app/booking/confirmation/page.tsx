@@ -76,7 +76,7 @@ export default function ConfirmationPage() {
             as="h1"
             align="center"
             flourish
-            title="Reservation confirmed"
+            title="Your table is booked"
             description="We look forward to welcoming you. Please arrive a few minutes early."
           />
         </div>

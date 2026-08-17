@@ -12,6 +12,7 @@ import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
 import { validateReservationRequest } from "@/lib/services/booking-rules";
 import { staffReservationPatchSchema } from "@/lib/validation/booking";
 import { normalizeContact } from "@/lib/contact";
+import { formatRoomList } from "@/lib/room";
 import { canonicalizeSelections } from "@/lib/menu-selection";
 import { pruneSelectionsToGuestCount } from "@/lib/booking-session";
 
@@ -62,6 +63,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ re
      */
     const validation = validateReservationRequest({
       roomNumber: parsed.data.roomNumber ?? existing.roomNumber,
+      additionalRooms: parsed.data.additionalRooms ?? existing.additionalRooms,
       guestCount: nextGuestCount,
       date: nextDate,
       selections: nextSelections,
@@ -85,6 +87,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ re
 
     const updated = await updateReservationDetails(reservationNumber, {
       roomNumber: parsed.data.roomNumber,
+      additionalRooms: parsed.data.additionalRooms,
       guestCount: parsed.data.guestCount,
       date: parsed.data.date,
       selections: canonicalizeSelections(validation.selections, menu),
@@ -104,8 +107,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ re
     if (updated.guestCount !== existing.guestCount) {
       changes.push(`party ${existing.guestCount} → ${updated.guestCount}`);
     }
-    if (updated.roomNumber !== existing.roomNumber) {
-      changes.push(`room ${existing.roomNumber || "—"} → ${updated.roomNumber || "—"}`);
+    const roomsBefore = formatRoomList(existing.roomNumber, existing.additionalRooms);
+    const roomsAfter = formatRoomList(updated.roomNumber, updated.additionalRooms);
+    if (roomsAfter !== roomsBefore) {
+      changes.push(`room ${roomsBefore || "—"} → ${roomsAfter || "—"}`);
     }
     if (parsed.data.selections !== undefined) changes.push("menu choices");
     if (parsed.data.notes !== undefined) changes.push("comment");

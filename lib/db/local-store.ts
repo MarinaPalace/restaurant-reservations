@@ -148,6 +148,7 @@ export type LocalBookingResult =
 export async function createLocalReservation(input: {
   reservationNumber: string;
   roomNumber: string;
+  additionalRooms?: string[];
   guestCount: number;
   date: string;
   selections: ReservationRecord["selections"];
@@ -178,6 +179,7 @@ export async function createLocalReservation(input: {
       reservationNumber: input.reservationNumber,
       kind: input.kind ?? "standard",
       roomNumber: input.roomNumber,
+      additionalRooms: input.additionalRooms?.length ? input.additionalRooms : undefined,
       guestName: input.guestName,
       guestCount: input.guestCount,
       date: input.date,
@@ -411,6 +413,7 @@ export async function deleteLocalReservation(reservationNumber: string) {
 
 export type LocalReservationPatch = {
   roomNumber?: string;
+  additionalRooms?: string[];
   guestCount?: number;
   date?: string;
   selections?: ReservationRecord["selections"];
@@ -493,6 +496,13 @@ export async function updateLocalReservationDetails(
     const updated: ReservationRecord = {
       ...existing,
       roomNumber: patch.roomNumber ?? existing.roomNumber,
+      // An empty list means the extra rooms were removed, which is a real
+      // change — so this cannot fall back to what was there before.
+      additionalRooms: patch.additionalRooms
+        ? patch.additionalRooms.length
+          ? patch.additionalRooms
+          : undefined
+        : existing.additionalRooms,
       guestCount: nextGuestCount,
       date: nextDate,
       selections: patch.selections ?? existing.selections,

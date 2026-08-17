@@ -244,6 +244,56 @@ describe("menu storage", () => {
   });
 });
 
+describe("several rooms on one booking (local store)", () => {
+  it("keeps the extra rooms, and reads their absence as one room", async () => {
+    const store = await loadStore();
+    await store.upsertLocalDate({ date: "2026-10-20", isOpen: true, capacity: 20 });
+
+    const shared = await store.createLocalReservation({
+      reservationNumber: "ALC-SHARE1",
+      roomNumber: "402",
+      additionalRooms: ["405"],
+      guestCount: 3,
+      date: "2026-10-20",
+      selections: SELECTIONS,
+    });
+
+    const alone = await store.createLocalReservation({
+      reservationNumber: "ALC-ALONE1",
+      roomNumber: "403",
+      guestCount: 1,
+      date: "2026-10-20",
+      selections: SELECTIONS,
+    });
+
+    expect(shared.ok && shared.reservation.additionalRooms).toEqual(["405"]);
+    expect(alone.ok && alone.reservation.additionalRooms).toBeUndefined();
+  });
+
+  it("adds, keeps and clears the extra rooms on an edit", async () => {
+    const store = await loadStore();
+    await store.upsertLocalDate({ date: "2026-10-21", isOpen: true, capacity: 20 });
+    await store.createLocalReservation({
+      reservationNumber: "ALC-SHARE2",
+      roomNumber: "402",
+      guestCount: 2,
+      date: "2026-10-21",
+      selections: SELECTIONS,
+    });
+
+    const added = await store.updateLocalReservationDetails("ALC-SHARE2", { additionalRooms: ["405"] });
+    expect(added.ok && added.reservation.additionalRooms).toEqual(["405"]);
+
+    // An edit that says nothing about the rooms leaves them alone …
+    const untouched = await store.updateLocalReservationDetails("ALC-SHARE2", { notes: "Window table" });
+    expect(untouched.ok && untouched.reservation.additionalRooms).toEqual(["405"]);
+
+    // … while an empty list means the room was taken off the booking.
+    const cleared = await store.updateLocalReservationDetails("ALC-SHARE2", { additionalRooms: [] });
+    expect(cleared.ok && cleared.reservation.additionalRooms).toBeUndefined();
+  });
+});
+
 describe("staff edits (local store)", () => {
   async function book(store: Awaited<ReturnType<typeof loadStore>>, date: string, guestCount: number) {
     const result = await store.createLocalReservation({

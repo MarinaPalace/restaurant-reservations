@@ -47,6 +47,9 @@ const reservationSchema = new Schema(
     kind: { type: String, enum: ["standard", "premium"], default: "standard" },
     // Blank for a premium booking, where the guest names themselves instead.
     roomNumber: { type: String, required: false, default: "" },
+    // The other rooms on the same table, from a ticket that named several.
+    // Absent on everything booked before this, which reads as one room.
+    additionalRooms: { type: [String], required: false },
     guestName: { type: String },
     guestCount: { type: Number, required: true },
     date: { type: String, required: true, index: true },

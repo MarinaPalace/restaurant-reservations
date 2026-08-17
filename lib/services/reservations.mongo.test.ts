@@ -384,6 +384,88 @@ describe("shared tables", () => {
   });
 });
 
+/**
+ * A ticket handed in at the desk may name two or three rooms sitting together.
+ * They live on one booking, and — like every field added after the fact — the
+ * absence of them has to read correctly on everything already in the database.
+ */
+describe("several rooms on one booking", () => {
+  it("keeps every room, in the order they were entered", async () => {
+    const { reservations } = await loadServices();
+    await openDate("2026-10-20", 40);
+
+    const created = await reservations.createReservationEntry({
+      roomNumber: "402",
+      additionalRooms: ["405", "L10"],
+      guestCount: 4,
+      date: "2026-10-20",
+      selections: SELECTIONS,
+    });
+
+    const loaded = await reservations.getReservationByNumber(created.reservationNumber);
+    expect(loaded?.roomNumber).toBe("402");
+    expect(loaded?.additionalRooms).toEqual(["405", "L10"]);
+  });
+
+  it("reads a booking written before the field existed as a single room", async () => {
+    const { reservations } = await loadServices();
+    const { ReservationModel } = await import("@/lib/models/reservation");
+    await openDate("2026-10-21", 40);
+
+    // Straight into the collection, in the shape an older build wrote.
+    await ReservationModel.collection.insertOne({
+      reservationNumber: "VDM-OLD001",
+      roomNumber: "402",
+      guestCount: 2,
+      date: "2026-10-21",
+      selections: SELECTIONS,
+      status: "confirmed",
+    });
+
+    const loaded = await reservations.getReservationByNumber("VDM-OLD001");
+    expect(loaded?.roomNumber).toBe("402");
+    expect(loaded?.additionalRooms).toBeUndefined();
+  });
+
+  it("adds and removes the extra rooms on an edit", async () => {
+    const { reservations } = await loadServices();
+    await openDate("2026-10-22", 40);
+
+    const created = await reservations.createReservationEntry({
+      roomNumber: "402",
+      guestCount: 2,
+      date: "2026-10-22",
+      selections: SELECTIONS,
+    });
+
+    await reservations.updateReservationDetails(created.reservationNumber, { additionalRooms: ["405"] });
+    expect((await reservations.getReservationByNumber(created.reservationNumber))?.additionalRooms).toEqual(["405"]);
+
+    // Emptying the list is a real change, not "leave it as it was".
+    await reservations.updateReservationDetails(created.reservationNumber, { additionalRooms: [] });
+    expect((await reservations.getReservationByNumber(created.reservationNumber))?.additionalRooms).toBeUndefined();
+  });
+
+  it("leaves the rooms alone on an edit that does not mention them", async () => {
+    const { reservations } = await loadServices();
+    await openDate("2026-10-23", 40);
+
+    const created = await reservations.createReservationEntry({
+      roomNumber: "402",
+      additionalRooms: ["405"],
+      guestCount: 2,
+      date: "2026-10-23",
+      selections: SELECTIONS,
+    });
+
+    await reservations.updateReservationDetails(created.reservationNumber, { notes: "Window table" });
+
+    const loaded = await reservations.getReservationByNumber(created.reservationNumber);
+    expect(loaded?.additionalRooms).toEqual(["405"]);
+    expect(loaded?.notes).toBe("Window table");
+  });
+});
+
 describe("guest notes", () => {
   it("keeps the comment with the booking", async () => {
     const { reservations } = await loadServices();

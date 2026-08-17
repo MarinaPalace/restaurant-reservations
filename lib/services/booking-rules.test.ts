@@ -80,6 +80,26 @@ describe("reservation validation", () => {
     }
   });
 
+  /**
+   * A ticket may name two or three rooms sharing one table. Each has to be a
+   * real room label, and the same room written twice is a slip of the pen — it
+   * would put that room on the service sheet twice.
+   */
+  it("accepts other rooms sharing the table", () => {
+    expect(validate({ additionalRooms: ["405", "L10"] }).ok).toBe(true);
+  });
+
+  it("rejects an invalid room among the extras", () => {
+    expect(validate({ additionalRooms: ["405", "not a room"] }).error).toContain("valid room number");
+  });
+
+  it("rejects the same room listed twice", () => {
+    expect(validate({ additionalRooms: ["405", "405"] }).error).toContain("only be listed once");
+    // Case is not a difference: rooms are compared upper-cased.
+    expect(validate({ roomNumber: "L10", additionalRooms: ["l10"] }).error).toContain("only be listed once");
+    expect(validate({ additionalRooms: ["402"] }).error).toContain("only be listed once");
+  });
+
   it("rejects a party larger than the restaurant accepts", () => {
     expect(validate({ guestCount: 7 }).error).toContain("valid guest count");
     expect(validate({ guestCount: 0 }).error).toContain("valid guest count");

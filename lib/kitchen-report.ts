@@ -1,5 +1,5 @@
 import { isNoneSelection, NONE_OPTION_ID } from "@/lib/menu-selection";
-import { compareRoomNumbers } from "@/lib/room";
+import { compareRoomNumbers, formatRoomList } from "@/lib/room";
 import type { MenuCourse, ReservationRecord } from "@/types/booking";
 
 /**
@@ -48,9 +48,19 @@ export type RoomRow = {
 /**
  * How a booking is identified on the sheet: the room for a hotel guest, the
  * guest's own name for an invited one, who has no room yet.
+ *
+ * A booking taken from a ticket may carry several rooms on one table, and all of
+ * them belong here — a waiter looking for room 405 has to find it, and the sheet
+ * has always shown a shared table as "402 + 405".
  */
-export function reservationLabel(reservation: Pick<ReservationRecord, "roomNumber" | "guestName">) {
-  return reservation.roomNumber?.trim() || reservation.guestName?.trim() || "—";
+export function reservationLabel(
+  reservation: Pick<ReservationRecord, "roomNumber" | "guestName" | "additionalRooms">,
+) {
+  return (
+    formatRoomList(reservation.roomNumber, reservation.additionalRooms) ||
+    reservation.guestName?.trim() ||
+    "—"
+  );
 }
 
 function sortReservations(reservations: ReservationRecord[]) {

@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { PageShell } from "@/components/page-shell";
@@ -13,6 +14,7 @@ import { formatPassKey } from "@/lib/pass-key";
 import { getMenuCatalog } from "@/lib/services/restaurant";
 import { canonicalizeSelections } from "@/lib/menu-selection";
 import { reservationLabel } from "@/lib/kitchen-report";
+import { findMissingCourses, summarizeSelections } from "@/lib/reservation-ticket";
 import { formatLongDate } from "@/lib/date";
 
 export const metadata: Metadata = { title: "Reservation" };
@@ -52,6 +54,14 @@ export default async function ReservationDetailPage({
     entries: reservation.selections.filter((entry) => (entry.guestIndex ?? 0) === guestIndex),
   }));
 
+  /**
+   * How many of each dish this booking needs — the number written on the ticket
+   * the guest handed in. Without it, checking a booking against its ticket meant
+   * reading every guest's list and adding the dishes up by hand.
+   */
+  const summary = summarizeSelections(reservation.selections, menu);
+  const missingCourses = findMissingCourses(reservation.selections, menu, reservation.guestCount);
+
   return (
     <PageShell width="md" headerHref="/admin">
       <Card className="p-5 sm:p-6">
@@ -71,7 +81,13 @@ export default async function ReservationDetailPage({
 
         <dl className="mt-6 grid gap-4 rounded-control bg-surface-muted p-4 sm:grid-cols-2">
           <div>
-            <dt className="text-sm text-ink-subtle">{reservation.kind === "premium" ? "Guest" : "Room"}</dt>
+            <dt className="text-sm text-ink-subtle">
+              {reservation.kind === "premium"
+                ? "Guest"
+                : reservation.additionalRooms?.length
+                  ? "Rooms"
+                  : "Room"}
+            </dt>
             <dd className="mt-1 text-lg font-semibold text-ink">{reservationLabel(reservation)}</dd>
           </div>
           <div>
@@ -144,6 +160,88 @@ export default async function ReservationDetailPage({
             <span className="font-semibold text-ink">{reservation.tableGroupId}</span>.
           </p>
         ) : null}
+
+        {/*
+          The ticket check. Everything below this is the same information broken
+          out per guest, which is what the kitchen plates from — but nobody can
+          verify a booking against the card the guest filled in by reading six
+          separate lists, which is what staff were doing.
+        */}
+        <section className="mt-8">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="eyebrow">Dishes on this booking</h2>
+            <p className="text-sm text-ink-muted">
+              {summary.plates} plate{summary.plates === 1 ? "" : "s"} for {reservation.guestCount}{" "}
+              {reservation.guestCount === 1 ? "guest" : "guests"}
+              {summary.declined > 0 ? ` · ${summary.declined} course(s) declined` : ""}
+            </p>
+          </div>
+
+          {summary.courses.length === 0 ? (
+            <p className="mt-2 text-sm font-medium text-danger">
+              No dishes are recorded on this booking. The kitchen has nothing to prepare for it.
+            </p>
+          ) : (
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full border-collapse text-left text-sm">
+                <caption className="sr-only">How many of each dish this booking needs</caption>
+                <thead>
+                  <tr className="border-b border-line-strong text-ink-muted">
+                    <th scope="col" className="py-1 pr-6 font-semibold">Course</th>
+                    <th scope="col" className="py-1 pr-6 font-semibold">Dish</th>
+                    <th scope="col" className="py-1 text-right font-semibold">Qty</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.courses.map((course) => (
+                    <Fragment key={course.courseId}>
+                      {course.dishes.map((dish, index) => (
+                        <tr key={dish.optionId} className="border-b border-line">
+                          <td className="py-1 pr-6 text-ink-muted">{index === 0 ? course.courseName : ""}</td>
+                          <td className="py-1 pr-6 font-medium text-ink">{dish.optionName}</td>
+                          <td className="py-1 text-right text-base font-semibold tabular-nums text-ink">
+                            {dish.quantity}
+                          </td>
+                        </tr>
+                      ))}
+                      {course.declined > 0 ? (
+                        <tr className="border-b border-line">
+                          <td className="py-1 pr-6 text-ink-muted">
+                            {course.dishes.length === 0 ? course.courseName : ""}
+                          </td>
+                          <td className="py-1 pr-6 text-ink-subtle">No thank you</td>
+                          <td className="py-1 text-right text-base font-semibold tabular-nums text-ink-subtle">
+                            {course.declined}
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-line-strong">
+                    <th scope="row" colSpan={2} className="py-1 pr-6 text-left font-semibold">
+                      Total plates
+                    </th>
+                    <td className="py-1 text-right text-base font-semibold tabular-nums">{summary.plates}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+
+          {/* Older bookings, and anything taken before the form insisted on it,
+              can still be short — so it is said here rather than assumed. */}
+          {missingCourses.length > 0 && reservation.status === "confirmed" ? (
+            <p className="mt-3 rounded-control border border-warning/30 bg-warning-soft p-3 text-sm font-medium text-warning">
+              Unfinished:{" "}
+              {missingCourses
+                .map((entry) => `${entry.courseName} — ${entry.missing} of ${reservation.guestCount} guests`)
+                .join(" · ")}
+              . Edit the reservation to complete it.
+            </p>
+          ) : null}
+        </section>
 
         <div className="mt-6 space-y-3">
           {guestGroups.map(({ guestIndex, entries }) => (

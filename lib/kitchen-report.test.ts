@@ -222,6 +222,23 @@ describe("shared tables", () => {
     expect(rows.map((row) => row.table)).toEqual(["4", "4", "7"]);
   });
 
+  /**
+   * A ticket may name several rooms on one line. They are one booking, so the
+   * sheet has to name all of them — a waiter looking for room 405 has to find
+   * it, and it reads the same as a table rooms joined themselves.
+   */
+  it("names every room on a booking taken from one ticket", () => {
+    const ticket: ReservationRecord = {
+      ...roomWithTwo,
+      reservationNumber: "ALC-TICKET",
+      additionalRooms: ["405"],
+      tableGroupId: undefined,
+    };
+
+    const rows = buildRoomRows([ticket], buildOptionColumns([ticket], menu));
+    expect(rows[0].room).toBe("402 + 405");
+  });
+
   it("sorts rooms with no table last", () => {
     const unassigned: ReservationRecord = { ...roomWithTwo, reservationNumber: "ALC-DDD", tableNumber: undefined };
     const rows = buildRoomRows([unassigned, roomSharingTable], buildOptionColumns([], menu));

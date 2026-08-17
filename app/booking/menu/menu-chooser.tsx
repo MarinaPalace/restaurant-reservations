@@ -21,6 +21,14 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
 
   const [activeGuestIndex, setActiveGuestIndex] = useState(0);
   const [error, setError] = useState("");
+  /**
+   * The dish just chosen, and a counter that changes on every tap.
+   *
+   * Only the plate that was actually tapped flashes, and the counter is what
+   * makes a second tap on the same plate flash again — a CSS animation on an
+   * element that stays in the tree only ever runs once.
+   */
+  const [flash, setFlash] = useState<{ courseId: string; optionId: string; tick: number } | null>(null);
 
   const guestCount = Math.max(session.guestCount, 1);
   const selections = session.selections;
@@ -59,6 +67,11 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
         nextSelection,
       ],
     });
+    setFlash((current) => ({
+      courseId: course.id,
+      optionId: option.id,
+      tick: (current?.tick ?? 0) + 1,
+    }));
     setError("");
   };
 
@@ -281,12 +294,11 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
                   >
                     {course.options.map((option) => {
                       const isSelected = selection?.optionId === option.id;
+                      const justChosen = flash?.courseId === course.id && flash.optionId === option.id;
 
                       return (
                         <button
-                          // Remounting on the selected state restarts the bloom;
-                          // a CSS animation on a persistent element fires once.
-                          key={`${option.id}-${isSelected}`}
+                          key={option.id}
                           type="button"
                           role="radio"
                           aria-checked={isSelected}
@@ -294,10 +306,21 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
                           className={cx(
                             "lift group relative flex flex-col overflow-hidden rounded-card border text-left",
                             isSelected
-                              ? "bloom border-gold bg-accent-soft"
+                              ? "border-gold bg-accent-soft"
                               : "border-line bg-surface hover:border-accent",
                           )}
                         >
+                          {/*
+                            The confirmation flash. Remounting this one empty
+                            span is what restarts the animation; remounting the
+                            whole button — which is what a key on the selected
+                            state used to do — threw away the dish photograph
+                            and rebuilt it on every tap.
+                          */}
+                          {justChosen ? (
+                            <span key={flash.tick} aria-hidden="true" className="bloom-ring" />
+                          ) : null}
+
                           <span className="relative block aspect-[16/9] max-h-[13rem] w-full overflow-hidden sm:aspect-[4/3] sm:max-h-none">
                             <DishImage
                               src={option.imageUrl}
@@ -365,10 +388,10 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
 
                     {(() => {
                       const isSelected = selection?.optionId === NONE_OPTION_ID;
+                      const justChosen = flash?.courseId === course.id && flash.optionId === NONE_OPTION_ID;
 
                       return (
                         <button
-                          key={`none-${isSelected}`}
                           type="button"
                           role="radio"
                           aria-checked={isSelected}
@@ -379,12 +402,16 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
                             })
                           }
                           className={cx(
-                            "lift flex w-full items-center gap-3 rounded-card border border-dashed p-4 text-left sm:col-span-2",
+                            "lift relative flex w-full items-center gap-3 rounded-card border border-dashed p-4 text-left sm:col-span-2",
                             isSelected
-                              ? "bloom border-gold bg-accent-soft text-accent-ink"
+                              ? "border-gold bg-accent-soft text-accent-ink"
                               : "border-line-strong bg-surface text-ink-muted hover:border-accent",
                           )}
                         >
+                          {justChosen ? (
+                            <span key={flash.tick} aria-hidden="true" className="bloom-ring" />
+                          ) : null}
+
                           <span className="flex size-20 shrink-0 items-center justify-center rounded-control border border-line text-2xl">
                             <span aria-hidden="true">—</span>
                           </span>

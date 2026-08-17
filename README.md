@@ -116,6 +116,24 @@ party moves the seats with it — the new evening is claimed before the old one 
 concurrent booking cannot slip into the gap, and a refused move leaves both evenings untouched.
 Contact details are optional for staff, since a phone booking may not have them.
 
+**Taking a booking from a ticket.** Guests who would rather not use the app fill in a card at
+reception: the room — or two or three rooms wanting to sit together — how many are coming, and how
+many of each dish, on one line. The form asks for the same thing. Each dish is a row: tap it to add
+one, `−` to take one away, and **+N all** to give every remaining guest the same dish, which is what
+most tickets say. Each course shows a running "3 of 4 chosen", and a summary at the foot of the form
+lists how many of each dish the table needs and the total plates, to check against the card before
+saving. Pressing *Create* while anything is missing names the courses that are short and how many
+guests they are short by, and sends nothing — a guest skipping a course is entered as
+*No thank you*, which is a real choice rather than a gap.
+
+Switch to **Per guest** for the original screen, one guest at a time. That is the way to record a
+particular seat's dish — an allergy — and it is the default when editing, because a booking the
+guest made themselves knows who is having what. Entering by ticket cannot know that: the card does
+not say.
+
+After saving, the reservation's page lists the same dish summary, so a booking can be checked
+against the ticket without adding up six separate guest lists.
+
 **Changing a booking.** Guests reach `/booking/manage` from the confirmation or the first booking
 step, enter their **pass-key**, and can then swap courses or cancel. Self-service closes **12 hours
 before the sitting**, after which they are asked to speak to reception — the kitchen is already
@@ -129,6 +147,11 @@ the night's record and can be undone.
 its reservation number to the others, who tick "we are dining with another room" and enter it.
 Joining is refused if the number is unknown, for another evening, or cancelled. Staff assign the
 actual table number in the dashboard, and it applies to everyone sharing that table.
+
+A ticket naming several rooms is the same thing from the other end: reception adds the extra rooms
+to the one booking, since the card gives one line of dish counts for the whole table and no way to
+tell which room ordered what. The sheet shows them as `402 + 405`, exactly like rooms that joined
+themselves.
 
 **Dish details.** An option can carry an ingredients line and a vegan flag, both optional. The
 ingredients line is translatable and is hidden entirely from guests when blank; a vegan dish shows

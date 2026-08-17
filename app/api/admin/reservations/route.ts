@@ -5,6 +5,7 @@ import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
 import { BOOKING_MESSAGES, validateReservationRequest } from "@/lib/services/booking-rules";
 import { staffReservationSchema } from "@/lib/validation/booking";
 import { normalizeContact } from "@/lib/contact";
+import { formatRoomList } from "@/lib/room";
 import { canonicalizeSelections } from "@/lib/menu-selection";
 import { recordAuditEntry } from "@/lib/services/audit-log";
 
@@ -32,6 +33,7 @@ export async function POST(request: Request) {
 
     const validation = validateReservationRequest({
       roomNumber: parsed.data.roomNumber,
+      additionalRooms: parsed.data.additionalRooms,
       guestCount: parsed.data.guestCount,
       date: parsed.data.date,
       selections: parsed.data.selections,
@@ -54,6 +56,7 @@ export async function POST(request: Request) {
      */
     const reservation = await createReservationEntry({
       roomNumber: parsed.data.roomNumber,
+      additionalRooms: parsed.data.additionalRooms,
       guestCount: parsed.data.guestCount,
       date: parsed.data.date,
       selections: canonicalizeSelections(validation.selections, menu),
@@ -67,7 +70,7 @@ export async function POST(request: Request) {
       actor: auth.actor,
       reservationNumber: reservation.reservationNumber,
       summary:
-        `Took a reservation for room ${reservation.roomNumber}, ` +
+        `Took a reservation for room ${formatRoomList(reservation.roomNumber, reservation.additionalRooms)}, ` +
         `${reservation.guestCount} guest(s) on ${reservation.date}.`,
     });
 

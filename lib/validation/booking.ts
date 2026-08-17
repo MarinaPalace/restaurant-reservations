@@ -7,6 +7,13 @@ import { MAX_USES_CAP, STAFF_PERMISSIONS } from "@/types/booking";
 export const MAX_GUESTS_PER_RESERVATION = 6;
 
 /**
+ * Rooms that may be added alongside the first on one booking. A ticket has
+ * space for three room numbers, which is also as many parties as a table of six
+ * realistically holds.
+ */
+export const MAX_ADDITIONAL_ROOMS = 2;
+
+/**
  * Rooms are labels such as L10, HA3 or 402. Stored upper-cased so lookups do
  * not depend on how the guest typed it.
  */
@@ -106,6 +113,12 @@ export const updateSelectionsSchema = manageReservationSchema.extend({
  */
 export const staffReservationSchema = z.object({
   roomNumber: roomNumberSchema,
+  /**
+   * The other rooms on the table, when a ticket names several. Capped at two
+   * beyond the first: three rooms is the most the printed ticket has space for,
+   * and a table of six cannot hold more parties than that anyway.
+   */
+  additionalRooms: z.array(roomNumberSchema).max(MAX_ADDITIONAL_ROOMS).optional(),
   guestCount: z.number().int().min(1).max(MAX_GUESTS_PER_RESERVATION),
   date: dateKeySchema,
   selections: z.array(reservationSelectionSchema),

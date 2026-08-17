@@ -97,6 +97,17 @@ export type ReservationRecord = {
    * premium booking, where the guest is not staying yet and gives a name.
    */
   roomNumber: string;
+  /**
+   * The other rooms sitting at this table.
+   *
+   * A ticket filled in at reception carries two or three room numbers and a
+   * single line of dish counts — one table, several rooms, and no way to say
+   * which room ordered which dish. Splitting that into a booking per room would
+   * mean inventing per-room guest counts nobody wrote down, so it stays one
+   * booking with the rooms listed. Absent on every booking made before this and
+   * on anything with one room, which is nearly all of them.
+   */
+  additionalRooms?: string[];
   /** Who the booking is for, when there is no room to name them by. */
   guestName?: string;
   guestCount: number;

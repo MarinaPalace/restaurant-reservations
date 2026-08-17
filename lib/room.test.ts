@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { compareRoomNumbers, isValidRoomNumber, normalizeRoomNumber, roomNumbersMatch } from "@/lib/room";
+import {
+  compareRoomNumbers,
+  formatRoomList,
+  isValidRoomNumber,
+  normalizeRoomNumber,
+  roomNumbersMatch,
+} from "@/lib/room";
 
 describe("room labels", () => {
   it("accepts the shapes the hotel actually uses", () => {
@@ -42,6 +48,24 @@ describe("matching a room for ownership checks", () => {
     expect(roomNumbersMatch("", "")).toBe(false);
     expect(roomNumbersMatch(null, undefined)).toBe(false);
     expect(roomNumbersMatch(undefined, "402")).toBe(false);
+  });
+});
+
+describe("listing the rooms on one booking", () => {
+  it("joins them the way the service sheet already shows a shared table", () => {
+    expect(formatRoomList("402", ["405", "l10"])).toBe("402 + 405 + L10");
+  });
+
+  it("reads a booking with one room as just that room", () => {
+    expect(formatRoomList("402")).toBe("402");
+    expect(formatRoomList("402", [])).toBe("402");
+    expect(formatRoomList("402", undefined)).toBe("402");
+  });
+
+  it("drops blanks rather than printing a stray plus", () => {
+    expect(formatRoomList("402", ["", "  "])).toBe("402");
+    // A premium booking has no room at all; the caller falls back to the name.
+    expect(formatRoomList("", [])).toBe("");
   });
 });
 

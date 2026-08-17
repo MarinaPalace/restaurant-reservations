@@ -404,9 +404,16 @@ body {
  * hidden rather than *to* visible. Nothing is ever left invisible because a
  * browser lacked a feature — the failure mode of every scroll library that
  * does this in JavaScript.
+ *
+ * **Pointer devices only, and that is not a taste decision.** The subject of
+ * this animation on the menu screen is a card taller than a phone screen, and
+ * it is also the thing being tapped: while the reveal runs, every dish inside
+ * it is sliding and scaling — so a guest scrolling with a thumb was aiming at
+ * a moving target and hitting the wrong dish, or nothing at all. A finger is
+ * on the glass; nothing under it may move.
  */
 @supports (animation-timeline: view()) {
-  @media (prefers-reduced-motion: no-preference) {
+  @media (hover: hover) and (prefers-reduced-motion: no-preference) {
     .reveal {
       animation: reveal linear both;
       animation-timeline: view();
@@ -434,38 +441,65 @@ body {
     transform var(--motion-element) var(--ease-settle),
     box-shadow var(--motion-element) var(--ease-settle),
     border-color var(--motion-micro) var(--ease-soft);
-  will-change: transform;
+  /*
+   * No `will-change`. Every dish on the menu carries this class, and a standing
+   * `will-change: transform` holds a composited layer for each one whether it is
+   * moving or not — on a mid-range phone the menu screen alone was asking for a
+   * dozen of them, which is what made the whole page feel like treacle. The
+   * translate3d above already promotes the element for the duration of the
+   * transition, which is the only time it matters.
+   */
 }
 
 /**
  * Pressing in. Applies to touch as much as to a mouse, which is the whole
  * point — this is the feedback a phone gets, and it is deliberately larger
  * than the hover effect rather than smaller.
+ *
+ * **Only the control itself may press in.** `:active` matches the ancestors of
+ * whatever is being activated, not just the target — so while this was written
+ * as `.lift:active`, tapping one dish scaled the entire course card it sits in,
+ * and every other dish on that card slid under the finger mid-tap. On a phone,
+ * where the card fills the screen, that made the menu close to unusable: the
+ * option you were aiming at had moved by the time the tap landed. Restricting
+ * the selector to things that are actually pressed is the fix; a container that
+ * merely holds a button now stays exactly where it is.
  */
-.lift:active {
+.lift:is(button, a, summary, label, [role="radio"], [role="button"]):active {
   box-shadow: var(--lift-resting);
   transform: perspective(var(--depth-perspective)) translate3d(0, 1px, -8px) scale(0.978);
   transition-duration: var(--motion-micro);
 }
 
 /**
- * Chosen. A gold ring blooms outward once, so selecting something is an event
- * on a touch screen rather than a silent colour swap.
+ * Chosen. A gold ring flashes once over the plate, so selecting something is an
+ * event on a touch screen rather than a silent colour swap.
+ *
+ * It is an overlay inside the control rather than an effect on the control, and
+ * it animates opacity and nothing else. The first version scaled the button
+ * from 0.94 to 1.04 and spread a shadow outward, which meant the thing that had
+ * just been tapped — and its neighbours in the grid — jumped at the moment of
+ * the tap. Selecting a dish should confirm, not startle.
  */
-.bloom {
-  animation: bloom 620ms var(--ease-spring);
+.bloom-ring {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 2px var(--gold);
+  animation: bloom 620ms var(--ease-spring) forwards;
 }
 
 @keyframes bloom {
   from {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--gold) 65%, transparent);
-    transform: perspective(var(--depth-perspective)) scale(0.94);
+    opacity: 0;
   }
-  60% {
-    transform: perspective(var(--depth-perspective)) scale(1.04);
+  25% {
+    opacity: 1;
   }
   to {
-    box-shadow: 0 0 0 14px color-mix(in srgb, var(--gold) 0%, transparent);
+    opacity: 0;
   }
 }
 
@@ -602,7 +636,6 @@ body {
   .lift,
   .tilt,
   .tilt-layer,
-  .bloom,
   .pulse-gold,
   .rule-animate {
     animation: none !important;
@@ -610,8 +643,10 @@ body {
     opacity: 1 !important;
   }
 
+  /* The ring exists only to flash; with no motion it would sit there lit. */
   .aurora::before,
-  .sheen::after {
+  .sheen::after,
+  .bloom-ring {
     display: none !important;
   }
 }
@@ -624,7 +659,6 @@ body {
   .lift,
   .tilt,
   .tilt-layer,
-  .bloom,
   .pulse-gold {
     animation: none !important;
     transform: none !important;
@@ -633,7 +667,8 @@ body {
   }
 
   .aurora::before,
-  .sheen::after {
+  .sheen::after,
+  .bloom-ring {
     display: none !important;
   }
 

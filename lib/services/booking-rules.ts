@@ -1,11 +1,13 @@
 import { isPastDateKey } from "@/lib/date";
 import { isNoneSelection } from "@/lib/menu-selection";
-import { isValidRoomNumber } from "@/lib/room";
+import { isValidRoomNumber, normalizeRoomNumber } from "@/lib/room";
 import { MAX_GUESTS_PER_RESERVATION } from "@/lib/validation/booking";
 import type { MenuCourse, RestaurantDateAvailability, ReservationSelection } from "@/types/booking";
 
 export type ReservationValidationInput = {
   roomNumber: string;
+  /** Other rooms sharing the table, when staff took the booking from a ticket. */
+  additionalRooms?: string[];
   guestCount: number;
   date: string;
   selections: ReservationSelection[];
@@ -26,6 +28,7 @@ export const BOOKING_MESSAGES = {
   unavailable: "Unfortunately, this date is no longer available. Please select another date.",
   fullyBooked: "Unfortunately, this date is fully booked. Please choose another evening.",
   invalidOption: "Invalid menu option selected.",
+  repeatedRoom: "Each room may only be listed once on a booking.",
 } as const;
 
 export function getRemainingSeats(date: RestaurantDateAvailability | null) {
@@ -47,6 +50,27 @@ function invalid(error: string): ReservationValidationResult {
 export function validateReservationRequest(input: ReservationValidationInput): ReservationValidationResult {
   if (!isValidRoomNumber(input.roomNumber)) {
     return invalid(BOOKING_MESSAGES.invalidRoom);
+  }
+
+  /**
+   * A ticket may name two or three rooms sharing one table. Each still has to
+   * be a real room label, and listing the same room twice is a slip of the pen
+   * rather than a party — it would put a room on the sheet twice.
+   */
+  if (input.additionalRooms?.length) {
+    const seen = new Set([normalizeRoomNumber(input.roomNumber)]);
+
+    for (const room of input.additionalRooms) {
+      if (!isValidRoomNumber(room)) {
+        return invalid(BOOKING_MESSAGES.invalidRoom);
+      }
+
+      const normalized = normalizeRoomNumber(room);
+      if (seen.has(normalized)) {
+        return invalid(BOOKING_MESSAGES.repeatedRoom);
+      }
+      seen.add(normalized);
+    }
   }
 
   if (

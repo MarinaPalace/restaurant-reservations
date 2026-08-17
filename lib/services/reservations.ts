@@ -74,6 +74,7 @@ type MongoReservationDocument = {
   _id: unknown;
   reservationNumber: unknown;
   roomNumber: unknown;
+  additionalRooms?: unknown;
   guestCount: unknown;
   date: unknown;
   kind?: unknown;
@@ -98,6 +99,11 @@ function toReservationRecord(document: MongoReservationDocument): ReservationRec
     reservationNumber: String(document.reservationNumber),
     kind: document.kind === "premium" ? "premium" : "standard",
     roomNumber: String(document.roomNumber ?? ""),
+    // Absent, empty or written by an older version all read as "one room".
+    additionalRooms:
+      Array.isArray(document.additionalRooms) && document.additionalRooms.length > 0
+        ? document.additionalRooms.map((room) => String(room))
+        : undefined,
     guestName: document.guestName ? String(document.guestName) : undefined,
     guestCount: Number(document.guestCount),
     date: String(document.date),
@@ -189,6 +195,8 @@ export async function assignTableNumber(reservationNumber: string, tableNumber: 
 
 export async function createReservationEntry(input: {
   roomNumber: string;
+  /** Other rooms sharing this table, from a ticket that named several. */
+  additionalRooms?: string[];
   guestCount: number;
   date: string;
   selections: ReservationSelection[];
@@ -260,6 +268,7 @@ export async function createReservationEntry(input: {
     const created = await ReservationModel.create({
       reservationNumber,
       roomNumber: input.roomNumber,
+      additionalRooms: input.additionalRooms?.length ? input.additionalRooms : undefined,
       guestCount: input.guestCount,
       date: input.date,
       kind: input.kind ?? "standard",
@@ -439,6 +448,7 @@ export async function getReservationsByPassKey(passKeyId: string): Promise<Reser
 
 export type StaffReservationPatch = {
   roomNumber?: string;
+  additionalRooms?: string[];
   guestCount?: number;
   date?: string;
   selections?: ReservationSelection[];
@@ -526,6 +536,9 @@ export async function updateReservationDetails(
     date: nextDate,
   };
 
+  // An empty list is stored as such and read back as "one room", so dropping
+  // the extra rooms from a booking needs no separate unset.
+  if (patch.additionalRooms !== undefined) update.additionalRooms = patch.additionalRooms;
   if (patch.selections !== undefined) update.selections = patch.selections;
   if (patch.notes !== undefined) update.notes = patch.notes;
   if (patch.contact !== undefined) update.contact = patch.contact;

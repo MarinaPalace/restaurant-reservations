@@ -25,6 +25,23 @@ export function roomNumbersMatch(a: string | number | null | undefined, b: strin
 }
 
 /**
+ * Every room on one booking, in the order they were entered.
+ *
+ * A ticket may name two or three rooms sitting at one table, and they are shown
+ * joined with a plus — the same way the service sheet has always shown rooms
+ * that asked to sit together, so staff read one familiar thing.
+ */
+export function formatRoomList(
+  roomNumber: string | number | null | undefined,
+  additionalRooms?: string[] | null,
+) {
+  return [roomNumber, ...(additionalRooms ?? [])]
+    .map(normalizeRoomNumber)
+    .filter((room) => room.length > 0)
+    .join(" + ");
+}
+
+/**
  * Orders rooms the way a person reads them: 2 before 10, and A43 grouped with
  * the other A rooms rather than sorted by character code.
  */

@@ -21,7 +21,7 @@ A reservation app for **Vista Del Mar**, a hotel's à la carte restaurant.
 Stack: Next.js 16 (App Router, Turbopack), React 19, TypeScript, Tailwind v4, Mongoose 9, Zod 4,
 Vitest. Deployed on Vercel.
 
-**314 tests, 20 files. Lint, types and build are clean. Keep them that way.**
+**352 tests, 21 files. Lint, types and build are clean. Keep them that way.**
 
 ---
 
@@ -41,8 +41,8 @@ The calendar showed availability against the wrong cells and guests booked the w
 
 The production database holds a live menu and live bookings. Fields added after the fact
 (`ingredients`, `vegan`, `menu`, `premium`, `kind`, `guestName`, `time`, `endTime`, `notes`,
-`tableGroupId`, `tableNumber`, `serviceTime`, `serviceEndTime`, `passKeyId`, `cancellation`) are all
-optional, and absent values read as sensible defaults. **No migration has ever been required, and it should stay that way.**
+`tableGroupId`, `tableNumber`, `serviceTime`, `serviceEndTime`, `passKeyId`, `cancellation`,
+`additionalRooms`) are all optional, and absent values read as sensible defaults. **No migration has ever been required, and it should stay that way.**
 
 `lib/services/reservations.mongo.test.ts` inserts documents in the *old* shape straight into Mongo
 and asserts they read correctly and survive a save round-trip field for field.
@@ -180,7 +180,42 @@ found the hard way:
 Adding a gate is not enough. Every gate in front of it has to learn the rule
 too, or the new one only moves where the failure happens.
 
-### 2.13 No `setState` synchronously inside an effect
+### 2.13 Nothing may move under a finger
+
+Two rules in the motion layer, both written after the menu screen became close
+to unusable on a phone: guests reported that pressing a dish made "everything
+move", and that they kept selecting the wrong one.
+
+**`:active` matches ancestors, not just the target.** The press effect was
+written as `.lift:active`, and `.lift` is on the course card *and* on every dish
+inside it — so tapping one dish scaled the whole card, and every other dish slid
+under the finger mid-tap. On a phone the card fills the screen, so the entire
+menu lurched at every press. The selector is now restricted to things that are
+actually pressed (`button`, `a`, `[role="radio"]`, …), and a container that
+merely holds a control stays where it is. **Never put a press effect on a
+container.**
+
+**Scroll-driven reveal is for pointer devices only.** `.reveal` animates a
+course card as it scrolls into view — and that card is also what the guest is
+tapping. Taller than the viewport, it is still mid-animation while its dishes
+are on screen, so the target moves as you scroll toward it. It is now inside
+`@media (hover: hover)`.
+
+Related, and the same principle: selecting a dish used to remount the button
+(`key={`${option.id}-${isSelected}`}`) so the CSS bloom would restart. That
+threw away and rebuilt the dish photograph on every tap. The flash is now a
+small overlay element that remounts on its own, and it animates opacity only —
+the old one scaled the button from 0.94 to 1.04, which moved the thing that had
+just been tapped.
+
+`.lift` also carried a standing `will-change: transform`, one composited layer
+per dish on the page. Removed.
+
+**When touching the motion layer, drive the menu screen on a phone** — or at
+least in a device emulator with touch and a slow CPU. None of this shows up in
+types, lint or tests.
+
+### 2.14 No `setState` synchronously inside an effect
 
 React 19's lint rule is on and treated as an error. Data that does not depend on client state is
 fetched **on the server** and passed as props. `sessionStorage` is read through
@@ -236,6 +271,7 @@ lib/
   services/           booking-rules, reservations, restaurant/menu,
                       pass-keys, staff-users, audit-log.
   pass-key.ts         Code generation, normalisation, formatting.
+  reservation-ticket.ts  Dish counts ⇄ per-guest choices, and the dish summary.
   date.ts room.ts contact.ts calendar.ts kitchen-report.ts …
 proxy.ts              Optimistic /admin redirect only.
 ```
@@ -269,6 +305,39 @@ distinguishable from "has not chosen yet". Never counted in prep totals.
 **Shared tables.** Rooms dining together pass a reservation number to each other; the service sheet
 shows them as **one row** with all rooms listed and choices already combined. Staff assign a table
 number and it applies to everyone on it.
+
+**Taking a booking from a ticket.** Guests who cannot use the app are given a card at reception:
+the room (or two or three, if rooms want to sit together), how many are coming, and how many of
+each dish — one number per dish, on one line. `/admin/reservation/new` now asks for exactly that.
+Each dish is a row: tapping it adds one, `−` takes one away, and **+N all** gives every remaining
+guest the same thing, which is what most tickets say. A running "3 of 4 chosen" sits above each
+course. The per-guest screen is still there behind a toggle, and is the default when *editing*,
+because a booking a guest made themselves records who is having what and retyping it as totals
+would throw that away — it is also how an allergy is recorded against a particular seat.
+
+Both write the same per-guest `selections`; the translation is `lib/reservation-ticket.ts`.
+Quantities are packed into guest indexes in menu order, so two soups become guests 1 and 2. **Which
+guest gets which is arbitrary, and has to be** — the ticket does not say. Editing one course
+repacks that course only.
+
+**A booking must have a dinner on it.** The server has always refused an incomplete set of choices,
+but the form let staff press Create with a room, a date and nothing else and only reported it
+afterwards, one course at a time — so bookings were being created short and noticed when the
+kitchen sheet came out. The Create button is deliberately **not disabled** (a disabled button gives
+no reason): pressing it names every course that is short and by how many guests, scrolls to the
+first, and sends nothing. `findMissingCourses` counts per guest, because two choices for guest 1
+and none for guest 2 sums to the right total and is still unfinished.
+
+**The dish summary.** Every booking now says how many of each dish it needs — live in the form
+while a ticket is being typed, and on the reservation page after it is saved, with the plate total.
+That is the number written on the ticket, and until now checking one against the other meant
+reading six separate guest lists and adding the dishes up by hand.
+
+**Several rooms on one booking.** `additionalRooms` holds the other rooms from a ticket. They are
+one booking rather than one per room, because the ticket gives a single line of dish counts and no
+per-room guest numbers — splitting it would mean inventing them. The service sheet, the detail page
+and the audit log show them joined as `402 + 405`, the same way a table rooms joined themselves is
+shown. The field is optional and absent everywhere else, and a room listed twice is refused.
 
 **Dishes nobody ordered.** Every menu option keeps a column on screen, so staff can see the whole
 menu and satisfy themselves a dish really has no takers — but a column of blanks takes no space on
@@ -477,7 +546,15 @@ Roughly in the order I would tackle them for beta.
     characters). Fine for a small team sharing a desk; revisit if the team grows.
 11. **Reservation numbers** now use the `VDM-` prefix; older `ALC-` numbers still resolve, since
     lookup is an exact match and nothing parses the prefix.
-12. **Bookings made before pass-keys existed have no key**, so their guests cannot use
+12. **A ticket booking pairs dishes to guests arbitrarily.** The card says four mains and two
+    starters, not who is having what, so `expandCourseQuantities` hands the choices out in menu
+    order. The per-table sheet and the kitchen slip are unaffected — they count dishes — but the
+    per-*guest* plating list will show a combination nobody actually ordered. Use per-guest entry
+    when the pairing matters, which in practice means an allergy.
+13. **Rooms on one ticket booking are a label, not a lookup.** `roomNumber` is still the first room
+    only, so a search or a report that filters by room will not match on the others. Nothing in the
+    app does that today; the sheet and the detail page both show every room.
+14. **Bookings made before pass-keys existed have no key**, so their guests cannot use
     `/booking/manage` at all. There is no migration path — a key is issued at check-in, and those
     guests have already checked in. Reception handles them by hand until they age out.
 

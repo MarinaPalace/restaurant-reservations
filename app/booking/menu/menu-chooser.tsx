@@ -11,6 +11,7 @@ import { useBookingGuard, writeBookingSession } from "@/hooks/use-booking-sessio
 import { LANGUAGE_NAMES, listLanguages } from "@/lib/languages";
 import { localizeMenuCatalog } from "@/lib/menu-localization";
 import { NONE_OPTION_ID, NONE_OPTION_NAME } from "@/lib/menu-selection";
+import { Tilt } from "@/components/motion/tilt";
 import { cx } from "@/components/ui/utils";
 import type { MenuCourse, MenuOption, ReservationSelection } from "@/types/booking";
 
@@ -132,7 +133,7 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
 
   return (
     <>
-      <Card className="p-4 sm:p-6">
+      <Card elevated className="p-4 sm:p-6">
         <CardHeader
           as="h1"
           flourish
@@ -223,7 +224,8 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
             );
 
             return (
-              <Card key={course.id} id={`course-${course.id}`} as="section" className="overflow-hidden scroll-mt-4">
+              <Tilt key={course.id} maxTilt={2.5} lift={8} className="rounded-card">
+              <Card id={`course-${course.id}`} as="section" className="lift overflow-hidden scroll-mt-4">
                 <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-start">
                   <DishImage src={course.imageUrl} alt="" width={160} height={112} className="h-28 w-full sm:w-40" />
                   <div className="min-w-0 flex-1">
@@ -355,6 +357,7 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
                   </div>
                 </fieldset>
               </Card>
+              </Tilt>
             );
           })}
         </div>

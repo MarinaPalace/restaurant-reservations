@@ -5,16 +5,30 @@ export function Card({
   children,
   className,
   id,
+  /**
+   * Depth and a settling entrance. Opt-in rather than default, because the
+   * admin panel uses the same card and staff do not want a working tool
+   * animating at them every time a page loads.
+   */
+  elevated = false,
   as: Component = "div",
 }: {
   children: ReactNode;
   className?: string;
   /** Anchor for scrolling a specific card into view. */
   id?: string;
+  elevated?: boolean;
   as?: "div" | "section" | "article";
 }) {
   return (
-    <Component id={id} className={cx("rounded-card border border-line bg-surface shadow-card", className)}>
+    <Component
+      id={id}
+      className={cx(
+        "rounded-card border border-line bg-surface",
+        elevated ? "settle lift" : "shadow-card",
+        className,
+      )}
+    >
       {children}
     </Component>
   );

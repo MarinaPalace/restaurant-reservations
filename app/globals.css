@@ -212,6 +212,221 @@ body {
   opacity: 0.7;
 }
 
+/* ------------------------------------------------------------------ *
+ * Motion and depth — guest screens only
+ * ------------------------------------------------------------------ *
+ *
+ * Restraint is the whole idea. One deliberate gesture per screen, slow
+ * easing, and depth suggested rather than announced. Everything here is a
+ * transform or an opacity — the two things a browser composites on the GPU —
+ * so none of it costs a layout pass, and it all disappears completely under
+ * `prefers-reduced-motion` and in print.
+ *
+ * These are deliberately *not* applied to /admin. Staff use that panel nightly
+ * under pressure, and animation in a working tool is friction.
+ */
+
+:root {
+  /* Deep ease-out: quick to leave, slow to settle. Reads as weight. */
+  --ease-settle: cubic-bezier(0.16, 1, 0.3, 1);
+  /* For small state changes, where symmetry looks better than drama. */
+  --ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
+
+  --motion-micro: 200ms;
+  --motion-element: 440ms;
+  --motion-hero: 720ms;
+
+  /* One perspective for the whole app, so nested 3D reads consistently. */
+  --depth-perspective: 1400px;
+
+  /* Two-layer shadow: a tight contact shadow plus a wide ambient one. */
+  --lift-resting: 0 1px 2px rgba(52, 33, 13, 0.06), 0 10px 26px -14px rgba(52, 33, 13, 0.22);
+  --lift-raised: 0 2px 4px rgba(52, 33, 13, 0.08), 0 28px 56px -22px rgba(52, 33, 13, 0.34);
+}
+
+/**
+ * A warm shadow reads as dirt on a dark ground, so the dark palette gets a
+ * near-black one instead. Declared twice, the same way every colour in this
+ * file is: once for the system preference and once for an explicit choice, so
+ * the theme toggle wins in both directions.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --lift-resting: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 26px -14px rgba(0, 0, 0, 0.6);
+    --lift-raised: 0 2px 4px rgba(0, 0, 0, 0.55), 0 28px 56px -22px rgba(0, 0, 0, 0.7);
+  }
+}
+
+:root[data-theme="dark"] {
+  --lift-resting: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 26px -14px rgba(0, 0, 0, 0.6);
+  --lift-raised: 0 2px 4px rgba(0, 0, 0, 0.55), 0 28px 56px -22px rgba(0, 0, 0, 0.7);
+}
+
+/**
+ * The entrance. Children of a `.stage` rise into place in sequence, each one
+ * a little behind the last.
+ *
+ * The order comes from `nth-child`, so the stagger needs no JavaScript, no
+ * state and no props on the children — which means it works in a server
+ * component and cannot cause a hydration mismatch. `backwards` holds each
+ * child invisible until its turn, so nothing flashes before its delay elapses.
+ */
+.stage > *,
+.rise {
+  animation: rise var(--motion-element) var(--ease-settle) backwards;
+  animation-delay: calc((var(--rise-index, 0) + var(--rise-from, 0)) * 70ms);
+}
+
+/* Ten is more than any screen here puts in one group; beyond it the delay
+   simply stops growing, which is better than an element arriving late. */
+.stage > *:nth-child(1) {
+  --rise-index: 0;
+}
+.stage > *:nth-child(2) {
+  --rise-index: 1;
+}
+.stage > *:nth-child(3) {
+  --rise-index: 2;
+}
+.stage > *:nth-child(4) {
+  --rise-index: 3;
+}
+.stage > *:nth-child(5) {
+  --rise-index: 4;
+}
+.stage > *:nth-child(6) {
+  --rise-index: 5;
+}
+.stage > *:nth-child(7) {
+  --rise-index: 6;
+}
+.stage > *:nth-child(8) {
+  --rise-index: 7;
+}
+.stage > *:nth-child(9) {
+  --rise-index: 8;
+}
+.stage > *:nth-child(n + 10) {
+  --rise-index: 9;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0);
+  }
+}
+
+/** The one hero gesture: a panel settling in from slightly behind the screen. */
+.settle {
+  animation: settle var(--motion-hero) var(--ease-settle) backwards;
+}
+
+@keyframes settle {
+  from {
+    opacity: 0;
+    transform: perspective(var(--depth-perspective)) translate3d(0, 18px, -60px) rotateX(3deg);
+  }
+}
+
+/**
+ * A surface that responds to being touched.
+ *
+ * `translateZ` rather than `translateY` so it reads as coming toward the
+ * reader rather than sliding up the page — the difference between depth and
+ * movement.
+ */
+.lift {
+  box-shadow: var(--lift-resting);
+  transform: perspective(var(--depth-perspective)) translate3d(0, 0, 0);
+  transition:
+    transform var(--motion-element) var(--ease-settle),
+    box-shadow var(--motion-element) var(--ease-settle),
+    border-color var(--motion-micro) var(--ease-soft);
+  will-change: transform;
+}
+
+@media (hover: hover) {
+  .lift:hover {
+    box-shadow: var(--lift-raised);
+    transform: perspective(var(--depth-perspective)) translate3d(0, -2px, 14px);
+  }
+}
+
+.lift:active {
+  box-shadow: var(--lift-resting);
+  transform: perspective(var(--depth-perspective)) translate3d(0, 0, 2px);
+  transition-duration: var(--motion-micro);
+}
+
+/**
+ * Gold catching the light.
+ *
+ * A single highlight sweeping across a surface on hover. It is the one place
+ * the app is allowed to sparkle, so it appears on hero elements only.
+ */
+.sheen {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.sheen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 38%,
+    color-mix(in srgb, var(--gold) 42%, transparent) 50%,
+    transparent 62%
+  );
+  transform: translateX(-120%);
+  opacity: 0;
+  transition:
+    transform 900ms var(--ease-settle),
+    opacity var(--motion-micro) linear;
+}
+
+@media (hover: hover) {
+  .sheen:hover::after {
+    transform: translateX(120%);
+    opacity: 1;
+  }
+}
+
+/**
+ * Tilt, driven by pointer position.
+ *
+ * The angles arrive as custom properties written straight onto the element by
+ * `components/motion/tilt.tsx` — no React state, so moving a pointer over a
+ * card never re-renders anything.
+ */
+.tilt {
+  transform: perspective(var(--depth-perspective)) rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg))
+    translate3d(0, 0, var(--tilt-z, 0px));
+  transform-style: preserve-3d;
+  transition:
+    transform var(--motion-element) var(--ease-settle),
+    box-shadow var(--motion-element) var(--ease-settle);
+}
+
+/* While the pointer is actually moving, follow it without easing. */
+.tilt[data-tilting="true"] {
+  transition: box-shadow var(--motion-element) var(--ease-settle);
+}
+
+/** Content that should sit forward of a tilting parent. */
+.tilt-layer {
+  transform: translate3d(0, 0, var(--layer-z, 24px));
+}
+
+/**
+ * Everything above is decoration. A guest who has asked for less motion, and
+ * every printed page, gets the flat version — not a faster one.
+ */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -220,6 +435,37 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+
+  .stage > *,
+  .rise,
+  .settle,
+  .lift,
+  .tilt,
+  .tilt-layer {
+    animation: none !important;
+    transform: none !important;
+  }
+
+  .sheen::after {
+    display: none !important;
+  }
+}
+
+@media print {
+  .stage > *,
+  .rise,
+  .settle,
+  .lift,
+  .tilt,
+  .tilt-layer {
+    animation: none !important;
+    transform: none !important;
+    box-shadow: none !important;
+  }
+
+  .sheen::after {
+    display: none !important;
   }
 }
 

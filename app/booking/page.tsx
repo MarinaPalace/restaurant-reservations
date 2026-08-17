@@ -169,7 +169,8 @@ function BookingEntry() {
   return (
     <PageShell width="sm">
       <BookingSteps current="room" />
-      <Card className="p-6 sm:p-8">
+      {/* The one hero gesture on this screen: the panel settling into place. */}
+      <Card elevated className="sheen p-6 sm:p-8">
         <Brand stacked className="mb-6" />
 
         <CardHeader
@@ -181,7 +182,7 @@ function BookingEntry() {
           description="Your pass-key is on the card you were given — scan it, or type it below."
         />
 
-        <form onSubmit={handleSubmit} noValidate className="mt-6 space-y-6">
+        <form onSubmit={handleSubmit} noValidate className="stage mt-6 space-y-6">
           <Field
             label="Pass-key"
             error={passKeyError}

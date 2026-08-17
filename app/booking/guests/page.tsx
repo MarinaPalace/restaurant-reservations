@@ -62,7 +62,7 @@ export default function GuestsPage() {
   return (
     <PageShell width="sm">
       <BookingSteps current="guests" />
-      <Card className="p-6 sm:p-8">
+      <Card elevated className="p-6 sm:p-8">
         <CardHeader
           as="h1"
           align="center"
@@ -117,11 +117,22 @@ export default function GuestsPage() {
                       setError("");
                     }}
                     className={cx(
-                      "rounded-control border px-4 py-5 text-center text-2xl font-semibold transition-colors",
+                      // A physical chip: it comes toward the reader on hover
+                      // and presses in when chosen.
+                      "lift rounded-control border px-4 py-5 text-center text-2xl font-semibold",
                       isSelected
-                        ? "border-primary bg-primary text-primary-fg"
+                        ? "border-accent bg-primary text-primary-fg"
                         : "border-line-strong bg-surface text-ink hover:border-accent",
                     )}
+                    style={
+                      isSelected
+                        ? {
+                            transform:
+                              "perspective(var(--depth-perspective)) translate3d(0, 0, 18px) scale(1.03)",
+                            boxShadow: "var(--lift-raised)",
+                          }
+                        : undefined
+                    }
                   >
                     {option}
                     <span className="sr-only"> {option === 1 ? "guest" : "guests"}</span>

@@ -61,7 +61,8 @@ export default function ConfirmationPage() {
 
   return (
     <PageShell width="sm">
-      <Card className="p-6 sm:p-8">
+      {/* The moment worth marking, so this is the one card that also sheens. */}
+      <Card elevated className="sheen p-6 sm:p-8">
         <BrandMark className="mx-auto size-12 text-accent" />
 
         <div className="mt-5 text-center">

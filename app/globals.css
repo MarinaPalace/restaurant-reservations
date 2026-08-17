@@ -212,6 +212,379 @@ body {
   opacity: 0.7;
 }
 
+/* ------------------------------------------------------------------ *
+ * Motion and depth — guest screens only
+ * ------------------------------------------------------------------ *
+ *
+ * Built phone-first, which the first version of this was not: it hung almost
+ * everything off `:hover` and `pointerType === "mouse"`, so on a handset the
+ * only motion in the whole app was one 12px fade at load. A guest on a phone
+ * saw essentially nothing. The ordering is now deliberate:
+ *
+ *   1. Ambient   — moves with no input at all, so a phone is never still.
+ *   2. Arrival   — entrances, and reveals as the page is scrolled.
+ *   3. Press     — touch feedback, which is the only "hover" a phone has.
+ *   4. Pointer   — tilt and sheen, added on top for mice.
+ *
+ * Everything is a transform, an opacity or a filter — composited on the GPU —
+ * so none of it costs a layout pass, and all of it disappears under
+ * `prefers-reduced-motion` and in print.
+ *
+ * Deliberately not applied to /admin: staff use that panel nightly under
+ * pressure, and animation in a working tool is friction.
+ */
+
+:root {
+  /* Deep ease-out: quick to leave, slow to settle. Reads as weight. */
+  --ease-settle: cubic-bezier(0.16, 1, 0.3, 1);
+  /* A little overshoot, for things that should feel sprung rather than damped. */
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.44, 1);
+  --ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
+
+  --motion-micro: 180ms;
+  --motion-element: 520ms;
+  --motion-hero: 900ms;
+
+  /* One perspective for the whole app, so nested 3D reads consistently. */
+  --depth-perspective: 1200px;
+
+  --lift-resting: 0 1px 2px rgba(52, 33, 13, 0.06), 0 10px 26px -14px rgba(52, 33, 13, 0.22);
+  --lift-raised: 0 2px 4px rgba(52, 33, 13, 0.08), 0 34px 64px -24px rgba(52, 33, 13, 0.38);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --lift-resting: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 26px -14px rgba(0, 0, 0, 0.6);
+    --lift-raised: 0 2px 4px rgba(0, 0, 0, 0.55), 0 34px 64px -24px rgba(0, 0, 0, 0.72);
+  }
+}
+
+:root[data-theme="dark"] {
+  --lift-resting: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 26px -14px rgba(0, 0, 0, 0.6);
+  --lift-raised: 0 2px 4px rgba(0, 0, 0, 0.55), 0 34px 64px -24px rgba(0, 0, 0, 0.72);
+}
+
+/* ---------------------------------------------------------------- *
+ * 1. Ambient — the part a phone can actually see
+ * ---------------------------------------------------------------- */
+
+/**
+ * Light travelling slowly across a surface, on a long loop.
+ *
+ * This is what makes a handset feel alive with nobody touching it. Slow and
+ * low-contrast on purpose: at eleven seconds it reads as a reflection rather
+ * than an animation, and it never competes with the text on top.
+ */
+.aurora {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.aurora::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: -40%;
+  background:
+    radial-gradient(38% 44% at 22% 28%, color-mix(in srgb, var(--gold) 26%, transparent), transparent 70%),
+    radial-gradient(34% 40% at 78% 68%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 70%);
+  animation: drift 11s var(--ease-soft) infinite alternate;
+  pointer-events: none;
+}
+
+@keyframes drift {
+  from {
+    transform: translate3d(-4%, -2%, 0) scale(1);
+  }
+  to {
+    transform: translate3d(4%, 3%, 0) scale(1.12);
+  }
+}
+
+/** A gold hairline that draws itself in. */
+.rule-animate {
+  animation: draw-rule var(--motion-hero) var(--ease-settle) backwards;
+  transform-origin: center;
+}
+
+@keyframes draw-rule {
+  from {
+    transform: scaleX(0.15);
+    opacity: 0;
+  }
+}
+
+/** A slow pulse for the one element that should attract the eye. */
+.pulse-gold {
+  animation: pulse-gold 3.2s var(--ease-soft) infinite;
+}
+
+@keyframes pulse-gold {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--gold) 50%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--gold) 0%, transparent);
+  }
+}
+
+/* ---------------------------------------------------------------- *
+ * 2. Arrival — entrances, and reveals on scroll
+ * ---------------------------------------------------------------- */
+
+/**
+ * Children of a `.stage` rise in sequence. The order comes from `nth-child`,
+ * so there is no JavaScript, no state and no props on the children — it works
+ * in a server component and cannot cause a hydration mismatch.
+ */
+.stage > *,
+.rise {
+  animation: rise var(--motion-element) var(--ease-settle) backwards;
+  animation-delay: calc((var(--rise-index, 0) + var(--rise-from, 0)) * 80ms);
+}
+
+.stage > *:nth-child(1) {
+  --rise-index: 0;
+}
+.stage > *:nth-child(2) {
+  --rise-index: 1;
+}
+.stage > *:nth-child(3) {
+  --rise-index: 2;
+}
+.stage > *:nth-child(4) {
+  --rise-index: 3;
+}
+.stage > *:nth-child(5) {
+  --rise-index: 4;
+}
+.stage > *:nth-child(6) {
+  --rise-index: 5;
+}
+.stage > *:nth-child(7) {
+  --rise-index: 6;
+}
+.stage > *:nth-child(8) {
+  --rise-index: 7;
+}
+.stage > *:nth-child(9) {
+  --rise-index: 8;
+}
+.stage > *:nth-child(n + 10) {
+  --rise-index: 9;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 22px, -30px);
+  }
+}
+
+/** The hero arrival: a panel swinging in from behind the screen. */
+.settle {
+  animation: settle var(--motion-hero) var(--ease-settle) backwards;
+  transform-origin: 50% 0%;
+}
+
+@keyframes settle {
+  from {
+    opacity: 0;
+    transform: perspective(var(--depth-perspective)) translate3d(0, 34px, -140px) rotateX(7deg);
+  }
+}
+
+/**
+ * Reveal as the page scrolls.
+ *
+ * Progressive enhancement: where `animation-timeline` is unsupported the
+ * element simply starts visible, which is why the keyframes animate *from*
+ * hidden rather than *to* visible. Nothing is ever left invisible because a
+ * browser lacked a feature — the failure mode of every scroll library that
+ * does this in JavaScript.
+ */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .reveal {
+      animation: reveal linear both;
+      animation-timeline: view();
+      /* Begins as it enters, finishes a third of the way up the viewport. */
+      animation-range: entry 5% cover 34%;
+    }
+  }
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 40px, -60px) scale(0.97);
+  }
+}
+
+/* ---------------------------------------------------------------- *
+ * 3. Press — the only "hover" a phone has
+ * ---------------------------------------------------------------- */
+
+.lift {
+  box-shadow: var(--lift-resting);
+  transform: perspective(var(--depth-perspective)) translate3d(0, 0, 0);
+  transition:
+    transform var(--motion-element) var(--ease-settle),
+    box-shadow var(--motion-element) var(--ease-settle),
+    border-color var(--motion-micro) var(--ease-soft);
+  will-change: transform;
+}
+
+/**
+ * Pressing in. Applies to touch as much as to a mouse, which is the whole
+ * point — this is the feedback a phone gets, and it is deliberately larger
+ * than the hover effect rather than smaller.
+ */
+.lift:active {
+  box-shadow: var(--lift-resting);
+  transform: perspective(var(--depth-perspective)) translate3d(0, 1px, -8px) scale(0.978);
+  transition-duration: var(--motion-micro);
+}
+
+/**
+ * Chosen. A gold ring blooms outward once, so selecting something is an event
+ * on a touch screen rather than a silent colour swap.
+ */
+.bloom {
+  animation: bloom 620ms var(--ease-spring);
+}
+
+@keyframes bloom {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--gold) 65%, transparent);
+    transform: perspective(var(--depth-perspective)) scale(0.94);
+  }
+  60% {
+    transform: perspective(var(--depth-perspective)) scale(1.04);
+  }
+  to {
+    box-shadow: 0 0 0 14px color-mix(in srgb, var(--gold) 0%, transparent);
+  }
+}
+
+/* ---------------------------------------------------------------- *
+ * 4. Pointer — added on top, for mice
+ * ---------------------------------------------------------------- */
+
+@media (hover: hover) {
+  .lift:hover {
+    box-shadow: var(--lift-raised);
+    transform: perspective(var(--depth-perspective)) translate3d(0, -3px, 20px);
+  }
+}
+
+/**
+ * Gold catching the light.
+ *
+ * On a pointer device it sweeps on hover. On a touch screen there is no hover,
+ * so it sweeps slowly on its own — otherwise the effect simply would not exist
+ * on the devices most guests actually use.
+ */
+.sheen {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.sheen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 38%,
+    color-mix(in srgb, var(--gold) 46%, transparent) 50%,
+    transparent 62%
+  );
+  transform: translateX(-130%);
+  opacity: 0;
+}
+
+@media (hover: hover) {
+  .sheen::after {
+    transition:
+      transform 950ms var(--ease-settle),
+      opacity var(--motion-micro) linear;
+  }
+
+  .sheen:hover::after {
+    transform: translateX(130%);
+    opacity: 1;
+  }
+}
+
+@media (hover: none) {
+  .sheen::after {
+    animation: sweep 7s var(--ease-soft) 1.2s infinite;
+  }
+}
+
+@keyframes sweep {
+  0% {
+    transform: translateX(-130%);
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  26% {
+    transform: translateX(130%);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(130%);
+    opacity: 0;
+  }
+}
+
+/**
+ * Tilt, driven by pointer position. The angles arrive as custom properties
+ * written straight onto the element by `components/motion/tilt.tsx` — no React
+ * state, so moving a pointer over a card never re-renders anything.
+ */
+.tilt {
+  transform: perspective(var(--depth-perspective)) rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg))
+    translate3d(0, 0, var(--tilt-z, 0px));
+  transform-style: preserve-3d;
+  transition:
+    transform var(--motion-element) var(--ease-settle),
+    box-shadow var(--motion-element) var(--ease-settle);
+}
+
+/* While the pointer is actually moving, follow it without easing. */
+.tilt[data-tilting="true"] {
+  transition: box-shadow var(--motion-element) var(--ease-settle);
+}
+
+/** Content that should sit forward of a tilting parent. */
+.tilt-layer {
+  transform: translate3d(0, 0, var(--layer-z, 24px));
+}
+
+/** Frosted panel, for bars that float over content. */
+.glass {
+  background: color-mix(in srgb, var(--canvas) 76%, transparent);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+}
+
+/* ---------------------------------------------------------------- *
+ * Opting out
+ * ---------------------------------------------------------------- *
+ *
+ * Flat, not fast. A guest who asked for less motion did not ask for the same
+ * motion sooner, and a printed page has no use for any of it.
+ */
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -221,244 +594,51 @@ body {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+
+  .stage > *,
+  .rise,
+  .settle,
+  .reveal,
+  .lift,
+  .tilt,
+  .tilt-layer,
+  .bloom,
+  .pulse-gold,
+  .rule-animate {
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+
+  .aurora::before,
+  .sheen::after {
+    display: none !important;
+  }
 }
 
-/* The kitchen report is printed daily: drop the chrome, force legible ink on
-   white, and keep a reservation from being split across two pages. */
 @media print {
-  /*
-   * Print only the sheet. Everything else — the calendar, the stats, the
-   * navigation — is hidden rather than merely un-styled, because staff cut the
-   * printout up and hand the bottom of it to the kitchen.
-   */
-  body * {
-    visibility: hidden !important;
-  }
-
-  [data-print-area],
-  [data-print-area] * {
-    visibility: visible !important;
-  }
-
-  [data-print-area] {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    margin: 0;
-    padding: 0;
-    border: none !important;
+  .stage > *,
+  .rise,
+  .settle,
+  .reveal,
+  .lift,
+  .tilt,
+  .tilt-layer,
+  .bloom,
+  .pulse-gold {
+    animation: none !important;
+    transform: none !important;
     box-shadow: none !important;
+    opacity: 1 !important;
   }
 
-  /* The kitchen slip is cut off the bottom, so keep it whole. */
-  [data-print="prep"] {
-    break-inside: avoid;
-  }
-
-  /*
-   * The service sheet is a wide matrix — a column per dish — so it is printed
-   * landscape and set small. Everything for one evening has to land on a
-   * single A4, because a waiter carries one sheet, not three.
-   */
-  @page {
-    size: A4 landscape;
-    margin: 8mm;
-  }
-
-  /*
-   * The single most important rule here.
-   *
-   * On screen each table sits in a horizontal scrollbox. A browser prints only
-   * the *visible* part of an overflow container, so the printout used to be
-   * whatever happened to be scrolled into view: at the left edge the Comment
-   * column was cut, at the right edge the first two columns were. Neutralising
-   * the scrollbox makes the printed sheet independent of where the scrollbar
-   * was left, which it must always be.
-   */
-  [data-print-scroll] {
-    overflow: visible !important;
-    width: auto !important;
-    max-width: none !important;
-  }
-
-  [data-print-area] table {
-    table-layout: fixed;
-    width: 100%;
-    /* `min-w-full` on screen; in print it must never force the table wider
-       than the page, or the page itself does the clipping instead. */
-    min-width: 0 !important;
-    max-width: 100% !important;
-    font-size: 7.6pt;
-    line-height: 1.15;
-  }
-
-  [data-print-area] th,
-  [data-print-area] td {
-    padding: 2px 3px !important;
-    /* Nothing may hold a column open wider than its share. */
-    white-space: normal !important;
-    overflow-wrap: anywhere;
-  }
-
-  /* Course grouping is dropped in print: with short dish labels the columns
-     speak for themselves, and the row costs vertical space. */
-  [data-print="course-row"] {
+  .aurora::before,
+  .sheen::after {
     display: none !important;
   }
 
-  /*
-   * Column widths are percentages, never `em`.
-   *
-   * With `table-layout: fixed`, columns given a fixed `em` width keep it even
-   * when the total exceeds the table — so a night with many dishes pushed the
-   * table wider than the page and something got cut. Percentages cannot sum
-   * past the page: the identity columns claim a fixed share, and every dish
-   * column divides what is left, growing thinner as dishes are added instead
-   * of pushing the sheet off the paper.
-   *
-   * Specified here: 5 + 9 + 9 + 14 = 37% at most, so dishes always keep 63%.
-   */
-  [data-print="table"] {
-    width: 5%;
-  }
-
-  [data-print="who"] {
-    width: 9%;
-  }
-
-  [data-print="note"] {
-    width: 14%;
-  }
-
-  /* Deliberately no width: dish columns share whatever is left, equally. */
-  [data-print="dish"] {
-    overflow-wrap: anywhere;
-    hyphens: auto;
-  }
-
-  /* The kitchen slip starts a fresh page, so the service sheet keeps its own. */
-  [data-print="prep"] {
-    break-before: page;
-  }
-
-  [data-print-area] h3 {
-    font-size: 11pt;
-  }
-
-  /* Ink on paper, whatever theme the screen was showing. */
-  :root,
-  :root[data-theme="dark"] {
-    --canvas: #ffffff;
-    --canvas-veil: #ffffff;
-    --surface: #ffffff;
-    --surface-muted: #ffffff;
-    --surface-sunken: #ffffff;
-    --ink: #000000;
-    --ink-muted: #333333;
-    --ink-subtle: #444444;
-    --line: #999999;
-    --line-strong: #666666;
-    --card-shadow: none;
-    color-scheme: light;
-  }
-
-  body {
-    background: #ffffff;
-  }
-
-  [data-print="hide"] {
-    display: none !important;
-  }
-
-  [data-print="only"] {
-    display: block !important;
-  }
-
-  table {
-    break-inside: auto;
-  }
-
-  tr {
-    break-inside: avoid;
-  }
-
-  thead {
-    display: table-header-group;
-  }
-}
-
-[data-print="only"] {
-  display: none;
-}
-
-/*
- * Pass-key cards.
- *
- * A separate print context from the service sheet, and deliberately so: that
- * one is A4 landscape and hides everything outside the sheet, this one is
- * portrait and hides everything outside the card sheet. Sharing a block would
- * mean one page setup fighting the other.
- *
- * Only applies while the page has asked for it, so printing the pass-key
- * screen for its list still behaves normally.
- */
-@media print {
-  [data-printing-cards] [data-print-cards] {
-    display: grid !important;
-    /*
-     * Three across, three down — nine cards to a sheet.
-     *
-     * The page stays A4 *landscape*, the size the service sheet already asks
-     * for. A named `@page` for portrait would be tidier, but named pages are
-     * unevenly supported and only one `@page` size can win per document, so
-     * the layout is fitted to the page rather than fighting it.
-     */
-    grid-template-columns: repeat(3, 85.6mm);
-    gap: 4mm;
-    justify-content: center;
-    align-content: start;
-  }
-
-  [data-printing-cards] [data-pass-key-card] {
-    /*
-     * Cards keep their colour. Everything else in this app prints as ink on
-     * white — a service sheet is a working document — but a card is handed to
-     * a guest, so `print-color-adjust: exact` overrides the browser's habit of
-     * dropping backgrounds to save toner.
-     */
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
-    break-inside: avoid;
-  }
-
-  /* The wash and the rule are backgrounds and borders, so they need saying too. */
-  [data-printing-cards] [data-card-wash],
-  [data-printing-cards] [data-card-rule] {
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
-  }
-
-  /* A dashed hairline between cards is easier to cut along than a solid rule. */
-  [data-printing-cards] [data-card-cut] {
-    outline: 0.3mm dashed #999;
-    outline-offset: 1.5mm;
-  }
-
-  /* Everything that is not a card goes away while cards are printing. */
-  [data-printing-cards] body * {
-    visibility: hidden !important;
-  }
-
-  [data-printing-cards] [data-print-cards],
-  [data-printing-cards] [data-print-cards] * {
-    visibility: visible !important;
-  }
-
-  [data-printing-cards] [data-print-cards] {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
+  .glass {
+    background: #ffffff !important;
+    backdrop-filter: none !important;
   }
 }

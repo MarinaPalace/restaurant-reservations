@@ -239,7 +239,7 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
 
   if (!loaded) {
     return (
-      <Card className="p-6">
+      <Card elevated className="p-6">
         <CardHeader
           as="h1"
           align="center"
@@ -293,7 +293,7 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
 
   if (!activeEntry) {
     return (
-      <Card className="p-5 sm:p-6">
+      <Card elevated className="p-5 sm:p-6">
         <CardHeader
           as="h1"
           eyebrow="Your reservations"
@@ -349,7 +349,7 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
   const isCancelled = reservation.status === "cancelled";
 
   return (
-    <Card className="p-5 sm:p-6">
+    <Card elevated className="p-5 sm:p-6">
       <CardHeader
         as="h1"
         eyebrow={`Reservation ${reservation.reservationNumber}`}

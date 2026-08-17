@@ -89,7 +89,7 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
   const selectedEntry = selectedDate ? findDate(selectedDate) : null;
 
   return (
-    <Card className="p-4 sm:p-6">
+    <Card elevated className="aurora p-4 sm:p-6">
       <CardHeader
         as="h1"
         flourish

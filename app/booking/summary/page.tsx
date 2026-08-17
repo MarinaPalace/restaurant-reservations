@@ -112,7 +112,7 @@ export default function SummaryPage() {
   return (
     <PageShell width="md">
       <BookingSteps current="summary" />
-      <Card className="p-5 sm:p-8">
+      <Card elevated className="aurora p-5 sm:p-8">
         <CardHeader as="h1" align="center" flourish eyebrow="Your table" title="Review your reservation" />
 
         <dl className="mt-6 grid grid-cols-2 gap-4 rounded-control bg-surface-muted p-4">

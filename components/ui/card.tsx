@@ -5,16 +5,30 @@ export function Card({
   children,
   className,
   id,
+  /**
+   * Depth and a settling entrance. Opt-in rather than default, because the
+   * admin panel uses the same card and staff do not want a working tool
+   * animating at them every time a page loads.
+   */
+  elevated = false,
   as: Component = "div",
 }: {
   children: ReactNode;
   className?: string;
   /** Anchor for scrolling a specific card into view. */
   id?: string;
+  elevated?: boolean;
   as?: "div" | "section" | "article";
 }) {
   return (
-    <Component id={id} className={cx("rounded-card border border-line bg-surface shadow-card", className)}>
+    <Component
+      id={id}
+      className={cx(
+        "rounded-card border border-line bg-surface",
+        elevated ? "settle lift" : "shadow-card",
+        className,
+      )}
+    >
       {children}
     </Component>
   );
@@ -49,17 +63,30 @@ export function CardHeader({
     >
       <div className={cx("min-w-0", align === "center" && "text-center")}>
         {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
+        {/*
+          Fluid rather than two fixed steps at a breakpoint, so the size grows
+          with the screen instead of jumping at 640px. Kept moderate because
+          this component is shared with the admin panel, where a display face
+          at hero scale would read as decoration in a working tool. Guest
+          screens that want more push it themselves.
+        */}
         <Heading
           id={titleId}
           className={cx(
             "display mt-2 text-balance text-ink",
-            Heading === "h1" ? "text-[2.1rem] sm:text-5xl" : "text-3xl sm:text-4xl",
+            Heading === "h1"
+              ? "text-[clamp(2.1rem,5.5vw,3.1rem)] tracking-[-0.015em]"
+              : "text-[clamp(1.6rem,4vw,2.25rem)]",
           )}
         >
           {title}
         </Heading>
+        {/* rule-animate draws the flourish in, so it arrives rather than appears. */}
         {flourish ? (
-          <hr className={cx("rule-gold mt-4 w-24", align === "center" && "mx-auto")} aria-hidden="true" />
+          <hr
+            className={cx("rule-gold rule-animate mt-4 w-24", align === "center" && "mx-auto")}
+            aria-hidden="true"
+          />
         ) : null}
         {description ? <div className="mt-3 text-pretty text-ink-muted">{description}</div> : null}
       </div>

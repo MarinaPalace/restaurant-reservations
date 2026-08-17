@@ -184,7 +184,7 @@ export function PremiumBooking({
 
   if (confirmed) {
     return (
-      <Card className="p-6 sm:p-8">
+      <Card elevated className="aurora sheen p-6 sm:p-8">
         <Brand stacked className="mb-6" />
         <CardHeader
           as="h1"

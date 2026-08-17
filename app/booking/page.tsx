@@ -6,7 +6,7 @@ import Link from "next/link";
 import { PageShell } from "@/components/page-shell";
 import { BookingSteps } from "@/components/booking-steps";
 import { Brand } from "@/components/brand";
-import { Card, CardHeader } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
 import { Alert } from "@/components/ui/feedback";
@@ -169,19 +169,30 @@ function BookingEntry() {
   return (
     <PageShell width="sm">
       <BookingSteps current="room" />
-      <Card className="p-6 sm:p-8">
+      {/* The one hero gesture on this screen: the panel settling into place. */}
+      <Card elevated className="aurora sheen p-6 sm:p-8">
         <Brand stacked className="mb-6" />
 
-        <CardHeader
-          as="h1"
-          align="center"
-          flourish
-          eyebrow="Reservations"
-          title="Reserve your dinner"
-          description="Your pass-key is on the card you were given — scan it, or type it below."
-        />
+        {/*
+          Set by hand rather than through CardHeader: this is the one screen
+          that gets the full editorial scale, and the shared component stays
+          moderate because the admin panel uses it too.
+        */}
+        <div className="text-center">
+          <p className="eyebrow">Reservations</p>
+          <h1 className="display mt-3 text-balance text-[clamp(2.6rem,11vw,4rem)] leading-[0.95] tracking-[-0.025em] text-ink">
+            Reserve
+            <br />
+            <span className="italic text-accent">your dinner</span>
+          </h1>
+          <hr className="rule-gold rule-animate mx-auto mt-5 w-28" aria-hidden="true" />
+          <p className="mx-auto mt-4 max-w-[22rem] text-pretty text-ink-muted">
+            Dinner is part of your stay. Your pass-key is on the card you were given — scan it, or type it
+            below.
+          </p>
+        </div>
 
-        <form onSubmit={handleSubmit} noValidate className="mt-6 space-y-6">
+        <form onSubmit={handleSubmit} noValidate className="stage mt-6 space-y-6">
           <Field
             label="Pass-key"
             error={passKeyError}

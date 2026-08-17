@@ -11,6 +11,7 @@ import { useBookingGuard, writeBookingSession } from "@/hooks/use-booking-sessio
 import { LANGUAGE_NAMES, listLanguages } from "@/lib/languages";
 import { localizeMenuCatalog } from "@/lib/menu-localization";
 import { NONE_OPTION_ID, NONE_OPTION_NAME } from "@/lib/menu-selection";
+import { Tilt } from "@/components/motion/tilt";
 import { cx } from "@/components/ui/utils";
 import type { MenuCourse, MenuOption, ReservationSelection } from "@/types/booking";
 
@@ -132,7 +133,7 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
 
   return (
     <>
-      <Card className="p-4 sm:p-6">
+      <Card elevated className="p-4 sm:p-6">
         <CardHeader
           as="h1"
           flourish
@@ -223,89 +224,140 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
             );
 
             return (
-              <Card key={course.id} id={`course-${course.id}`} as="section" className="overflow-hidden scroll-mt-4">
-                <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-start">
-                  <DishImage src={course.imageUrl} alt="" width={160} height={112} className="h-28 w-full sm:w-40" />
-                  <div className="min-w-0 flex-1">
-                    <p className="eyebrow">Course {course.order}</p>
-                    <h3 className="display mt-1 text-2xl text-ink">{course.name}</h3>
-                    {course.description ? (
-                      <p className="mt-1 text-sm text-pretty text-ink-muted">{course.description}</p>
-                    ) : null}
-                    <p className="mt-2 text-xs font-medium text-accent-ink">
-                      {course.required ? "Required" : "Optional"}
-                      {selection ? ` · ${selection.optionName} selected` : ""}
+              <Tilt key={course.id} maxTilt={2} lift={6} className="reveal rounded-card">
+              <Card id={`course-${course.id}`} as="section" className="lift overflow-hidden scroll-mt-4">
+                {/*
+                  The course announces itself full-bleed, with the title over
+                  the photograph rather than beside it. A dish deserves the
+                  width of the card; a 160px thumbnail beside a heading is a
+                  list item, not a menu.
+                */}
+                <div className="relative isolate aspect-[16/10] w-full overflow-hidden sm:aspect-[21/9]">
+                  <DishImage
+                    src={course.imageUrl}
+                    alt=""
+                    width={1200}
+                    height={640}
+                    className="absolute inset-0 !rounded-none !border-0 size-full object-cover"
+                  />
+
+                  {/* A scrim, so display type stays legible over any photograph. */}
+                  <div
+                    aria-hidden="true"
+                    className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/35 to-black/5"
+                  />
+
+                  <div className="tilt-layer absolute inset-x-0 bottom-0 p-5 sm:p-7">
+                    <p className="text-[0.6875rem] font-medium uppercase tracking-[0.24em] text-gold">
+                      Course {course.order} · {course.required ? "Required" : "Optional"}
                     </p>
+                    <h3 className="display mt-1.5 text-[clamp(1.9rem,7vw,2.9rem)] text-white drop-shadow-sm">
+                      {course.name}
+                    </h3>
+                    {course.description ? (
+                      <p className="mt-1.5 max-w-prose text-sm text-pretty text-white/85">{course.description}</p>
+                    ) : null}
+                    {selection ? (
+                      <p className="mt-3 inline-flex items-center gap-2 rounded-full border border-gold/60 bg-black/45 px-3 py-1.5 text-xs font-medium text-white backdrop-blur">
+                        <span aria-hidden="true" className="text-gold">
+                          ✓
+                        </span>
+                        {selection.optionName}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
 
-                <fieldset className="border-t border-line p-5">
+                <fieldset className="p-4 sm:p-6">
                   <legend className="sr-only">
                     {course.name} options for guest {activeGuestIndex + 1}
                   </legend>
-                  <div role="radiogroup" aria-label={`${course.name} options`} className="space-y-3">
+                  {/* Two across from `sm`, so a dish reads as a plate rather
+                      than a row in a table. */}
+                  <div
+                    role="radiogroup"
+                    aria-label={`${course.name} options`}
+                    className="grid gap-3 sm:grid-cols-2"
+                  >
                     {course.options.map((option) => {
                       const isSelected = selection?.optionId === option.id;
 
                       return (
                         <button
-                          key={option.id}
+                          // Remounting on the selected state restarts the bloom;
+                          // a CSS animation on a persistent element fires once.
+                          key={`${option.id}-${isSelected}`}
                           type="button"
                           role="radio"
                           aria-checked={isSelected}
                           onClick={() => chooseOption(activeGuestIndex, course, option)}
                           className={cx(
-                            "relative flex w-full items-start gap-3 rounded-control border p-4 text-left transition-colors",
+                            "lift group relative flex flex-col overflow-hidden rounded-card border text-left",
                             isSelected
-                              ? "border-primary bg-primary text-primary-fg"
-                              : "border-line-strong bg-surface text-ink hover:border-accent",
+                              ? "bloom border-gold bg-accent-soft"
+                              : "border-line bg-surface hover:border-accent",
                           )}
                         >
-                          <DishImage src={option.imageUrl} alt="" width={80} height={80} className="size-20 shrink-0" />
-                          <span className="min-w-0 flex-1">
-                            <span className="block pr-16 text-base font-semibold">{option.name}</span>
-                            {option.description ? (
-                              <span
-                                className={cx(
-                                  "mt-1 block text-sm text-pretty",
-                                  isSelected ? "text-primary-fg/80" : "text-ink-muted",
-                                )}
-                              >
-                                {option.description}
+                          <span className="relative block aspect-[16/9] max-h-[13rem] w-full overflow-hidden sm:aspect-[4/3] sm:max-h-none">
+                            <DishImage
+                              src={option.imageUrl}
+                              alt=""
+                              width={640}
+                              height={480}
+                              className={cx(
+                                "absolute inset-0 !rounded-none !border-0 size-full object-cover",
+                                // A slow push in on hover: the dish comes to
+                                // the reader rather than the card sliding.
+                                "transition-transform duration-[--motion-hero] ease-[--ease-settle]",
+                                "group-hover:scale-[1.06]",
+                              )}
+                            />
+
+                            {option.vegan ? (
+                              <span className="absolute left-2 top-2 z-10">
+                                <VeganBadge />
                               </span>
                             ) : null}
-                            {/* Only shown when the kitchen has filled it in. */}
-                            {option.ingredients ? (
+
+                            {/* The chosen dish is marked on the plate itself. */}
+                            {isSelected ? (
                               <span
-                                className={cx(
-                                  "mt-2 block text-xs text-pretty",
-                                  isSelected ? "text-primary-fg/80" : "text-ink-muted",
-                                )}
+                                aria-hidden="true"
+                                className="absolute right-2 top-2 z-10 flex size-8 items-center justify-center rounded-full bg-gold text-base font-bold text-primary-fg shadow-lg"
                               >
-                                <span className="font-medium">Ingredients:</span> {option.ingredients}
-                              </span>
-                            ) : null}
-                            {option.allergens.length ? (
-                              <span
-                                className={cx(
-                                  "mt-1 block text-xs",
-                                  isSelected ? "text-primary-fg/80" : "text-ink-subtle",
-                                )}
-                              >
-                                <span className="font-medium">Allergens:</span> {option.allergens.join(", ")}
+                                ✓
                               </span>
                             ) : null}
                           </span>
 
-                          {/* Top-right of the option, clear of the text. */}
-                          {option.vegan ? (
-                            <span className="absolute right-3 top-3">
-                              <VeganBadge />
+                          <span className="flex min-w-0 flex-1 flex-col p-4">
+                            <span
+                              className={cx(
+                                "display text-xl text-balance",
+                                isSelected ? "text-accent-ink" : "text-ink",
+                              )}
+                            >
+                              {option.name}
                             </span>
-                          ) : null}
 
-                          <span aria-hidden="true" className="text-lg">
-                            {isSelected ? "✓" : ""}
+                            {option.description ? (
+                              <span className="mt-1.5 block text-sm text-pretty text-ink-muted">
+                                {option.description}
+                              </span>
+                            ) : null}
+
+                            {/* Only shown when the kitchen has filled it in. */}
+                            {option.ingredients ? (
+                              <span className="mt-2 block text-xs text-pretty text-ink-muted">
+                                <span className="font-medium">Ingredients:</span> {option.ingredients}
+                              </span>
+                            ) : null}
+
+                            {option.allergens.length ? (
+                              <span className="mt-2 block text-xs text-ink-subtle">
+                                <span className="font-medium">Allergens:</span> {option.allergens.join(", ")}
+                              </span>
+                            ) : null}
                           </span>
                         </button>
                       );
@@ -316,6 +368,7 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
 
                       return (
                         <button
+                          key={`none-${isSelected}`}
                           type="button"
                           role="radio"
                           aria-checked={isSelected}
@@ -326,9 +379,9 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
                             })
                           }
                           className={cx(
-                            "flex w-full items-center gap-3 rounded-control border border-dashed p-4 text-left transition-colors",
+                            "lift flex w-full items-center gap-3 rounded-card border border-dashed p-4 text-left sm:col-span-2",
                             isSelected
-                              ? "border-primary bg-primary text-primary-fg"
+                              ? "bloom border-gold bg-accent-soft text-accent-ink"
                               : "border-line-strong bg-surface text-ink-muted hover:border-accent",
                           )}
                         >
@@ -355,6 +408,7 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
                   </div>
                 </fieldset>
               </Card>
+              </Tilt>
             );
           })}
         </div>
@@ -370,18 +424,19 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
         Sticky, so the way forward is always on screen. The complaint this
         answers was having to scroll back to the top to move to the next guest.
       */}
-      <div className="sticky bottom-0 z-10 mt-6 border-t border-line bg-canvas/95 py-3 backdrop-blur">
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <ButtonLink href="/booking/date" size="lg" className="sm:flex-1">
-            Back
+      <div className="glass sticky bottom-0 z-10 mt-6 border-t border-line py-3">
+        <div className="flex items-center gap-2">
+          <ButtonLink href="/booking/date" size="lg" className="shrink-0 px-4">
+            <span aria-hidden="true">←</span>
+            <span className="sr-only">Back to the date</span>
           </ButtonLink>
-          <Button size="lg" className="sm:flex-[2]" onClick={primaryAction.onClick} disabled={!ready}>
+          <Button size="lg" className="flex-1" onClick={primaryAction.onClick} disabled={!ready}>
             {primaryAction.label}
           </Button>
         </div>
 
         {guestCount > 1 ? (
-          <p aria-live="polite" className="mt-2 text-center text-xs text-ink-muted">
+          <p aria-live="polite" className="mt-1.5 text-center text-xs text-ink-muted">
             {allComplete
               ? "Everyone has chosen."
               : `${completedCount} of ${guestCount} guests have finished choosing.`}

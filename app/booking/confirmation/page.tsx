@@ -61,13 +61,14 @@ export default function ConfirmationPage() {
 
   return (
     <PageShell width="sm">
-      <Card className="p-6 sm:p-8">
+      {/* The moment worth marking, so this is the one card that also sheens. */}
+      <Card elevated className="aurora sheen p-6 sm:p-8">
         <BrandMark className="mx-auto size-12 text-accent" />
 
         <div className="mt-5 text-center">
           <div
             aria-hidden="true"
-            className="mx-auto mb-4 flex size-14 items-center justify-center rounded-full bg-success-soft text-3xl text-success"
+            className="pulse-gold mx-auto mb-4 flex size-14 items-center justify-center rounded-full bg-success-soft text-3xl text-success"
           >
             ✓
           </div>
@@ -75,7 +76,7 @@ export default function ConfirmationPage() {
             as="h1"
             align="center"
             flourish
-            title="Reservation confirmed"
+            title="Your table is booked"
             description="We look forward to welcoming you. Please arrive a few minutes early."
           />
         </div>

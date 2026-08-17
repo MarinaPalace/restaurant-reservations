@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { PageShell } from "@/components/page-shell";
 import { ManageReservation } from "@/app/booking/manage/manage-reservation";
 import { getMenuCatalog } from "@/lib/services/restaurant";
@@ -14,7 +15,10 @@ export default async function ManageReservationPage() {
 
   return (
     <PageShell width="md">
-      <ManageReservation menu={menu} />
+      {/* The key can arrive in the address, which useSearchParams reads. */}
+      <Suspense fallback={null}>
+        <ManageReservation menu={menu} />
+      </Suspense>
     </PageShell>
   );
 }

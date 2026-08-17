@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import Link from "next/link";
+import { manageHref } from "@/lib/pass-key-links";
 import { useRouter } from "next/navigation";
 import { MonthCalendar, type DayState } from "@/components/month-calendar";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -106,7 +107,7 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
       {ready && selectedDate && session.passKeyBookedDates.includes(selectedDate) ? (
         <Alert tone="warning" className="mt-4">
           You already have a reservation on this evening. To change it,{" "}
-          <Link href="/booking/manage" className="font-semibold underline underline-offset-2">
+          <Link href={manageHref(session.passKey)} className="font-semibold underline underline-offset-2">
             manage your reservation
           </Link>{" "}
           instead — carry on only if you are booking a second table, for another room.

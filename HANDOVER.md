@@ -406,7 +406,11 @@ thing being logged — a failed log write is reported to the console and swallow
 accounts with `reservations:restore`. See rule 2.9 — it is a real seat claim and can fail.
 
 **Guest self-service.** `/booking/manage` — **pass-key only**, no reservation number and no room
-number, then swap courses or cancel. Closes **12 hours before the sitting** for both edits and
+number, then swap courses or cancel. The key is **never typed twice**: it arrives in the link from
+whichever screen the guest came from (`manageHref` builds it) and otherwise from the session, and the
+field prefills from either. This is the one place the key is deliberately put in a URL, because a
+guest who has just scanned their card and tapped "change or cancel" has nothing in the session yet —
+it is only stored once the key has been checked. Closes **12 hours before the sitting** for both edits and
 cancellations, enforced server-side; staff are not bound by it. A booking taken by staff has no key
 attached, so the guest cannot self-serve it and reception changes it for them.
 

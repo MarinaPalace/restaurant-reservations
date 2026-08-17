@@ -9,6 +9,8 @@ import { Field, Input } from "@/components/ui/field";
 import { formatLongDate } from "@/lib/date";
 import { formatDeadline } from "@/lib/reservation-policy";
 import { NONE_OPTION_ID, NONE_OPTION_NAME } from "@/lib/menu-selection";
+import { useSearchParams } from "next/navigation";
+import { useBookingSession } from "@/hooks/use-booking-session";
 import { PASS_KEY_PREFIX, formatPassKey, isValidPassKeyFormat, normalizePassKey } from "@/lib/pass-key";
 import { cx } from "@/components/ui/utils";
 import type { MenuCourse, ReservationRecord, ReservationSelection } from "@/types/booking";
@@ -52,7 +54,21 @@ function replaceEntry(loaded: Loaded, reservation: ReservationRecord, patch: Par
  * otherwise change or cancel the booking.
  */
 export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
-  const [passKey, setPassKey] = useState("");
+  const searchParams = useSearchParams();
+  const session = useBookingSession();
+
+  /**
+   * The key arrives in the link when the guest came from a screen that already
+   * had it — after scanning a card, or from the confirmation — and otherwise
+   * from the session. Either way it is not typed again: a guest who has just
+   * scanned their card should never be asked to copy the code by hand.
+   */
+  const suppliedKey = searchParams.get("k") ?? session.passKey;
+
+  const [typedKey, setTypedKey] = useState<string | null>(null);
+  const passKey =
+    typedKey ?? (suppliedKey && isValidPassKeyFormat(suppliedKey) ? formatPassKey(suppliedKey) : "");
+  const setPassKey = setTypedKey;
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   /**
    * Which booking is open. A long stay earns more than one dinner, so a key

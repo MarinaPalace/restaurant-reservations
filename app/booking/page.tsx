@@ -13,6 +13,7 @@ import { Alert } from "@/components/ui/feedback";
 import { useBookingSession, writeBookingSession } from "@/hooks/use-booking-session";
 import { isValidRoomNumber } from "@/lib/booking-session";
 import { PASS_KEY_PREFIX, formatPassKey, isValidPassKeyFormat, normalizePassKey } from "@/lib/pass-key";
+import { manageHref } from "@/lib/pass-key-links";
 import { formatLongDate } from "@/lib/date";
 
 /**
@@ -157,6 +158,14 @@ function BookingEntry() {
   const bookedDates = verified?.bookedDates ?? session.passKeyBookedDates;
   const expiresOn = verified?.expiresOn ?? (session.passKeyExpiresOn || null);
 
+  /**
+   * Self-service carries the key across, so a guest who has just scanned a
+   * card is not asked to type it again. Taken from the box rather than the
+   * session, because the session has nothing in it until the key is checked.
+   */
+  const currentKey = normalizePassKey(passKeyValue);
+  const manageLink = manageHref(isValidPassKeyFormat(currentKey) ? currentKey : session.passKey);
+
   return (
     <PageShell width="sm">
       <BookingSteps current="room" />
@@ -275,7 +284,7 @@ function BookingEntry() {
                 <Alert tone="warning">
                   You already have a reservation on{" "}
                   {bookedDates.map((date) => formatLongDate(date)).join(", ")}. To change it,{" "}
-                  <Link href="/booking/manage" className="font-semibold underline underline-offset-2">
+                  <Link href={manageLink} className="font-semibold underline underline-offset-2">
                     manage your reservation
                   </Link>{" "}
                   instead. Carry on only if you are booking a second table.
@@ -291,7 +300,7 @@ function BookingEntry() {
 
         <p className="mt-6 text-center text-sm text-ink-muted">
           Already booked?{" "}
-          <Link href="/booking/manage" className="font-medium text-accent underline underline-offset-2">
+          <Link href={manageLink} className="font-medium text-accent underline underline-offset-2">
             Change or cancel your reservation
           </Link>
         </p>

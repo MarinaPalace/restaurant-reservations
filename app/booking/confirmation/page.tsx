@@ -5,7 +5,8 @@ import { PageShell } from "@/components/page-shell";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/feedback";
-import { useConfirmation } from "@/hooks/use-booking-session";
+import { useBookingSession, useConfirmation } from "@/hooks/use-booking-session";
+import { manageHref } from "@/lib/pass-key-links";
 import { buildGoogleCalendarUrl, buildIcsFile, describeReservationTime } from "@/lib/calendar";
 import { formatContact, MESSAGING_APP_LABELS } from "@/lib/contact";
 import { formatLongDate } from "@/lib/date";
@@ -18,6 +19,8 @@ import { formatLongDate } from "@/lib/date";
  */
 export default function ConfirmationPage() {
   const reservation = useConfirmation();
+  // The key they booked with, so changing it later needs no typing.
+  const session = useBookingSession();
 
   /** Hands the guest an .ics file for any calendar that is not Google. */
   const downloadIcs = () => {
@@ -173,13 +176,13 @@ export default function ConfirmationPage() {
           <Button variant="secondary" size="lg" className="flex-1" onClick={() => window.print()}>
             Print
           </Button>
-          <ButtonLink href="/booking/manage" size="lg" className="flex-1">
+          <ButtonLink href={manageHref(session.passKey)} size="lg" className="flex-1">
             Change or cancel
           </ButtonLink>
         </div>
 
         <p className="mt-3 text-center text-xs text-ink-subtle" data-print="hide">
-          Keep your reservation number — you will need it, with your room number, to make changes.
+          Keep your pass-key — it is what you use to change or cancel this booking.
         </p>
       </Card>
     </PageShell>

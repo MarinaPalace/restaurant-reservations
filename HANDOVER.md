@@ -420,9 +420,14 @@ what it was. Not to be confused with the blank column below, which is a differen
 
 **Dishes nobody ordered.** Every menu option keeps a column on screen, so staff can see the whole
 menu and satisfy themselves a dish really has no takers — but a column of blanks takes no space on
-the printed sheet. Zeros are deliberately blanked rather than shown, which means an unordered dish
-looked like a duplicate of the column beside it; that was reported as a phantom column and is not
-one. See `[data-unordered]` in `globals.css`.
+the printed sheet. See `[data-unordered]` in `globals.css`.
+
+**A cell with nothing in it holds a dash, not a blank and not a zero.** A zero competes with the
+counts, because the eye stops on every digit; a blank is worse, because reading a wide row across
+white space is how a waiter ends up carrying the right dish to the wrong table — which is what
+happens when two or three of them are at the pass at once asking what to take. The dash holds the
+place and is quiet enough to skip. It is also why an unordered dish used to look like a duplicate
+of the column beside it and was reported as a phantom column.
 
 **Service sheet & printing.** Two layouts: per-table (default, the prep matrix) and per-guest (the
 plating list). Print is **A4 landscape**, course-grouping row dropped, dish names trimmed to three

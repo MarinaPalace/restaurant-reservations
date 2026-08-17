@@ -173,8 +173,9 @@ UTF-8 BOM so accented and Cyrillic dish names survive the open.
   together appear as a single line with every room listed in the Rooms column ("HA3 + L10") and
   their choices already added together, so nothing has to be summed by eye. Then a column for
   **every option**, grouped under its course, and a **Total to prepare** row closing the sheet.
-  Cancelled bookings are excluded from the counts. Cells showing zero are left blank so the counts
-  that matter stand out.
+  Cancelled bookings are excluded from the counts. A dish that table is not having shows a dash
+  rather than a zero or an empty cell, so a row can be read straight across at the pass without
+  slipping a column.
 
 The columns come from the menu that evening is served from — the everyday one, or the premium one
 for an invitation evening. A dish nobody has ordered still keeps its column on screen, so you can

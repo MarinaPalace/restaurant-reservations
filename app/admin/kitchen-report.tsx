@@ -453,8 +453,17 @@ export function KitchenReport({
                           row.counts[column.id] ? "font-semibold text-ink" : "text-ink-subtle",
                         )}
                       >
-                        {/* Blank rather than 0, so the counts that matter stand out. */}
-                        {row.counts[column.id] || ""}
+                        {/*
+                          A dash, not a blank, and not a 0.
+
+                          A 0 competes with the counts — the eye stops on every
+                          digit. A blank cell is worse: reading a row of a wide
+                          table across white space, with two or three waiters
+                          waiting to be told what to carry, it is easy to slip a
+                          column and take the wrong dish to the wrong table. The
+                          dash holds the place and is quiet enough to skip.
+                        */}
+                        {row.counts[column.id] || <span className="text-ink-subtle">–</span>}
                       </td>
                     ))}
                     <td className="px-3 py-2">

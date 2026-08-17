@@ -119,7 +119,25 @@ Two rules keep it honest, both in the print block of `app/globals.css`:
 left, middle, hard right — and at a few different dish counts. It has been
 reported fixed twice before it actually was.
 
-### 2.9 A pass-key is spent before the booking it pays for is written
+### 2.9 Nothing in the suite looks at print CSS
+
+Types, lint, 314 tests and the build all passed while the entire print
+stylesheet was missing. Rewriting the motion layer, `globals.css` was spliced on
+a comment marker and only the head kept — and that marker sat *before* the print
+block, so 239 lines went silently: `[data-print-area]`, the A4 landscape page,
+the scroll-clip fix, the percentage column widths, and the whole pass-key card
+print context. It reached production.
+
+Two rules follow.
+
+**Never splice this file on a text marker.** Edit the region you mean. Splicing
+is a truncation with extra steps, and it deleted work from three commits.
+
+**Print is a feature with no automated cover.** After touching `globals.css`,
+check `grep -c data-print app/globals.css` is still in the twenties, and print
+the service sheet and a pass-key card by hand. Nothing else will tell you.
+
+### 2.10 A pass-key is spent before the booking it pays for is written
 
 `consumePassKey` matches **only a key that is still active** and flips it to `used` in one
 conditional update. That single write is the whole mechanism: two requests arriving together with
@@ -134,7 +152,7 @@ Releasing is filtered by reservation number as well as key id, so a late request
 that has since been spent on something else. `lib/db/local-restore.test.ts` and the Mongo suite
 cover both directions, including two simultaneous bookings with one code.
 
-### 2.10 Restoring a cancellation is a fresh claim on the seats
+### 2.11 Restoring a cancellation is a fresh claim on the seats
 
 Cancelling gives the seats back to the evening. Somebody else may have taken them, or the evening
 may have been closed since — so `restoreReservation` claims them again with the same conditional
@@ -145,7 +163,7 @@ hands its claimed seats straight back.
 Never "just flip the status back to confirmed". That was the obvious implementation and it is
 wrong.
 
-### 2.11 A key belongs to one flow, and every gate must know it
+### 2.12 A key belongs to one flow, and every gate must know it
 
 `kind` is `standard` or `premium`. **Three** places check it, and each was
 found the hard way:
@@ -162,7 +180,7 @@ found the hard way:
 Adding a gate is not enough. Every gate in front of it has to learn the rule
 too, or the new one only moves where the failure happens.
 
-### 2.12 No `setState` synchronously inside an effect
+### 2.13 No `setState` synchronously inside an effect
 
 React 19's lint rule is on and treated as an error. Data that does not depend on client state is
 fetched **on the server** and passed as props. `sessionStorage` is read through
@@ -251,6 +269,12 @@ distinguishable from "has not chosen yet". Never counted in prep totals.
 **Shared tables.** Rooms dining together pass a reservation number to each other; the service sheet
 shows them as **one row** with all rooms listed and choices already combined. Staff assign a table
 number and it applies to everyone on it.
+
+**Dishes nobody ordered.** Every menu option keeps a column on screen, so staff can see the whole
+menu and satisfy themselves a dish really has no takers — but a column of blanks takes no space on
+the printed sheet. Zeros are deliberately blanked rather than shown, which means an unordered dish
+looked like a duplicate of the column beside it; that was reported as a phantom column and is not
+one. See `[data-unordered]` in `globals.css`.
 
 **Service sheet & printing.** Two layouts: per-table (default, the prep matrix) and per-guest (the
 plating list). Print is **A4 landscape**, course-grouping row dropped, dish names trimmed to three

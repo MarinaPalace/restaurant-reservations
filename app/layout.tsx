@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Cormorant_Garamond, Geist, Geist_Mono } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import { THEME_INIT_SCRIPT } from "@/components/theme-toggle";
 import { I18nProvider } from "@/components/i18n-provider";
 import { getDictionary } from "@/lib/i18n";
@@ -76,6 +77,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
         <I18nProvider language={language} dictionary={dictionary}>
           {children}
         </I18nProvider>
+        <Analytics />
       </body>
     </html>
   );

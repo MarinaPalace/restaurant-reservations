@@ -48,7 +48,7 @@ export default function ConfirmationPage() {
     ? selectedAddOns
     : Object.fromEntries((reservation?.addOns ?? []).map((addOn) => [addOn.courseId, addOn.optionId]));
 
-  const saveAddOns = async () => {
+  const saveAddOns = async (nextAddOns = displayedAddOns) => {
     if (!reservation || savingAddOns) {
       return;
     }
@@ -62,7 +62,7 @@ export default function ConfirmationPage() {
         body: JSON.stringify({
           passKey: session.passKey,
           reservationNumber: reservation.reservationNumber,
-          addOns: Object.entries(displayedAddOns)
+          addOns: Object.entries(nextAddOns)
             .filter(([, optionId]) => optionId)
             .map(([courseId, optionId]) => ({ courseId, optionId })),
         }),
@@ -236,11 +236,14 @@ export default function ConfirmationPage() {
                         checked={!displayedAddOns[course.id]}
                         onChange={() => {
                           setChangedAddOns(true);
+                          const next = { ...displayedAddOns };
+                          delete next[course.id];
                           setSelectedAddOns((current) => {
                             const next = { ...current };
                             delete next[course.id];
                             return next;
                           });
+                          void saveAddOns(next);
                         }}
                         className="size-4 accent-[var(--primary)]"
                       />
@@ -258,7 +261,9 @@ export default function ConfirmationPage() {
                             checked={displayedAddOns[course.id] === option.id}
                             onChange={() => {
                               setChangedAddOns(true);
-                              setSelectedAddOns((current) => ({ ...current, [course.id]: option.id }));
+                              const next = { ...displayedAddOns, [course.id]: option.id };
+                              setSelectedAddOns(next);
+                              void saveAddOns(next);
                             }}
                             className="size-4 accent-[var(--primary)]"
                           />
@@ -275,7 +280,7 @@ export default function ConfirmationPage() {
               ))}
             </div>
             <div className="mt-4 flex flex-wrap items-center gap-3">
-              <Button variant="secondary" onClick={saveAddOns} loading={savingAddOns} loadingLabel="Saving…">
+              <Button variant="secondary" onClick={() => void saveAddOns()} loading={savingAddOns} loadingLabel="Saving…">
                 Save product choices
               </Button>
               {addOnNotice ? <span className="text-sm text-ink-muted" role="status">{addOnNotice}</span> : null}

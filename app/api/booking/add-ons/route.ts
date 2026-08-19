@@ -27,7 +27,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "We could not find that reservation." }, { status: 404 });
     }
 
-    const reservation = await getReservationByNumber(parsed.data.reservationNumber ?? "");
+    const reservation = await getReservationByNumber(parsed.data.reservationNumber);
     const belongsToPassKey =
       reservation?.passKeyId === passKey.id ||
       passKey.reservationNumbers.includes(reservation?.reservationNumber ?? "");

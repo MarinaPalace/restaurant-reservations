@@ -108,6 +108,7 @@ export const updateSelectionsSchema = manageReservationSchema.extend({
 });
 
 export const updateAddOnsSchema = manageReservationSchema.extend({
+  reservationNumber: z.string().trim().min(1).max(40),
   addOns: z.array(
     z.object({
       courseId: z.string().min(1),

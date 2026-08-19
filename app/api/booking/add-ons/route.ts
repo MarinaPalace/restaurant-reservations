@@ -32,7 +32,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "We could not find that reservation." }, { status: 404 });
     }
 
-    const menu = await getMenuCatalog();
+    const menu = await getMenuCatalog("en", "standard", true);
     const addOnCourses = menu.filter((course) => course.addOn);
     const seenCourses = new Set<string>();
     const addOns: ReservationAddOn[] = [];

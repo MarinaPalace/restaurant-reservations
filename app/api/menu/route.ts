@@ -10,8 +10,9 @@ export async function GET(request: Request) {
 
     const requested = new URL(request.url).searchParams.get("menu");
     const menu = menuKindSchema.safeParse(requested).data ?? "standard";
+    const includeAddOns = new URL(request.url).searchParams.get("addOns") === "true";
 
-    return NextResponse.json(await getMenuCatalog(safeLanguage, menu));
+    return NextResponse.json(await getMenuCatalog(safeLanguage, menu, includeAddOns));
   } catch (error) {
     console.error("[menu] failed to load menu", error);
     return NextResponse.json({ error: "Unable to load menu." }, { status: 500 });

@@ -126,11 +126,15 @@ async function loadFullCatalog(): Promise<MenuCourse[]> {
  * Both this and the admin editor now read the same store, so a saved menu
  * change is immediately visible in the booking flow.
  */
-export async function getMenuCatalog(language = "en", menu: MenuKind = "standard"): Promise<MenuCourse[]> {
+export async function getMenuCatalog(
+  language = "en",
+  menu: MenuKind = "standard",
+  includeAddOns = false,
+): Promise<MenuCourse[]> {
   const catalog = await getFullMenuCatalog(menu);
 
   const visible = catalog
-    .filter((course) => course.active)
+    .filter((course) => course.active && (includeAddOns || !course.addOn))
     .map((course) => ({
       ...course,
       // Uploaded photos become cacheable URLs rather than inline base64, which

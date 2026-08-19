@@ -38,7 +38,7 @@ export default function ConfirmationPage() {
       return;
     }
 
-    fetch("/api/menu")
+    fetch("/api/menu?addOns=true")
       .then((response) => (response.ok ? response.json() : null))
       .then((data) => setAddOnCourses(Array.isArray(data) ? data.filter((course: MenuCourse) => course.addOn) : []))
       .catch(() => setAddOnCourses([]));

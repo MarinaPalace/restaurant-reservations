@@ -28,7 +28,11 @@ export async function POST(request: Request) {
     }
 
     const reservation = await getReservationByNumber(parsed.data.reservationNumber ?? "");
-    if (!reservation || reservation.passKeyId !== passKey.id || reservation.status !== "confirmed") {
+    const belongsToPassKey =
+      reservation?.passKeyId === passKey.id ||
+      passKey.reservationNumbers.includes(reservation?.reservationNumber ?? "");
+
+    if (!reservation || !belongsToPassKey || reservation.status !== "confirmed") {
       return NextResponse.json({ error: "We could not find that reservation." }, { status: 404 });
     }
 

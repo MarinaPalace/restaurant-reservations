@@ -123,6 +123,7 @@ export function MenuEditor({
         description: "",
         required: true,
         active: true,
+        addOn: false,
         imageUrl: "",
         translations: { en: { name: "New course", description: "" } },
         options: [],
@@ -442,6 +443,21 @@ export function MenuEditor({
                     />
                     Visible to guests
                   </label>
+                  <label className="flex items-center gap-2 text-sm font-medium text-ink">
+                    <input
+                      type="checkbox"
+                      className="size-4 accent-[var(--primary)]"
+                      checked={Boolean(course.addOn)}
+                      onChange={(event) =>
+                        updateCourse(course.id, (current) => ({
+                          ...current,
+                          addOn: event.target.checked,
+                          required: event.target.checked ? false : current.required,
+                        }))
+                      }
+                    />
+                    Offer after confirmation
+                  </label>
                 </div>
 
                 <div className="mt-4">
@@ -607,6 +623,45 @@ export function MenuEditor({
                           </div>
 
                           <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
+                            <div className="flex flex-wrap items-center gap-3">
+                              <Field label="Price">
+                                {(fieldProps) => (
+                                  <Input
+                                    {...fieldProps}
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={option.price ?? 0}
+                                    onChange={(event) =>
+                                      updateOption(course.id, option.id, (current) => ({
+                                        ...current,
+                                        price: Math.max(0, Number(event.target.value) || 0),
+                                      }))
+                                    }
+                                    className="w-28"
+                                  />
+                                )}
+                              </Field>
+                              <Field label="Discount %">
+                                {(fieldProps) => (
+                                  <Input
+                                    {...fieldProps}
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    step="1"
+                                    value={option.discountPercent ?? 0}
+                                    onChange={(event) =>
+                                      updateOption(course.id, option.id, (current) => ({
+                                        ...current,
+                                        discountPercent: Math.min(100, Math.max(0, Number(event.target.value) || 0)),
+                                      }))
+                                    }
+                                    className="w-28"
+                                  />
+                                )}
+                              </Field>
+                            </div>
                             <label className="flex items-center gap-2 text-sm font-medium text-ink">
                               <input
                                 type="checkbox"

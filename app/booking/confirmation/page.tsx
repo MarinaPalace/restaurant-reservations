@@ -5,13 +5,15 @@ import { PageShell } from "@/components/page-shell";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/feedback";
-import { useBookingSession, useConfirmation } from "@/hooks/use-booking-session";
+import { useBookingSession, useConfirmation, storeConfirmation } from "@/hooks/use-booking-session";
+import { useEffect, useState } from "react";
 import { useI18n } from "@/components/i18n-provider";
 import { format, localeOf } from "@/lib/i18n";
 import { manageHref } from "@/lib/pass-key-links";
 import { buildGoogleCalendarUrl, buildIcsFile, describeReservationTime } from "@/lib/calendar";
 import { formatContact, MESSAGING_APP_LABELS } from "@/lib/contact";
 import { formatLongDate } from "@/lib/date";
+import type { MenuCourse, ReservationRecord } from "@/types/booking";
 
 /**
  * The reservation is read through the session store rather than during render:
@@ -25,6 +27,60 @@ export default function ConfirmationPage() {
   const session = useBookingSession();
   const { t, language } = useI18n();
   const locale = localeOf(language);
+  const [addOnCourses, setAddOnCourses] = useState<MenuCourse[]>([]);
+  const [selectedAddOns, setSelectedAddOns] = useState<Record<string, string>>({});
+  const [savingAddOns, setSavingAddOns] = useState(false);
+  const [addOnNotice, setAddOnNotice] = useState("");
+  const [changedAddOns, setChangedAddOns] = useState(false);
+
+  useEffect(() => {
+    if (!reservation) {
+      return;
+    }
+
+    fetch("/api/menu")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => setAddOnCourses(Array.isArray(data) ? data.filter((course: MenuCourse) => course.addOn) : []))
+      .catch(() => setAddOnCourses([]));
+  }, [reservation]);
+
+  const displayedAddOns = changedAddOns
+    ? selectedAddOns
+    : Object.fromEntries((reservation?.addOns ?? []).map((addOn) => [addOn.courseId, addOn.optionId]));
+
+  const saveAddOns = async () => {
+    if (!reservation || savingAddOns) {
+      return;
+    }
+
+    setSavingAddOns(true);
+    setAddOnNotice("");
+    try {
+      const response = await fetch("/api/booking/add-ons", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          passKey: session.passKey,
+          reservationNumber: reservation.reservationNumber,
+          addOns: Object.entries(displayedAddOns)
+            .filter(([, optionId]) => optionId)
+            .map(([courseId, optionId]) => ({ courseId, optionId })),
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setAddOnNotice(data.error ?? "Unable to save product choices.");
+        return;
+      }
+
+      storeConfirmation(data.reservation as ReservationRecord);
+      setAddOnNotice("Product choices saved.");
+    } catch {
+      setAddOnNotice("Unable to save product choices.");
+    } finally {
+      setSavingAddOns(false);
+    }
+  };
 
   /** Hands the guest an .ics file for any calendar that is not Google. */
   const downloadIcs = () => {
@@ -51,7 +107,6 @@ export default function ConfirmationPage() {
           <EmptyState
             title={t.confirmation.missingTitle}
             description={t.confirmation.missingDescription}
-            action={<ButtonLink href="/booking">{t.confirmation.startAgain}</ButtonLink>}
           />
         </Card>
       </PageShell>
@@ -163,6 +218,70 @@ export default function ConfirmationPage() {
             </Button>
           </div>
         </div>
+
+        {addOnCourses.length > 0 ? (
+          <section className="mt-5 rounded-control border border-accent/40 bg-accent-soft p-4" data-print="hide">
+            <p className="eyebrow">Make your dinner yours</p>
+            <h2 className="mt-1 text-lg font-semibold text-ink">Add a drink or extra</h2>
+            <p className="mt-1 text-sm text-ink-muted">Choose any extras you would like prepared for your table.</p>
+            <div className="mt-4 space-y-3">
+              {addOnCourses.map((course) => (
+                <fieldset key={course.id}>
+                  <legend className="text-sm font-semibold text-ink">{course.name}</legend>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    <label className="flex min-h-11 items-center gap-3 rounded-control border border-line bg-surface px-3 py-2 text-sm">
+                      <input
+                        type="radio"
+                        name={`add-on-${course.id}`}
+                        checked={!displayedAddOns[course.id]}
+                        onChange={() => {
+                          setChangedAddOns(true);
+                          setSelectedAddOns((current) => {
+                            const next = { ...current };
+                            delete next[course.id];
+                            return next;
+                          });
+                        }}
+                        className="size-4 accent-[var(--primary)]"
+                      />
+                      <span className="font-medium text-ink">No extra</span>
+                    </label>
+                    {course.options.map((option) => {
+                      const price = Number(option.price ?? 0);
+                      const discount = Number(option.discountPercent ?? 0);
+                      const finalPrice = Math.round(price * (1 - discount / 100) * 100) / 100;
+                      return (
+                        <label key={option.id} className="flex min-h-11 items-center gap-3 rounded-control border border-line bg-surface px-3 py-2 text-sm">
+                          <input
+                            type="radio"
+                            name={`add-on-${course.id}`}
+                            checked={displayedAddOns[course.id] === option.id}
+                            onChange={() => {
+                              setChangedAddOns(true);
+                              setSelectedAddOns((current) => ({ ...current, [course.id]: option.id }));
+                            }}
+                            className="size-4 accent-[var(--primary)]"
+                          />
+                          <span className="flex-1 font-medium text-ink">{option.name}</span>
+                          <span className="text-right text-xs text-ink-muted">
+                            {discount > 0 ? <><s>{price.toFixed(2)}</s>{" "}</> : null}
+                            {finalPrice.toFixed(2)}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </fieldset>
+              ))}
+            </div>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <Button variant="secondary" onClick={saveAddOns} loading={savingAddOns} loadingLabel="Saving…">
+                Save product choices
+              </Button>
+              {addOnNotice ? <span className="text-sm text-ink-muted" role="status">{addOnNotice}</span> : null}
+            </div>
+          </section>
+        ) : null}
 
         <div className="mt-5 space-y-3">
           {guestGroups.map(({ guestIndex, entries }) =>

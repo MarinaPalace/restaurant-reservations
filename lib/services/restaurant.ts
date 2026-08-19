@@ -70,6 +70,8 @@ function toMenuOption(option: MongoDocument): MenuOption {
     imageUrl: typeof option.imageUrl === "string" ? option.imageUrl : "",
     ingredients: typeof option.ingredients === "string" ? option.ingredients : "",
     vegan: Boolean(option.vegan),
+    price: Number(option.price ?? 0),
+    discountPercent: Number(option.discountPercent ?? 0),
     translations: (option.translations as MenuCourse["translations"]) ?? {},
   };
 }
@@ -83,6 +85,7 @@ function toMenuCourse(course: MongoDocument, options: MongoDocument[]): MenuCour
     description: String(course.description ?? ""),
     required: Boolean(course.required),
     active: Boolean(course.active),
+    addOn: Boolean(course.addOn),
     imageUrl: typeof course.imageUrl === "string" ? course.imageUrl : "",
     translations: (course.translations as MenuCourse["translations"]) ?? {},
     options: options.filter((option) => String(option.courseId) === String(course._id)).map(toMenuOption),
@@ -252,6 +255,7 @@ export async function saveMenuCatalog(courses: MenuCourse[], menu: MenuKind = "s
       description: course.description,
       required: course.required,
       active: course.active,
+      addOn: Boolean(course.addOn),
       imageUrl: course.imageUrl ?? "",
       translations: course.translations ?? {},
     };
@@ -278,6 +282,8 @@ export async function saveMenuCatalog(courses: MenuCourse[], menu: MenuKind = "s
         imageUrl: option.imageUrl ?? "",
         ingredients: option.ingredients ?? "",
         vegan: option.vegan ?? false,
+        price: Math.max(0, Number(option.price ?? 0)),
+        discountPercent: Math.min(100, Math.max(0, Number(option.discountPercent ?? 0))),
         translations: option.translations ?? {},
       };
 

@@ -36,6 +36,10 @@ export type MenuOption = {
   ingredients?: string;
   /** Shown to guests as a badge. Absent on older options, which reads false. */
   vegan?: boolean;
+  /** Price in the restaurant's currency. Add-ons may be free when omitted. */
+  price?: number;
+  /** Discount shown and applied to add-ons, from 0 to 100 percent. */
+  discountPercent?: number;
   translations?: Record<string, MenuTranslation>;
 };
 
@@ -48,6 +52,8 @@ export type MenuCourse = {
   description: string;
   required: boolean;
   active: boolean;
+  /** When true, this optional course is offered after a reservation is confirmed. */
+  addOn?: boolean;
   imageUrl?: string;
   translations?: Record<string, MenuTranslation>;
   options: MenuOption[];
@@ -84,6 +90,16 @@ export type ReservationSelection = {
   courseName: string;
   optionId: string;
   optionName: string;
+};
+
+export type ReservationAddOn = {
+  courseId: string;
+  courseName: string;
+  optionId: string;
+  optionName: string;
+  price: number;
+  discountPercent: number;
+  finalPrice: number;
 };
 
 export type ReservationStatus = "confirmed" | "cancelled";
@@ -124,6 +140,7 @@ export type ReservationRecord = {
   guestCount: number;
   date: string;
   selections: ReservationSelection[];
+  addOns?: ReservationAddOn[];
   /** How to reach the guest. Optional so bookings made before this existed still load. */
   contact?: ReservationContact;
   /** Arrival time copied from the date when the booking was made. */
@@ -357,6 +374,41 @@ export type PassKeyRecord = {
   revokedAt?: string;
   /** Why a short stay was allowed a key, or anything else worth recording. */
   note?: string;
+  /**
+   * Where an invitation is sent.
+   *
+   * Only invitation keys have one: an in-house guest is handed a printed card at
+   * the desk, so there is nobody to email. Kept on the key rather than looked up
+   * elsewhere because it is the address the invitation actually went to, which
+   * has to stay readable afterwards — "did she ever get it, and where?" is the
+   * question reception asks, and a corrected typo must not erase the answer.
+   */
+  guestEmail?: string;
+  /** The last attempt to deliver this invitation. Absent = never sent. */
+  invitation?: InvitationDelivery;
+};
+
+/**
+ * What happened the last time an invitation was sent, and how many times it has
+ * been tried.
+ *
+ * One record rather than a list: reception needs "did it go, and where to?", not
+ * an audit trail — the audit log already carries a line per send. `attempts`
+ * survives because a key that has been emailed four times is usually a sign the
+ * address is wrong, which is worth seeing at the desk.
+ */
+export type InvitationDelivery = {
+  /** Email today. Viber, Telegram and WhatsApp are the reason this is named. */
+  channel: "email";
+  /** The address it was sent to, as sent. */
+  to: string;
+  at: string;
+  status: "sent" | "failed";
+  /** The provider's id for the message, for chasing it up with them. */
+  messageId?: string;
+  /** Why it failed, in the provider's words. Never shown to a guest. */
+  error?: string;
+  attempts: number;
 };
 
 /* ------------------------------------------------------------------ *

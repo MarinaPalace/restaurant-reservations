@@ -16,6 +16,7 @@ import {
   updateLocalReservationDetails,
   setLocalReservationTable,
   updateLocalReservationSelections,
+  updateLocalReservationAddOns,
   upsertLocalDate,
 } from "@/lib/db/local-store";
 import { getRestaurantDate } from "@/lib/services/restaurant";
@@ -25,6 +26,7 @@ import {
   type ReservationContact,
   type ReservationRecord,
   type ReservationSelection,
+  type ReservationAddOn,
 } from "@/types/booking";
 
 export class BookingError extends Error {
@@ -80,6 +82,7 @@ type MongoReservationDocument = {
   kind?: unknown;
   guestName?: unknown;
   selections?: unknown;
+  addOns?: unknown;
   contact?: unknown;
   time?: unknown;
   endTime?: unknown;
@@ -108,6 +111,7 @@ function toReservationRecord(document: MongoReservationDocument): ReservationRec
     guestCount: Number(document.guestCount),
     date: String(document.date),
     selections: Array.isArray(document.selections) ? (document.selections as ReservationSelection[]) : [],
+    addOns: Array.isArray(document.addOns) ? (document.addOns as ReservationAddOn[]) : undefined,
     contact: (document.contact as ReservationContact | undefined) ?? undefined,
     time: document.time ? String(document.time) : undefined,
     endTime: document.endTime ? String(document.endTime) : undefined,
@@ -590,6 +594,24 @@ export async function updateReservationSelections(
   const updated = await ReservationModel.findOneAndUpdate(
     { reservationNumber },
     { $set: { selections } },
+    { returnDocument: "after" },
+  ).lean();
+
+  return updated ? toReservationRecord(updated as MongoReservationDocument) : null;
+}
+
+export async function updateReservationAddOns(
+  reservationNumber: string,
+  addOns: ReservationAddOn[],
+): Promise<ReservationRecord | null> {
+  if (!isMongoConfigured()) {
+    return updateLocalReservationAddOns(reservationNumber, addOns);
+  }
+
+  await connectToDatabase();
+  const updated = await ReservationModel.findOneAndUpdate(
+    { reservationNumber },
+    { $set: { addOns } },
     { returnDocument: "after" },
   ).lean();
 

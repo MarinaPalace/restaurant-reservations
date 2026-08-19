@@ -13,6 +13,19 @@ const selectionSchema = new Schema(
   { _id: false },
 );
 
+const addOnSchema = new Schema(
+  {
+    courseId: { type: String, required: true },
+    courseName: { type: String, required: true },
+    optionId: { type: String, required: true },
+    optionName: { type: String, required: true },
+    price: { type: Number, required: true, min: 0 },
+    discountPercent: { type: Number, required: true, min: 0, max: 100 },
+    finalPrice: { type: Number, required: true, min: 0 },
+  },
+  { _id: false },
+);
+
 const contactSchema = new Schema(
   {
     method: { type: String, enum: ["email", "phone"], required: true },
@@ -54,6 +67,7 @@ const reservationSchema = new Schema(
     guestCount: { type: Number, required: true },
     date: { type: String, required: true, index: true },
     selections: [selectionSchema],
+    addOns: [addOnSchema],
     // Optional so reservations taken before contact details existed still load.
     contact: { type: contactSchema, required: false },
     time: { type: String },

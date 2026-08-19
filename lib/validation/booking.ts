@@ -107,6 +107,15 @@ export const updateSelectionsSchema = manageReservationSchema.extend({
   selections: z.array(reservationSelectionSchema).min(1),
 });
 
+export const updateAddOnsSchema = manageReservationSchema.extend({
+  addOns: z.array(
+    z.object({
+      courseId: z.string().min(1),
+      optionId: z.string().min(1),
+    }),
+  ).max(50),
+});
+
 /**
  * Staff booking form. Contact details are optional here: a reservation taken
  * over the phone may not have them, whereas a guest booking online always does.
@@ -151,6 +160,7 @@ export const menuCatalogSchema = z.object({
         description: z.string().default(""),
         required: z.boolean().default(true),
         active: z.boolean().default(true),
+        addOn: z.boolean().default(false),
         imageUrl: z.string().default(""),
         translations: z.record(z.string(), menuTranslationSchema).optional(),
         options: z.array(
@@ -165,6 +175,8 @@ export const menuCatalogSchema = z.object({
             // Optional so a menu saved without them keeps whatever it had.
             ingredients: z.string().max(500).optional(),
             vegan: z.boolean().optional(),
+            price: z.number().min(0).max(1_000_000).optional(),
+            discountPercent: z.number().min(0).max(100).optional(),
             translations: z.record(z.string(), menuTranslationSchema).optional(),
           }),
         ),
@@ -248,6 +260,21 @@ export const updateStaffUserSchema = z.object({
  * Pass-keys
  * ------------------------------------------------------------------ */
 
+/**
+ * An invitation's email address.
+ *
+ * Deliberately permissive beyond the shape: guests come from everywhere, and a
+ * stricter pattern rejects addresses that work. The provider is the real judge,
+ * and it answers with a reason we record and show.
+ */
+export const guestEmailSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(3)
+  .max(320)
+  .refine((value) => /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(value), "Please enter a valid email address.");
+
 export const issuePassKeySchema = z.object({
   /** `premium` issues an invitation key instead of an in-house one. */
   kind: menuKindSchema.optional(),
@@ -255,6 +282,13 @@ export const issuePassKeySchema = z.object({
   reservationRef: z.string().trim().max(20).optional(),
   roomNumber: z.string().trim().max(10).optional(),
   guestName: z.string().trim().max(120).optional(),
+  /**
+   * Where an invitation is sent. Invitations only: an in-house guest is handed
+   * a card at the desk, and the hotel's address for them is not ours to use.
+   */
+  guestEmail: guestEmailSchema.optional(),
+  /** Send the invitation as soon as it is issued. Requires an address. */
+  sendInvitation: z.boolean().optional(),
   /** Arrival. The nights, and so the dinners, follow from this and expiry. */
   checkInOn: dateKeySchema.optional(),
   /**
@@ -278,7 +312,20 @@ export const issuePassKeySchema = z.object({
    * the key and in the audit log, so an exception is always traceable.
    */
   allowShortStay: z.boolean().optional(),
-});
+})
+  /**
+   * Asking to send without an address is a slip worth catching here rather than
+   * halfway through issuing, and asking to email an in-house key is a
+   * misunderstanding of what the two kinds are.
+   */
+  .refine((row) => !row.sendInvitation || Boolean(row.guestEmail), {
+    message: "Add an email address, or untick sending the invitation.",
+    path: ["guestEmail"],
+  })
+  .refine((row) => !row.sendInvitation || row.kind === "premium", {
+    message: "Only invitations are emailed. An in-house pass-key is printed as a card.",
+    path: ["sendInvitation"],
+  });
 
 /**
  * A morning's check-ins, one row each.
@@ -295,6 +342,11 @@ export const issuePassKeyBatchSchema = z.object({
  * Editing a key already in a guest's hand — the stay-extension case. Only the
  * things that can legitimately change once it is printed.
  */
+/** Sending an invitation again, optionally to a corrected address. */
+export const sendInvitationSchema = z.object({
+  email: guestEmailSchema.optional(),
+});
+
 export const updatePassKeySchema = z.object({
   /**
    * Rooms change often, and a reference typed wrong at check-in has to be
@@ -303,6 +355,8 @@ export const updatePassKeySchema = z.object({
   roomNumber: z.string().trim().max(10).nullable().optional(),
   reservationRef: z.string().trim().max(20).nullable().optional(),
   guestName: z.string().trim().max(120).nullable().optional(),
+  /** Correcting the address an invitation bounced off. */
+  guestEmail: guestEmailSchema.nullable().optional(),
   expiresOn: dateKeySchema.nullable().optional(),
   maxUses: z.number().int().min(1).max(MAX_USES_CAP).optional(),
   /** Party sizes change before arrival, so this stays editable. */

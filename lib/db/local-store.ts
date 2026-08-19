@@ -379,6 +379,23 @@ export async function updateLocalReservationSelections(
   });
 }
 
+export async function updateLocalReservationAddOns(
+  reservationNumber: string,
+  addOns: ReservationRecord["addOns"],
+) {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    const index = reservations.findIndex((entry) => entry.reservationNumber === reservationNumber);
+    if (index === -1) {
+      return null;
+    }
+
+    reservations[index] = { ...reservations[index], addOns, updatedAt: new Date().toISOString() };
+    await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    return reservations[index];
+  });
+}
+
 /**
  * Removes a booking outright, releasing its seats if it was still live. A
  * cancelled booking already gave its seats back, so they are not released

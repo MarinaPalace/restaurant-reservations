@@ -9,6 +9,7 @@ const menuCourseSchema = new Schema(
     description: { type: String, default: "" },
     required: { type: Boolean, required: true, default: true },
     active: { type: Boolean, required: true, default: true },
+    addOn: { type: Boolean, required: true, default: false },
     imageUrl: { type: String, default: "" },
     translations: { type: Schema.Types.Mixed, default: {} },
   },

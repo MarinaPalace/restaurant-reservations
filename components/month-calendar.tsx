@@ -40,6 +40,15 @@ export type DayState = {
   tone?: "default" | "muted" | "positive";
   /** An evening reserved for invited guests: gold, with a star. */
   premium?: boolean;
+  /**
+   * An evening that has already happened.
+   *
+   * Drawn as struck-through and faded rather than merely disabled, because
+   * "past" and "unavailable" are different facts and the staff calendar shows
+   * both: a past evening is still worth opening to read its sheet, and an
+   * evening nobody may book is not necessarily behind us.
+   */
+  past?: boolean;
 };
 
 /**
@@ -215,15 +224,26 @@ export function MonthCalendar({
                     !isCurrentMonth && "opacity-45",
                     isSelected
                       ? "border-primary bg-primary text-primary-fg"
-                      : state.premium
-                        ? "border-gold bg-accent-soft text-accent-ink hover:border-accent"
-                        : state.disabled
-                          ? "cursor-not-allowed border-line bg-surface-muted text-ink-subtle"
-                          : "border-line-strong bg-surface text-ink hover:border-accent",
+                      : state.past
+                        ? // Sunken and quiet: read as "behind us", not as a choice.
+                          "border-line border-dashed bg-surface-sunken text-ink-subtle hover:border-line-strong"
+                        : state.premium
+                          ? "border-gold bg-accent-soft text-accent-ink hover:border-accent"
+                          : state.disabled
+                            ? "cursor-not-allowed border-line bg-surface-muted text-ink-subtle"
+                            : "border-line-strong bg-surface text-ink hover:border-accent",
                   )}
                 >
                   <span className="flex items-center justify-between gap-1">
-                    <span className="text-sm font-semibold sm:text-base" aria-hidden="true">
+                    <span
+                      className={cx(
+                        "text-sm font-semibold sm:text-base",
+                        // The number itself carries the mark, so the day reads
+                        // as spent even at a glance across a whole month.
+                        state.past && !isSelected && "line-through decoration-1",
+                      )}
+                      aria-hidden="true"
+                    >
                       {date.getDate()}
                     </span>
                     {state.premium ? (

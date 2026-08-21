@@ -137,6 +137,8 @@ export const pl: PartialDictionary = {
       afterStay: "po zakończeniu Państwa pobytu",
       afterStayHint: "Po pobycie",
       available: "{count} wolnych miejsc",
+      closedForBooking: "rezerwacje na ten wieczór zostały zamknięte",
+      closedForBookingHint: "Za późno",
     },
   },
 
@@ -288,6 +290,35 @@ export const pl: PartialDictionary = {
     startAgain: "Rozpocznij nową rezerwację",
   },
 
+  promo: {
+    eyebrow: "Oferowane do Państwa rezerwacji",
+    title: "Coś na stół",
+    description:
+      "Wybrane teraz, przygotowane na wieczór. Oferujemy to tutaj i nigdzie indziej — będzie Państwa tylko wtedy, gdy wybiorą to Państwo na tym ekranie.",
+    onlyNow: "Dostępne wyłącznie na tym ekranie",
+    none: "Nie, dziękuję",
+    noneHint: "Nic z tej grupy",
+    free: "Z naszymi wyrazami uznania",
+    was: "Zwykle {price}",
+    discount: "−{percent}%",
+    chosenTitle: "Zarezerwowane dla Państwa stolika",
+    total: "Do zapłaty przy stoliku",
+    youSave: "Oszczędzają Państwo {amount}",
+    saving: "Zapisywanie…",
+    saved: "Zapisano w rezerwacji",
+    retry: "Spróbuj ponownie",
+    error: "Nie udało się zapisać wyboru. Nadal widnieje na ekranie — prosimy spróbować ponownie.",
+    gone: "To nie jest już dostępne. Prosimy odświeżyć stronę, aby zobaczyć aktualną ofertę.",
+    groupOptions: "Wybór w grupie {group}",
+    takenTitle: "Zamówione do Państwa rezerwacji",
+    takenNote: "Wybrane na ekranie potwierdzenia. Prosimy o kontakt z recepcją, jeśli to się nie zgadza.",
+    change: "Zmień",
+    changeHint: "Mogą Państwo zamienić to na coś innego lub zrezygnować. Dodanie nowego jest możliwe tylko przy rezerwacji.",
+    removeOne: "Usuń",
+    keepEditing: "Gotowe",
+    removedAll: "Usunięto. Promocje są oferowane tylko przy rezerwacji, więc nie można tego tu dodać ponownie.",
+  },
+
   contact: {
     legend: "Dane kontaktowe",
     why: "Na wypadek, gdyby restauracja musiała się z Państwem skontaktować w sprawie tej rezerwacji.",
@@ -319,6 +350,8 @@ export const pl: PartialDictionary = {
     passKeyTooManyGuests: "Państwa rezerwacja u nas obejmuje mniej osób. Prosimy o kontakt z recepcją.",
     dateUnavailable: "Niestety ten termin nie jest już dostępny. Prosimy wybrać inny.",
     dateFull: "Niestety na ten termin nie ma już miejsc. Prosimy wybrać inny wieczór.",
+    bookingClosed:
+      "Rezerwacje na ten wieczór zostały zamknięte. Prosimy wybrać 9 z pokoju, a recepcja to zorganizuje.",
     tableJoinFailed: "Nie udało się posadzić Państwa przy tej rezerwacji. Prosimy sprawdzić numer i spróbować ponownie.",
     changesClosed: "Zmiany zamykają się dwanaście godzin przed kolacją. Prosimy o kontakt z recepcją, pomożemy.",
     notFound: "Nie znaleziono rezerwacji dla tego klucza dostępu.",

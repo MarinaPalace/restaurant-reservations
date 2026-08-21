@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { canonicalizeSelections } from "@/lib/menu-selection";
 import {
   buildCourseColumns,
+  buildExtrasList,
   chooseSheetPrintSize,
   buildPrepList,
   groupRoomRowsByTable,
@@ -470,5 +471,132 @@ describe("fitting the sheet on one page", () => {
   /** A sheet spread over two pages is worse than a small one. */
   it("never gives up and grows a second page", () => {
     expect(chooseSheetPrintSize({ rows: 200, dishColumns: 60 })).toBe("xs");
+  });
+});
+
+/**
+ * Promotions on the sheet.
+ *
+ * The rule that matters is that they are **never plates**. They are poured and
+ * carried, not cooked, so they must not reach the kitchen's counts, its
+ * columns or its totals — and they must still reach the waiter, who is the
+ * person carrying them.
+ */
+describe("promotions on the service sheet", () => {
+  const wine = {
+    courseId: "p1",
+    courseName: "Wines",
+    optionId: "pw1",
+    optionName: "Chardonnay",
+    price: 40,
+    discountPercent: 25,
+    finalPrice: 30,
+  };
+
+  const dessert = {
+    courseId: "p2",
+    courseName: "Sweet things",
+    optionId: "pd1",
+    optionName: "Fondant",
+    price: 12,
+    discountPercent: 0,
+    finalPrice: 12,
+  };
+
+  const roomWithWine: ReservationRecord = { ...roomWithTwo, addOns: [wine] };
+
+  it("never gives a promotion a dish column", () => {
+    const columns = buildOptionColumns([roomWithWine], menu);
+    expect(columns.map((column) => column.label)).not.toContain("Chardonnay");
+  });
+
+  it("never counts a promotion as a plate", () => {
+    const columns = buildOptionColumns([roomWithWine], menu);
+    const rows = buildRoomRows([roomWithWine], columns);
+    const totals = buildOptionTotals(rows, columns);
+
+    // Four dishes for two guests, and not a fifth for the wine.
+    expect(countPlates(totals)).toBe(4);
+  });
+
+  it("puts the promotion on the room's row", () => {
+    const rows = buildRoomRows([roomWithWine], buildOptionColumns([roomWithWine], menu));
+    expect(rows[0].extras).toEqual(["Chardonnay"]);
+  });
+
+  it("leaves the row empty when nothing was taken", () => {
+    const rows = buildRoomRows([roomWithTwo], buildOptionColumns([roomWithTwo], menu));
+    expect(rows[0].extras).toEqual([]);
+  });
+
+  /** Like the note: it belongs to the booking, not to each guest on it. */
+  it("shows it once per booking on the per-guest sheet, not once per guest", () => {
+    const rows = buildGuestRows([roomWithWine], buildCourseColumns([roomWithWine], menu));
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0].extras).toEqual(["Chardonnay"]);
+    expect(rows[1].extras).toEqual([]);
+  });
+
+  it("attributes each room's promotion on a shared table", () => {
+    const first = { ...roomWithTwo, addOns: [wine] };
+    const second = { ...roomSharingTable, addOns: [dessert] };
+    const columns = buildOptionColumns([first, second], menu);
+    const groups = groupRoomRowsByTable(buildRoomRows([first, second], columns), columns);
+    const [combined] = buildCombinedTableRows(groups, columns);
+
+    expect(combined.isShared).toBe(true);
+    // In the sheet's own room order, which is how the Room column reads.
+    expect(combined.extras).toEqual([
+      { room: "118", items: ["Fondant"] },
+      { room: "402", items: ["Chardonnay"] },
+    ]);
+  });
+
+  /** Nobody carries wine to a table that is not coming. */
+  it("drops a cancelled room's promotion from the table", () => {
+    const cancelled = { ...roomSharingTable, status: "cancelled" as const, addOns: [dessert] };
+    const columns = buildOptionColumns([roomWithWine, cancelled], menu);
+    const groups = groupRoomRowsByTable(buildRoomRows([roomWithWine, cancelled], columns), columns);
+    const [combined] = buildCombinedTableRows(groups, columns);
+
+    expect(combined.extras).toEqual([{ room: "402", items: ["Chardonnay"] }]);
+  });
+});
+
+describe("the promotions slip", () => {
+  const wine = (optionId: string, optionName: string) => ({
+    courseId: "p1",
+    courseName: "Wines",
+    optionId,
+    optionName,
+    price: 40,
+    discountPercent: 0,
+    finalPrice: 40,
+  });
+
+  it("adds up how many of each were ordered", () => {
+    const a = { ...roomWithTwo, addOns: [wine("pw1", "Chardonnay")] };
+    const b = { ...roomSharingTable, addOns: [wine("pw1", "Chardonnay")] };
+    const c = { ...roomDecliningACourse, addOns: [wine("pw2", "Merlot")] };
+
+    expect(buildExtrasList([a, b, c])).toEqual([
+      { courseName: "Wines", optionName: "Chardonnay", quantity: 2 },
+      { courseName: "Wines", optionName: "Merlot", quantity: 1 },
+    ]);
+  });
+
+  it("leaves out a cancelled booking", () => {
+    const cancelled = { ...roomWithTwo, status: "cancelled" as const, addOns: [wine("pw1", "Chardonnay")] };
+    expect(buildExtrasList([cancelled])).toEqual([]);
+  });
+
+  it("is empty when nothing was ordered", () => {
+    expect(buildExtrasList([roomWithTwo, roomSharingTable])).toEqual([]);
+  });
+
+  /** Bookings made before promotions existed have no `addOns` at all. */
+  it("copes with a booking that predates promotions", () => {
+    expect(buildExtrasList([{ ...roomWithTwo, addOns: undefined }])).toEqual([]);
   });
 });

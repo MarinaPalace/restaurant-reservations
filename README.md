@@ -97,6 +97,19 @@ browsers cache each picture. External image addresses are passed through untouch
 guest on the confirmation step. A phone number also picks a preferred app — phone/SMS, WhatsApp,
 Viber or Telegram — and staff see a one-click link that opens the right one.
 
+**When bookings close.** Each evening also carries a cutoff — how many hours before the sitting
+guests stop being able to book it themselves. Set it beside the arrival time; 0 means bookings close
+when the sitting starts. **Reception is never bound by it** and can take a booking for a table
+standing at the desk. The calendar shows such an evening as `39 · desk`.
+
+**Times say which clock they are on.** Pick the restaurant's zone at the top of the dashboard and a
+guest's confirmation reads *19:00 — Sofia time (UTC+3)*, with the offset following summer time. It
+is a label: the app computes every time from the server's clock and converts nothing, so if the two
+disagree the dashboard warns in red and tells you which to change.
+
+**Past evenings look past.** The calendar strikes them through and sinks them rather than showing
+free seats nobody can sell. They stay clickable — last night's sheet is read often.
+
 **Arrival times.** Each evening has a strict arrival time and an end time, set per date in the
 dashboard. They are shown to guests when they pick the date and again on their confirmation,
 copied onto the booking as it is made (so moving a later sitting does not rewrite existing
@@ -227,6 +240,41 @@ Apple Calendar and Outlook, including the per-guest menu choices and an alarm th
 the sitting. Reservations store a date but no time, so the sitting time comes from
 `NEXT_PUBLIC_DINNER_TIME`.
 
+**Promotions.** Products offered **once**, on the confirmation screen, after the guest has their
+reservation number — a bottle of wine, a dessert, a welcome glass. This screen is the only place
+they are offered, and the wording says so.
+
+They have their own catalogue, edited at *Promotions* in the staff dashboard, kept entirely separate
+from the two dinner menus: adding one never means adding a course to the menu, and nothing in it can
+appear in the booking flow. Each group offers at most one product, "no, thank you" included, and
+every choice saves itself the moment it is made — the guest has already finished booking and will
+not press a second button.
+
+Each product takes a price and an optional discount, and the guest sees both: the usual price struck
+through, the discounted one beside it, a `−25%` badge, and a running total of what to settle at the
+table. A product priced at zero reads as complimentary and still has to be chosen, which is what
+tells the kitchen to pour it. Prices are quoted in a currency set in the promotions editor —
+`EUR` by default — and rendered in the guest's language, so the symbol lands where that language
+puts it.
+
+What the guest took is stored with the booking and shown everywhere it is needed: on the guest's
+confirmation and their manage screen, on the staff reservation page with prices and a total, in the
+service sheet's Comment column as `+ Chardonnay`, and on the kitchen slip under its own heading. It
+is never counted as a plate — nobody cooks it.
+
+**Changing one afterwards.** A guest who took a promotion can swap it for another in the same group,
+or give it back, from their manage screen. A guest who declined cannot come back later and take one:
+the offer was the moment, not the booking. Giving one back is final for the same reason — once it is
+off the booking there is nothing left to change, and the screen says so before you do it.
+
+**Reception can do anything**, at any time: add a bottle somebody asks for at the table, correct one
+ordered by mistake, take one off a bill. It is on the reservation page, and every change is logged,
+because it changes what a guest is charged.
+
+The manage screen shows it read-only, and deliberately so. Promotions are offered once and cannot
+be added later, but a guest looking at their booking afterwards must be able to see what they
+agreed to, or "I never ordered that" is a conversation with no evidence on the guest's side.
+
 ## Run locally
 
 ```bash
@@ -336,9 +384,12 @@ lib/
   auth/                 Credentials, signed sessions, permissions, route guard
   db/                   Mongo connection, JSON store, seed definitions
   services/             Booking rules, reservations, restaurant/menu,
-                        pass-keys, staff accounts, audit log
+                        pass-keys, staff accounts, audit log, settings
   pass-key.ts           Pass-key generation, normalisation and formatting
   date.ts               Local-timezone date keys (never UTC)
+  money.ts              Promotion prices, discounts and currency formatting
+  timezone.ts           Naming the clock times are quoted on (a label, not a conversion)
+  sequential-save.ts    Ordered saves for anything that saves as you tap it
   validation/           Zod schemas shared by the API routes
 proxy.ts                Optimistic /admin redirect (pages re-check the session)
 ```

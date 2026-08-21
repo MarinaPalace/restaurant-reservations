@@ -16,6 +16,7 @@ import {
   updateLocalReservationDetails,
   setLocalReservationTable,
   updateLocalReservationSelections,
+  updateLocalReservationAddOns,
   upsertLocalDate,
 } from "@/lib/db/local-store";
 import { getRestaurantDate } from "@/lib/services/restaurant";
@@ -25,6 +26,7 @@ import {
   type ReservationContact,
   type ReservationRecord,
   type ReservationSelection,
+  type ReservationAddOn,
 } from "@/types/booking";
 
 export class BookingError extends Error {
@@ -80,6 +82,7 @@ type MongoReservationDocument = {
   kind?: unknown;
   guestName?: unknown;
   selections?: unknown;
+  addOns?: unknown;
   contact?: unknown;
   time?: unknown;
   endTime?: unknown;
@@ -108,6 +111,7 @@ function toReservationRecord(document: MongoReservationDocument): ReservationRec
     guestCount: Number(document.guestCount),
     date: String(document.date),
     selections: Array.isArray(document.selections) ? (document.selections as ReservationSelection[]) : [],
+    addOns: Array.isArray(document.addOns) ? (document.addOns as ReservationAddOn[]) : undefined,
     contact: (document.contact as ReservationContact | undefined) ?? undefined,
     time: document.time ? String(document.time) : undefined,
     endTime: document.endTime ? String(document.endTime) : undefined,
@@ -596,6 +600,24 @@ export async function updateReservationSelections(
   return updated ? toReservationRecord(updated as MongoReservationDocument) : null;
 }
 
+export async function updateReservationAddOns(
+  reservationNumber: string,
+  addOns: ReservationAddOn[],
+): Promise<ReservationRecord | null> {
+  if (!isMongoConfigured()) {
+    return updateLocalReservationAddOns(reservationNumber, addOns);
+  }
+
+  await connectToDatabase();
+  const updated = await ReservationModel.findOneAndUpdate(
+    { reservationNumber },
+    { $set: { addOns } },
+    { returnDocument: "after" },
+  ).lean();
+
+  return updated ? toReservationRecord(updated as MongoReservationDocument) : null;
+}
+
 /**
  * Removes a booking outright. Seats are released only when it was still
  * confirmed, since a cancelled booking already gave them back.
@@ -637,6 +659,8 @@ export async function updateRestaurantDate(input: {
   serviceTime?: string;
   serviceEndTime?: string;
   premium?: boolean;
+  /** How many hours before the sitting guest bookings close. 0 = at the sitting. */
+  bookingCutoffHours?: number;
 }) {
   if (!isMongoConfigured()) {
     return upsertLocalDate(input);
@@ -653,6 +677,7 @@ export async function updateRestaurantDate(input: {
         serviceTime: input.serviceTime ?? null,
         serviceEndTime: input.serviceEndTime ?? null,
         premium: input.premium ?? false,
+        bookingCutoffHours: Math.max(0, Math.round(Number(input.bookingCutoffHours ?? 0))),
       },
       $setOnInsert: { reservedSeats: 0 },
     },
@@ -667,5 +692,6 @@ export async function updateRestaurantDate(input: {
     serviceTime: updated.serviceTime ? String(updated.serviceTime) : undefined,
     serviceEndTime: updated.serviceEndTime ? String(updated.serviceEndTime) : undefined,
     premium: Boolean(updated.premium),
+    bookingCutoffHours: Number(updated.bookingCutoffHours ?? 0),
   });
 }

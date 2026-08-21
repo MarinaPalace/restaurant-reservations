@@ -28,6 +28,12 @@ export type GuestRow = {
   guests: string;
   choices: Record<string, string>;
   comment: string;
+  /**
+   * Promotions this booking took on the confirmation screen — a bottle of
+   * wine, a dessert. Named rather than counted, and kept apart from `choices`,
+   * because nothing here is a plate: it must never reach the kitchen's totals.
+   */
+  extras: string[];
   cancelled: boolean;
   tableGroupId?: string;
 };
@@ -41,6 +47,8 @@ export type RoomRow = {
   /** Option id -> how many of it this room needs. Zero means nothing to plate. */
   counts: Record<string, number>;
   comment: string;
+  /** Promotions to bring to the table. Never plates, never counted as such. */
+  extras: string[];
   cancelled: boolean;
   tableGroupId?: string;
 };
@@ -163,6 +171,18 @@ export function groupOptionColumns(columns: OptionColumn[]) {
   return groups;
 }
 
+/**
+ * The promotions on a booking, as short labels a waiter can read at a glance.
+ *
+ * Deliberately not resolved against the menu the way dishes are (rule 2.6):
+ * promotions are already stored in English, priced and named as they were
+ * agreed, and the catalogue they came from may have changed since. What the
+ * guest agreed to is what goes to the table.
+ */
+export function extrasOf(reservation: ReservationRecord): string[] {
+  return (reservation.addOns ?? []).map((addOn) => addOn.optionName);
+}
+
 export function buildGuestRows(reservations: ReservationRecord[], columns: CourseColumn[]): GuestRow[] {
   const rows: GuestRow[] = [];
 
@@ -187,6 +207,8 @@ export function buildGuestRows(reservations: ReservationRecord[], columns: Cours
         // The note belongs to the booking; repeating it on every line would
         // have the kitchen read the same allergy warning several times.
         comment: guestIndex === 0 ? (reservation.notes ?? "") : "",
+        // Like the note: it belongs to the booking, not to each guest on it.
+        extras: guestIndex === 0 ? extrasOf(reservation) : [],
         cancelled: reservation.status === "cancelled",
         tableGroupId: reservation.tableGroupId,
       });
@@ -217,6 +239,7 @@ export function buildRoomRows(reservations: ReservationRecord[], columns: Option
       guests: reservation.guestCount,
       counts,
       comment: reservation.notes ?? "",
+      extras: extrasOf(reservation),
       cancelled: reservation.status === "cancelled",
       tableGroupId: reservation.tableGroupId,
     };
@@ -304,6 +327,12 @@ export type CombinedTableRow = {
   guests: number;
   counts: Record<string, number>;
   comments: { room: string; note: string }[];
+  /**
+   * Promotions to bring, attributed to the room that ordered them — on a
+   * shared table two rooms may have ordered different bottles, and the waiter
+   * has to know which is whose.
+   */
+  extras: { room: string; items: string[] }[];
   /** The bookings behind the row, for the per-reservation actions. */
   members: { reservationNumber: string; room: string; cancelled: boolean }[];
   isShared: boolean;
@@ -331,6 +360,11 @@ export function buildCombinedTableRows(groups: TableGroup[], columns: OptionColu
       comments: group.rows
         .filter((row) => row.comment)
         .map((row) => ({ room: row.room, note: row.comment })),
+      // Cancelled rooms are left out: nobody carries wine to a table that is
+      // not coming, which is the same rule the plate counts follow.
+      extras: group.rows
+        .filter((row) => !row.cancelled && row.extras.length > 0)
+        .map((row) => ({ room: row.room, items: row.extras })),
       members: group.rows.map((row) => ({
         reservationNumber: row.reservationNumber,
         room: row.room,
@@ -340,6 +374,41 @@ export function buildCombinedTableRows(groups: TableGroup[], columns: OptionColu
       cancelled: group.rows.every((row) => row.cancelled),
     };
   });
+}
+
+/**
+ * Every promotion ordered for the evening, and how many of each.
+ *
+ * Kept apart from the kitchen's prep list rather than merged into it: these
+ * are poured and carried, not cooked, and a bottle of wine appearing among the
+ * plate counts is exactly the confusion the separate promotions catalogue
+ * exists to prevent. Cancelled bookings are left out, like everywhere else.
+ */
+export function buildExtrasList(reservations: ReservationRecord[]): PrepLine[] {
+  const counts = new Map<string, PrepLine>();
+
+  for (const reservation of reservations) {
+    if (reservation.status === "cancelled") {
+      continue;
+    }
+
+    for (const addOn of reservation.addOns ?? []) {
+      const existing = counts.get(addOn.optionId);
+      if (existing) {
+        existing.quantity += 1;
+      } else {
+        counts.set(addOn.optionId, {
+          courseName: addOn.courseName,
+          optionName: addOn.optionName,
+          quantity: 1,
+        });
+      }
+    }
+  }
+
+  return [...counts.values()].sort(
+    (a, b) => a.courseName.localeCompare(b.courseName) || a.optionName.localeCompare(b.optionName),
+  );
 }
 
 /**

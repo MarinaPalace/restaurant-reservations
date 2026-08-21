@@ -147,6 +147,8 @@ export const en = {
       afterStay: "after your stay ends",
       afterStayHint: "After your stay",
       available: "{count} seats available",
+      closedForBooking: "bookings for this evening have closed",
+      closedForBookingHint: "Too late",
     },
   },
 
@@ -298,6 +300,49 @@ export const en = {
     startAgain: "Start a new reservation",
   },
 
+  /**
+   * Promotions, offered once, on the confirmation screen.
+   *
+   * The wording carries the one thing the guest has to understand: this screen
+   * is the only place these are offered. Say it plainly rather than dressing it
+   * up — a guest who assumes they can add the wine later, and cannot, has been
+   * misled by the copy rather than by the rule.
+   */
+  promo: {
+    eyebrow: "Offered with your booking",
+    title: "Something for the table",
+    description:
+      "Chosen now, prepared for the evening. These are offered here and nowhere else, so they are yours only if you take them on this screen.",
+    onlyNow: "Available only on this screen",
+    none: "No, thank you",
+    noneHint: "Nothing from this group",
+    free: "With our compliments",
+    was: "Usually {price}",
+    discount: "−{percent}%",
+    chosenTitle: "Reserved for your table",
+    total: "To settle at the table",
+    youSave: "You save {amount}",
+    saving: "Saving…",
+    saved: "Saved to your booking",
+    retry: "Try again",
+    error: "We could not save that. Your choice is still on the screen — try again.",
+    gone: "That is no longer available. Reload the page to see what is on offer.",
+    /** Read out by a screen reader as the group's choices are announced. */
+    groupOptions: "Choices in {group}",
+    /**
+     * Shown wherever a booking's promotions are listed back to the guest, so
+     * "I never ordered that" has an answer on the guest's own screen.
+     */
+    takenTitle: "Ordered with your booking",
+    takenNote: "Chosen on your confirmation screen. Please speak to reception if this is not right.",
+    /** Editing on the manage screen: swap or give back, never take anew. */
+    change: "Change",
+    changeHint: "You can swap this for another, or give it back. Adding something new is only possible when you book.",
+    removeOne: "Remove",
+    keepEditing: "Done",
+    removedAll: "Removed. Promotions are only offered when you book, so this cannot be added again here.",
+  },
+
   contact: {
     legend: "Contact details",
     why: "In case the restaurant needs to reach you about this reservation.",
@@ -331,6 +376,8 @@ export const en = {
     passKeyTooManyGuests: "Your booking with us is for fewer guests than that. Please speak to reception.",
     dateUnavailable: "Unfortunately, this date is no longer available. Please select another date.",
     dateFull: "Unfortunately, this date is fully booked. Please choose another evening.",
+    bookingClosed:
+      "Bookings for that evening have closed. Please dial 9 from your room and reception will arrange it.",
     tableJoinFailed: "We could not seat you with that reservation. Please check the number and try again.",
     changesClosed: "Changes close twelve hours before dinner. Please speak to reception and we will help.",
     notFound: "We could not find a reservation for that pass-key.",

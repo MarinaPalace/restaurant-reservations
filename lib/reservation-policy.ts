@@ -1,5 +1,5 @@
 import { getReservationWindow } from "@/lib/calendar";
-import type { ReservationRecord } from "@/types/booking";
+import type { ReservationRecord, RestaurantDateAvailability } from "@/types/booking";
 
 /**
  * How late a guest may change their own booking.
@@ -57,4 +57,59 @@ export function formatDeadline(deadline: Date, locale = "en-GB") {
     minute: "2-digit",
     hour12: false,
   }).format(deadline);
+}
+
+/* ------------------------------------------------------------------ *
+ * How late a guest may take a table
+ * ------------------------------------------------------------------ */
+
+/**
+ * The moment guest bookings close for an evening.
+ *
+ * `bookingCutoffHours` is set per date by staff, because it is not one number:
+ * a quiet Tuesday can take a booking an hour before service, and a full
+ * Saturday with a set menu cannot. Absent reads as 0 — bookings close when the
+ * sitting starts, which is what every evening did before this existed, so no
+ * date needs touching.
+ *
+ * Separate from `MODIFICATION_CUTOFF_HOURS`, which is about *changing* a
+ * booking the kitchen has already counted. These answer different questions
+ * and there is no reason they should move together.
+ */
+export function getBookingDeadline(
+  date: Pick<RestaurantDateAvailability, "date" | "serviceTime" | "serviceEndTime" | "bookingCutoffHours">,
+): Date {
+  const { start } = getReservationWindow(date.date, date.serviceTime, date.serviceEndTime);
+  const hours = Math.max(0, Number(date.bookingCutoffHours ?? 0));
+  const deadline = new Date(start);
+
+  deadline.setMinutes(deadline.getMinutes() - Math.round(hours * 60));
+  return deadline;
+}
+
+export type BookingWindowCheck = {
+  allowed: boolean;
+  deadline: Date;
+  /** How many hours before the sitting this evening closes. 0 = at the sitting. */
+  cutoffHours: number;
+};
+
+/**
+ * Whether a **guest** may still book this evening themselves.
+ *
+ * Staff never call this. Reception can take a booking at any time, including
+ * for a table standing at the desk, and the staff routes deliberately do not
+ * consult it.
+ */
+export function canGuestBookDate(
+  date: Pick<RestaurantDateAvailability, "date" | "serviceTime" | "serviceEndTime" | "bookingCutoffHours">,
+  now = new Date(),
+): BookingWindowCheck {
+  const deadline = getBookingDeadline(date);
+
+  return {
+    allowed: now < deadline,
+    deadline,
+    cutoffHours: Math.max(0, Number(date.bookingCutoffHours ?? 0)),
+  };
 }

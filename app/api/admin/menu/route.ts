@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { isDenied, requireStaff } from "@/lib/auth/guard";
 import { recordAuditEntry } from "@/lib/services/audit-log";
 import { getFullMenuCatalog, saveMenuCatalog } from "@/lib/services/restaurant";
-import { menuCatalogSchema, menuKindSchema } from "@/lib/validation/booking";
+import { menuCatalogSchema, saveMenuSchema } from "@/lib/validation/booking";
 import type { MenuCourse } from "@/types/booking";
 
 export async function GET(request: Request) {
@@ -13,7 +13,7 @@ export async function GET(request: Request) {
 
   try {
     const requested = new URL(request.url).searchParams.get("menu");
-    const menu = menuKindSchema.safeParse(requested).data ?? "standard";
+    const menu = menuCatalogSchema.safeParse(requested).data ?? "standard";
 
     return NextResponse.json(await getFullMenuCatalog(menu));
   } catch (error) {
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const parsed = menuCatalogSchema.safeParse(await request.json());
+    const parsed = saveMenuSchema.safeParse(await request.json());
 
     if (!parsed.success) {
       return NextResponse.json(
@@ -51,7 +51,7 @@ export async function POST(request: Request) {
     await recordAuditEntry({
       action: "menu:save",
       actor: auth.actor,
-      summary: `Saved the ${kind} menu: ${menu.length} course(s).`,
+      summary: `Saved the ${kind} catalogue: ${menu.length} course(s).`,
     });
 
     return NextResponse.json({ ok: true, menu });

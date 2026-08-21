@@ -91,6 +91,7 @@ export async function upsertLocalDate(input: {
   serviceTime?: string;
   serviceEndTime?: string;
   premium?: boolean;
+  bookingCutoffHours?: number;
 }): Promise<RestaurantDateAvailability> {
   return withStoreLock(async () => {
     const dates = await readDates();
@@ -106,6 +107,7 @@ export async function upsertLocalDate(input: {
             serviceTime: input.serviceTime,
             serviceEndTime: input.serviceEndTime,
             premium: input.premium ?? false,
+            bookingCutoffHours: Math.max(0, Math.round(Number(input.bookingCutoffHours ?? 0))),
           }
         : {
             ...dates[index],
@@ -114,6 +116,7 @@ export async function upsertLocalDate(input: {
             serviceTime: input.serviceTime,
             serviceEndTime: input.serviceEndTime,
             premium: input.premium ?? false,
+            bookingCutoffHours: Math.max(0, Math.round(Number(input.bookingCutoffHours ?? 0))),
           };
 
     if (index === -1) {
@@ -374,6 +377,23 @@ export async function updateLocalReservationSelections(
     }
 
     reservations[index] = { ...reservations[index], selections, updatedAt: new Date().toISOString() };
+    await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    return reservations[index];
+  });
+}
+
+export async function updateLocalReservationAddOns(
+  reservationNumber: string,
+  addOns: ReservationRecord["addOns"],
+) {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    const index = reservations.findIndex((entry) => entry.reservationNumber === reservationNumber);
+    if (index === -1) {
+      return null;
+    }
+
+    reservations[index] = { ...reservations[index], addOns, updatedAt: new Date().toISOString() };
     await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
     return reservations[index];
   });

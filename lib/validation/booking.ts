@@ -1,8 +1,10 @@
 import { z } from "zod";
 import { isValidDateKey } from "@/lib/date";
+import { CURRENCIES } from "@/lib/money";
+import { TIME_ZONES } from "@/lib/timezone";
 import { PASS_KEY_LENGTH, normalizePassKey } from "@/lib/pass-key";
 import { isValidRoomNumber, normalizeRoomNumber } from "@/lib/room";
-import { MAX_USES_CAP, STAFF_PERMISSIONS } from "@/types/booking";
+import { MAX_USES_CAP, MENU_CATALOGS, STAFF_PERMISSIONS } from "@/types/booking";
 
 export const MAX_GUESTS_PER_RESERVATION = 6;
 
@@ -77,7 +79,14 @@ export const timeSchema = z
   .string()
   .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "Please enter a time as HH:MM.");
 
+/**
+ * Which dinner. Used for pass-keys and evenings, where "promo" is not an
+ * answer — see `MenuKind` in `types/booking.ts`.
+ */
 export const menuKindSchema = z.enum(["standard", "premium"]);
+
+/** Which catalogue is being read or edited. Promotions are one of the three. */
+export const menuCatalogSchema = z.enum(MENU_CATALOGS);
 
 export const restaurantDateSchema = z.object({
   date: dateKeySchema,
@@ -86,6 +95,12 @@ export const restaurantDateSchema = z.object({
   serviceTime: timeSchema.optional(),
   serviceEndTime: timeSchema.optional(),
   premium: z.boolean().optional(),
+  /**
+   * How many hours before the sitting guest bookings close. Ten days is the
+   * cap: beyond that the evening is effectively not bookable online, which is
+   * what "closed" is for.
+   */
+  bookingCutoffHours: z.number().int().min(0).max(240).optional(),
 });
 
 /**
@@ -105,6 +120,60 @@ export const manageReservationSchema = z.object({
 
 export const updateSelectionsSchema = manageReservationSchema.extend({
   selections: z.array(reservationSelectionSchema).min(1),
+});
+
+/**
+ * Promotions taken on the confirmation screen.
+ *
+ * `reservationNumber` is required here, unlike the schema it extends: a key
+ * that booked three dinners has three confirmations, and "which one" cannot be
+ * inferred. It still is not what authorises the change — the pass-key is
+ * (rule 2.5) — it only says which of that key's bookings is meant.
+ *
+ * An empty array is valid and means "none, thank you", which is how a guest
+ * takes a promotion back off.
+ */
+export const updateAddOnsSchema = manageReservationSchema.extend({
+  reservationNumber: z.string().trim().min(1).max(40),
+  /**
+   * Which screen is asking.
+   *
+   * `confirmation` is the one place a promotion can be *taken*. `manage` may
+   * only change or drop what the booking already holds — a guest who declined
+   * cannot come back a week later and help themselves.
+   *
+   * Not a security boundary, and not pretending to be one: both screens are
+   * driven by the same pass-key, and the holder of that key is the legitimate
+   * owner of this booking. It is a rule about what each screen offers, and
+   * lying about it gains a guest nothing they could not already do from the
+   * confirmation screen. Nobody else's data is reachable either way.
+   */
+  mode: z.enum(["confirmation", "manage"]).optional(),
+  addOns: z
+    .array(
+      z.object({
+        courseId: z.string().min(1).max(64),
+        optionId: z.string().min(1).max(64),
+      }),
+    )
+    // One per group, and a catalogue with more groups than this is not a
+    // promotion any more. The route also refuses two from the same group.
+    .max(24),
+});
+
+/**
+ * Promotions set by staff. No `mode`: reception is never limited to what the
+ * guest already holds — see the route.
+ */
+export const staffAddOnsSchema = z.object({
+  addOns: z
+    .array(
+      z.object({
+        courseId: z.string().min(1).max(64),
+        optionId: z.string().min(1).max(64),
+      }),
+    )
+    .max(24),
 });
 
 /**
@@ -140,8 +209,13 @@ const menuTranslationSchema = z.object({
   ingredients: z.string().optional(),
 });
 
-export const menuCatalogSchema = z.object({
-  menu: menuKindSchema.optional(),
+/**
+ * What the menu editor sends when it saves. Named for the body rather than the
+ * catalogue so it does not collide with `menuCatalogSchema`, which names
+ * *which* catalogue is meant.
+ */
+export const saveMenuSchema = z.object({
+  menu: menuCatalogSchema.optional(),
   courses: z
     .array(
       z.object({
@@ -165,6 +239,9 @@ export const menuCatalogSchema = z.object({
             // Optional so a menu saved without them keeps whatever it had.
             ingredients: z.string().max(500).optional(),
             vegan: z.boolean().optional(),
+            // Promotions only. A dish carries no price, and absent reads as free.
+            price: z.number().min(0).max(1_000_000).optional(),
+            discountPercent: z.number().int().min(0).max(100).optional(),
             translations: z.record(z.string(), menuTranslationSchema).optional(),
           }),
         ),
@@ -248,6 +325,21 @@ export const updateStaffUserSchema = z.object({
  * Pass-keys
  * ------------------------------------------------------------------ */
 
+/**
+ * An invitation's email address.
+ *
+ * Deliberately permissive beyond the shape: guests come from everywhere, and a
+ * stricter pattern rejects addresses that work. The provider is the real judge,
+ * and it answers with a reason we record and show.
+ */
+export const guestEmailSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(3)
+  .max(320)
+  .refine((value) => /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(value), "Please enter a valid email address.");
+
 export const issuePassKeySchema = z.object({
   /** `premium` issues an invitation key instead of an in-house one. */
   kind: menuKindSchema.optional(),
@@ -255,6 +347,13 @@ export const issuePassKeySchema = z.object({
   reservationRef: z.string().trim().max(20).optional(),
   roomNumber: z.string().trim().max(10).optional(),
   guestName: z.string().trim().max(120).optional(),
+  /**
+   * Where an invitation is sent. Invitations only: an in-house guest is handed
+   * a card at the desk, and the hotel's address for them is not ours to use.
+   */
+  guestEmail: guestEmailSchema.optional(),
+  /** Send the invitation as soon as it is issued. Requires an address. */
+  sendInvitation: z.boolean().optional(),
   /** Arrival. The nights, and so the dinners, follow from this and expiry. */
   checkInOn: dateKeySchema.optional(),
   /**
@@ -278,7 +377,20 @@ export const issuePassKeySchema = z.object({
    * the key and in the audit log, so an exception is always traceable.
    */
   allowShortStay: z.boolean().optional(),
-});
+})
+  /**
+   * Asking to send without an address is a slip worth catching here rather than
+   * halfway through issuing, and asking to email an in-house key is a
+   * misunderstanding of what the two kinds are.
+   */
+  .refine((row) => !row.sendInvitation || Boolean(row.guestEmail), {
+    message: "Add an email address, or untick sending the invitation.",
+    path: ["guestEmail"],
+  })
+  .refine((row) => !row.sendInvitation || row.kind === "premium", {
+    message: "Only invitations are emailed. An in-house pass-key is printed as a card.",
+    path: ["sendInvitation"],
+  });
 
 /**
  * A morning's check-ins, one row each.
@@ -295,6 +407,11 @@ export const issuePassKeyBatchSchema = z.object({
  * Editing a key already in a guest's hand — the stay-extension case. Only the
  * things that can legitimately change once it is printed.
  */
+/** Sending an invitation again, optionally to a corrected address. */
+export const sendInvitationSchema = z.object({
+  email: guestEmailSchema.optional(),
+});
+
 export const updatePassKeySchema = z.object({
   /**
    * Rooms change often, and a reference typed wrong at check-in has to be
@@ -303,6 +420,8 @@ export const updatePassKeySchema = z.object({
   roomNumber: z.string().trim().max(10).nullable().optional(),
   reservationRef: z.string().trim().max(20).nullable().optional(),
   guestName: z.string().trim().max(120).nullable().optional(),
+  /** Correcting the address an invitation bounced off. */
+  guestEmail: guestEmailSchema.nullable().optional(),
   expiresOn: dateKeySchema.nullable().optional(),
   maxUses: z.number().int().min(1).max(MAX_USES_CAP).optional(),
   /** Party sizes change before arrival, so this stays editable. */
@@ -318,3 +437,27 @@ export const cancelReservationSchema = z.object({
   /** What reception was told, kept with the cancellation. */
   reason: z.string().trim().max(300).optional(),
 });
+
+/* ------------------------------------------------------------------ *
+ * Settings
+ * ------------------------------------------------------------------ */
+
+/**
+ * What promotion prices are quoted in. A closed list rather than free text:
+ * the value is rendered by `Intl.NumberFormat`, which throws on an ISO code it
+ * does not know.
+ */
+export const currencySchema = z.enum(CURRENCIES);
+
+/** Which clock the restaurant's times are quoted on. A label, not a conversion. */
+export const timeZoneSchema = z.enum(TIME_ZONES);
+
+/** Every field optional: a screen may save one setting without knowing the others. */
+export const updateSettingsSchema = z
+  .object({
+    currency: currencySchema.optional(),
+    timeZone: timeZoneSchema.optional(),
+  })
+  .refine((row) => row.currency !== undefined || row.timeZone !== undefined, {
+    message: "Nothing to save.",
+  });

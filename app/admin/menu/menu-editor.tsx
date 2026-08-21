@@ -11,7 +11,8 @@ import { hasAllergen, listAllergenChoices, toggleAllergen } from "@/lib/allergen
 import { VeganBadge } from "@/components/vegan-badge";
 import { cx } from "@/components/ui/utils";
 import Link from "next/link";
-import type { MenuCourse, MenuKind, MenuOption, MenuTranslation } from "@/types/booking";
+import { CURRENCIES, discountedPrice, formatPrice, type Currency } from "@/lib/money";
+import { MENU_CATALOGS, type MenuCatalog, type MenuCourse, type MenuOption, type MenuTranslation } from "@/types/booking";
 
 const DEFAULT_LANGUAGE = "en";
 
@@ -49,6 +50,129 @@ function withTranslation<T extends MenuCourse | MenuOption>(
   };
 }
 
+/**
+ * What each catalogue is called, and what it is for, in the editor's own
+ * words.
+ *
+ * Kept as data rather than three ternaries through the markup: the wording is
+ * most of the difference between editing a dinner and editing a wine list, and
+ * a table makes it obvious that nothing else diverges.
+ */
+const CATALOGS = {
+  standard: {
+    label: "Everyday",
+    eyebrow: "Admin panel",
+    title: "Menu editor",
+    description:
+      "English is the master copy. Other languages fall back to English wherever a translation is missing.",
+    groupNoun: "Course",
+    newGroupName: "New course",
+    newItemName: "New option",
+    href: "/admin/menu",
+  },
+  premium: {
+    label: "Premium",
+    eyebrow: "Invitation menu",
+    title: "Premium menu editor",
+    description:
+      "Served only to invited guests booking from /premium. Saved separately from the everyday menu.",
+    groupNoun: "Course",
+    newGroupName: "New course",
+    newItemName: "New option",
+    href: "/admin/menu?menu=premium",
+  },
+  promo: {
+    label: "Promotions",
+    eyebrow: "Offered after booking",
+    title: "Promotions editor",
+    description:
+      "Products offered once, on the confirmation screen, after a guest has their reservation number. Nothing here appears in the dinner menu.",
+    groupNoun: "Group",
+    newGroupName: "New group",
+    newItemName: "New product",
+    href: "/admin/menu?menu=promo",
+  },
+} as const satisfies Record<MenuCatalog, unknown>;
+
+/**
+ * What a promotion costs, and what the guest will actually be shown.
+ *
+ * The preview is the point. A discount is two numbers that produce a third,
+ * and typing 25 into a box does not tell you whether the wine now reads as a
+ * bargain or as a rounding error — so the row renders the same struck-through
+ * pair the confirmation screen does, in the currency the restaurant quotes in,
+ * as it is typed.
+ */
+function PromoPricing({
+  option,
+  currency,
+  onChange,
+}: {
+  option: MenuOption;
+  currency: Currency;
+  onChange: (patch: Partial<MenuOption>) => void;
+}) {
+  const price = Math.max(0, Number(option.price ?? 0));
+  const discountPercent = Math.min(100, Math.max(0, Math.round(Number(option.discountPercent ?? 0))));
+  const finalPrice = discountedPrice(price, discountPercent);
+
+  return (
+    <div className="mt-4 rounded-control border border-line bg-surface-muted p-4">
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Price">
+          {(fieldProps) => (
+            <Input
+              {...fieldProps}
+              type="number"
+              min="0"
+              step="0.01"
+              value={option.price ?? 0}
+              onChange={(event) => onChange({ price: Math.max(0, Number(event.target.value) || 0) })}
+              className="w-28"
+            />
+          )}
+        </Field>
+        <Field label="Discount %">
+          {(fieldProps) => (
+            <Input
+              {...fieldProps}
+              type="number"
+              min="0"
+              max="100"
+              step="1"
+              value={option.discountPercent ?? 0}
+              onChange={(event) =>
+                onChange({
+                  discountPercent: Math.min(100, Math.max(0, Math.round(Number(event.target.value) || 0))),
+                })
+              }
+              className="w-28"
+            />
+          )}
+        </Field>
+
+        <div className="min-w-40">
+          <p className="text-xs font-medium uppercase tracking-wide text-ink-subtle">Guests will see</p>
+          <p className="mt-1 flex flex-wrap items-baseline gap-2">
+            {discountPercent > 0 ? (
+              <s className="text-sm text-ink-subtle">{formatPrice(price, currency, "en")}</s>
+            ) : null}
+            <span className="text-lg font-semibold text-ink">{formatPrice(finalPrice, currency, "en")}</span>
+            {discountPercent > 0 ? (
+              <span className="rounded-full bg-success-soft px-2 py-0.5 text-xs font-semibold text-success">
+                −{discountPercent}%
+              </span>
+            ) : null}
+          </p>
+          {price === 0 ? (
+            <p className="mt-1 text-xs text-ink-muted">Free — offered at no charge.</p>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function MenuEditor({
   initialCourses,
   menu,
@@ -58,11 +182,22 @@ export function MenuEditor({
    * until the person presses Save.
    */
   startedFromCopy = false,
+  /**
+   * What promotion prices are quoted in. Promotions only — a dinner course
+   * carries no price — and saved through its own endpoint, so changing it does
+   * not require saving the catalogue.
+   */
+  initialCurrency,
 }: {
   initialCourses: MenuCourse[];
-  menu: MenuKind;
+  menu: MenuCatalog;
   startedFromCopy?: boolean;
+  initialCurrency: Currency;
 }) {
+  const catalog = CATALOGS[menu];
+  const isPromo = menu === "promo";
+  const [currency, setCurrency] = useState<Currency>(initialCurrency);
+  const [savingCurrency, setSavingCurrency] = useState(false);
   const [courses, setCourses] = useState<MenuCourse[]>(initialCourses);
   // Cleared on the first successful save, when the copy stops being a draft.
   const [showCopyNotice, setShowCopyNotice] = useState(startedFromCopy);
@@ -118,13 +253,16 @@ export function MenuEditor({
       ...current,
       {
         id: `draft-course-${crypto.randomUUID()}`,
+        menu,
         order: current.length + 1,
-        name: "New course",
+        name: catalog.newGroupName,
         description: "",
-        required: true,
+        // A promotion is never compulsory. The server forces this too; here it
+        // is so the checkbox is not shown ticked for a moment before it does.
+        required: !isPromo,
         active: true,
         imageUrl: "",
-        translations: { en: { name: "New course", description: "" } },
+        translations: { en: { name: catalog.newGroupName, description: "" } },
         options: [],
       },
     ]);
@@ -147,14 +285,16 @@ export function MenuEditor({
         {
           id: `draft-option-${crypto.randomUUID()}`,
           courseId,
-          name: "New option",
+          name: catalog.newItemName,
           description: "",
           allergens: [],
           active: true,
           imageUrl: "",
           ingredients: "",
           vegan: false,
-          translations: { en: { name: "New option", description: "" } },
+          price: 0,
+          discountPercent: 0,
+          translations: { en: { name: catalog.newItemName, description: "" } },
         },
       ],
     }));
@@ -181,6 +321,43 @@ export function MenuEditor({
     setError("");
   };
 
+  /**
+   * Saved on change, through its own endpoint.
+   *
+   * Not folded into "Save menu" because it is not part of the catalogue: the
+   * currency is one value the whole restaurant quotes in, and requiring a full
+   * menu save to change it would mean an unfinished wine list had to be saved
+   * to fix a currency typo.
+   */
+  const handleCurrencyChange = async (next: Currency) => {
+    const previous = currency;
+    setCurrency(next);
+    setSavingCurrency(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const response = await fetch("/api/admin/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currency: next }),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to save the currency.");
+      }
+
+      setNotice(`Prices are now quoted in ${next}.`);
+    } catch (saveError) {
+      // Put the select back, so it never shows a currency that was not stored.
+      setCurrency(previous);
+      setError(saveError instanceof Error ? saveError.message : "Unable to save the currency.");
+    } finally {
+      setSavingCurrency(false);
+    }
+  };
+
   const handleSave = async () => {
     if (saving) {
       return;
@@ -188,8 +365,21 @@ export function MenuEditor({
 
     const untitled = courses.find((course) => !course.name.trim());
     if (untitled) {
-      setError("Every course needs an English name before saving.");
+      setError(`Every ${catalog.groupNoun.toLowerCase()} needs an English name before saving.`);
       return;
+    }
+
+    /**
+     * A product nobody can name is a product nobody can order. Dinner options
+     * are covered by the course check above — the kitchen knows what "Starter"
+     * means — but a promotion is a line on a bill.
+     */
+    if (isPromo) {
+      const unnamed = courses.find((course) => course.options.some((option) => !option.name.trim()));
+      if (unnamed) {
+        setError(`Every product in "${unnamed.name}" needs an English name before saving.`);
+        return;
+      }
     }
 
     setSaving(true);
@@ -225,7 +415,9 @@ export function MenuEditor({
       setNotice(
         showCopyNotice
           ? "Premium menu created from the everyday menu. The two are separate from now on — editing one does not change the other."
-          : "Menu saved. Guests will see these changes immediately.",
+          : isPromo
+            ? "Promotions saved. Guests confirming a booking from now on will be offered these."
+            : "Menu saved. Guests will see these changes immediately.",
       );
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to save menu changes.");
@@ -239,37 +431,30 @@ export function MenuEditor({
       <Card className="p-5 sm:p-6">
         <CardHeader
           as="h1"
-          eyebrow={menu === "premium" ? "Invitation menu" : "Admin panel"}
-          title={menu === "premium" ? "Premium menu editor" : "Menu editor"}
-          description={
-            menu === "premium"
-              ? "Served only to invited guests booking from /premium. Saved separately from the everyday menu."
-              : "English is the master copy. Other languages fall back to English wherever a translation is missing."
-          }
+          eyebrow={catalog.eyebrow}
+          title={catalog.title}
+          description={catalog.description}
           actions={
             <div className="flex flex-wrap items-center gap-3">
-              {/* The two menus are edited and saved independently. */}
-              <div role="group" aria-label="Which menu" className="flex rounded-control border border-line-strong">
-                {([
-                  { id: "standard", label: "Everyday" },
-                  { id: "premium", label: "Premium" },
-                ] as const).map((option) => (
+              {/* The three catalogues are edited and saved independently. */}
+              <div role="group" aria-label="Which catalogue" className="flex rounded-control border border-line-strong">
+                {MENU_CATALOGS.map((id) => (
                   <Link
-                    key={option.id}
-                    href={option.id === "standard" ? "/admin/menu" : "/admin/menu?menu=premium"}
-                    aria-current={menu === option.id ? "page" : undefined}
+                    key={id}
+                    href={CATALOGS[id].href}
+                    aria-current={menu === id ? "page" : undefined}
                     className={cx(
                       "flex min-h-11 items-center px-4 text-sm font-medium transition-colors first:rounded-l-control last:rounded-r-control",
-                      menu === option.id ? "bg-primary text-primary-fg" : "bg-surface text-ink hover:bg-surface-sunken",
+                      menu === id ? "bg-primary text-primary-fg" : "bg-surface text-ink hover:bg-surface-sunken",
                     )}
                   >
-                    {option.label}
+                    {CATALOGS[id].label}
                   </Link>
                 ))}
               </div>
               <ButtonLink href="/admin">Dashboard</ButtonLink>
               <Button onClick={handleSave} loading={saving} loadingLabel="Saving…">
-                Save menu
+                {isPromo ? "Save promotions" : "Save menu"}
               </Button>
             </div>
           }
@@ -314,6 +499,28 @@ export function MenuEditor({
               Add
             </Button>
           </div>
+
+          {isPromo ? (
+            <div>
+              <label htmlFor="promo-currency" className="text-sm font-medium text-ink">
+                Prices are in
+              </label>
+              <select
+                id="promo-currency"
+                value={currency}
+                disabled={savingCurrency}
+                onChange={(event) => void handleCurrencyChange(event.target.value as Currency)}
+                className="mt-2 block min-h-11 rounded-control border border-line-strong bg-surface px-3 text-sm font-medium text-ink"
+              >
+                {CURRENCIES.map((code) => (
+                  <option key={code} value={code}>
+                    {code} — {formatPrice(30, code, "en")}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-ink-muted">Saved on change. Applies to every promotion.</p>
+            </div>
+          ) : null}
         </div>
 
         {showCopyNotice ? (
@@ -420,17 +627,20 @@ export function MenuEditor({
             {isDefaultLanguage ? (
               <>
                 <div className="mt-4 flex flex-wrap items-center gap-6">
-                  <label className="flex items-center gap-2 text-sm font-medium text-ink">
-                    <input
-                      type="checkbox"
-                      className="size-4 accent-[var(--primary)]"
-                      checked={course.required}
-                      onChange={(event) =>
-                        updateCourse(course.id, (current) => ({ ...current, required: event.target.checked }))
-                      }
-                    />
-                    Required
-                  </label>
+                  {/* A promotion is never compulsory, so there is nothing to tick. */}
+                  {isPromo ? null : (
+                    <label className="flex items-center gap-2 text-sm font-medium text-ink">
+                      <input
+                        type="checkbox"
+                        className="size-4 accent-[var(--primary)]"
+                        checked={course.required}
+                        onChange={(event) =>
+                          updateCourse(course.id, (current) => ({ ...current, required: event.target.checked }))
+                        }
+                      />
+                      Required
+                    </label>
+                  )}
                   <label className="flex items-center gap-2 text-sm font-medium text-ink">
                     <input
                       type="checkbox"
@@ -440,7 +650,7 @@ export function MenuEditor({
                         updateCourse(course.id, (current) => ({ ...current, active: event.target.checked }))
                       }
                     />
-                    Visible to guests
+                    {isPromo ? "Offer this group" : "Visible to guests"}
                   </label>
                 </div>
 
@@ -606,6 +816,17 @@ export function MenuEditor({
                             />
                           </div>
 
+                          {/* Only promotions are priced; dinner is part of the stay. */}
+                          {isPromo ? (
+                            <PromoPricing
+                              option={option}
+                              currency={currency}
+                              onChange={(patch) =>
+                                updateOption(course.id, option.id, (current) => ({ ...current, ...patch }))
+                              }
+                            />
+                          ) : null}
+
                           <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
                             <label className="flex items-center gap-2 text-sm font-medium text-ink">
                               <input
@@ -622,7 +843,7 @@ export function MenuEditor({
                               Available
                             </label>
                             <Button variant="danger" onClick={() => removeOption(course.id, option.id)}>
-                              Remove option
+                              {isPromo ? "Remove product" : "Remove option"}
                             </Button>
                           </div>
                         </>

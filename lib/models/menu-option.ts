@@ -11,6 +11,8 @@ const menuOptionSchema = new Schema(
     // Added later; documents without them read as undefined/false.
     ingredients: { type: String },
     vegan: { type: Boolean, default: false },
+    price: { type: Number, min: 0, default: 0 },
+    discountPercent: { type: Number, min: 0, max: 100, default: 0 },
     translations: { type: Schema.Types.Mixed, default: {} },
   },
   { timestamps: true },

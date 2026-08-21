@@ -132,6 +132,8 @@ export const ro: PartialDictionary = {
       afterStay: "după încheierea sejurului",
       afterStayHint: "După sejur",
       available: "{count} locuri libere",
+      closedForBooking: "rezervările pentru această seară s-au închis",
+      closedForBookingHint: "Prea târziu",
     },
   },
 
@@ -282,6 +284,35 @@ export const ro: PartialDictionary = {
     startAgain: "Începeți o rezervare nouă",
   },
 
+  promo: {
+    eyebrow: "Oferit odată cu rezervarea",
+    title: "Ceva pentru masă",
+    description:
+      "Ales acum, pregătit pentru seara respectivă. Le oferim aici și nicăieri altundeva — vor fi ale dumneavoastră doar dacă le alegeți pe acest ecran.",
+    onlyNow: "Disponibil doar pe acest ecran",
+    none: "Nu, mulțumesc",
+    noneHint: "Nimic din această grupă",
+    free: "Din partea casei",
+    was: "De obicei {price}",
+    discount: "−{percent}%",
+    chosenTitle: "Rezervat pentru masa dumneavoastră",
+    total: "De achitat la masă",
+    youSave: "Economisiți {amount}",
+    saving: "Se salvează…",
+    saved: "Salvat în rezervarea dumneavoastră",
+    retry: "Încercați din nou",
+    error: "Nu am putut salva alegerea. Este încă pe ecran — vă rugăm să încercați din nou.",
+    gone: "Acest produs nu mai este disponibil. Reîncărcați pagina pentru a vedea oferta actuală.",
+    groupOptions: "Opțiuni în {group}",
+    takenTitle: "Comandat odată cu rezervarea",
+    takenNote: "Ales pe ecranul de confirmare. Vă rugăm să vă adresați recepției dacă nu este corect.",
+    change: "Modificați",
+    changeHint: "Îl puteți schimba cu altul sau renunța. Ceva nou se poate adăuga doar la momentul rezervării.",
+    removeOne: "Eliminați",
+    keepEditing: "Gata",
+    removedAll: "Eliminat. Promoțiile se oferă doar la rezervare, deci acesta nu mai poate fi adăugat aici.",
+  },
+
   contact: {
     legend: "Date de contact",
     why: "În cazul în care restaurantul trebuie să vă contacteze în legătură cu această rezervare.",
@@ -313,6 +344,8 @@ export const ro: PartialDictionary = {
     passKeyTooManyGuests: "Rezervarea dumneavoastră la noi este pentru mai puține persoane. Adresați-vă recepției.",
     dateUnavailable: "Din păcate, această dată nu mai este disponibilă. Vă rugăm să alegeți alta.",
     dateFull: "Din păcate, această dată este ocupată complet. Vă rugăm să alegeți altă seară.",
+    bookingClosed:
+      "Rezervările pentru acea seară s-au închis. Vă rugăm să formați 9 din cameră, iar recepția se va ocupa.",
     tableJoinFailed: "Nu v-am putut așeza la acea rezervare. Verificați numărul și încercați din nou.",
     changesClosed: "Modificările se închid cu douăsprezece ore înainte de cină. Adresați-vă recepției și vă vom ajuta.",
     notFound: "Nu am găsit nicio rezervare pentru această cheie de acces.",

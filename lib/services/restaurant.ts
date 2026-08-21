@@ -5,11 +5,13 @@ import { MenuOptionModel } from "@/lib/models/menu-option";
 import { RestaurantDateModel } from "@/lib/models/restaurant-date";
 import { localizeMenuCatalog } from "@/lib/menu-localization";
 import { decodeStoredImage, isStoredImage, toPublicImageUrl } from "@/lib/menu-images";
+import { discountedPrice, toCents } from "@/lib/money";
 import {
+  menuCatalogOf,
   menuKindOf,
   withRemainingSeats,
+  type MenuCatalog,
   type MenuCourse,
-  type MenuKind,
   type MenuOption,
   type RestaurantDateAvailability,
 } from "@/types/booking";
@@ -31,6 +33,7 @@ export async function getRestaurantDates(): Promise<RestaurantDateAvailability[]
       serviceTime: date.serviceTime ? String(date.serviceTime) : undefined,
       serviceEndTime: date.serviceEndTime ? String(date.serviceEndTime) : undefined,
       premium: Boolean(date.premium),
+      bookingCutoffHours: Number(date.bookingCutoffHours ?? 0),
     }),
   );
 }
@@ -54,6 +57,7 @@ export async function getRestaurantDate(date: string): Promise<RestaurantDateAva
     serviceTime: record.serviceTime ? String(record.serviceTime) : undefined,
     serviceEndTime: record.serviceEndTime ? String(record.serviceEndTime) : undefined,
     premium: Boolean(record.premium),
+    bookingCutoffHours: Number(record.bookingCutoffHours ?? 0),
   });
 }
 
@@ -70,18 +74,29 @@ function toMenuOption(option: MongoDocument): MenuOption {
     imageUrl: typeof option.imageUrl === "string" ? option.imageUrl : "",
     ingredients: typeof option.ingredients === "string" ? option.ingredients : "",
     vegan: Boolean(option.vegan),
+    price: toCents(Number(option.price ?? 0)),
+    discountPercent: Math.round(Number(option.discountPercent ?? 0)),
     translations: (option.translations as MenuCourse["translations"]) ?? {},
   };
 }
 
 function toMenuCourse(course: MongoDocument, options: MongoDocument[]): MenuCourse {
+  // `menuCatalogOf` resolves the legacy `addOn` flag, so a course from the
+  // first version of promotions reads as a promotions course without anything
+  // being written to it.
+  const catalog = menuCatalogOf({
+    menu: course.menu as MenuCourse["menu"],
+    addOn: Boolean(course.addOn),
+  });
+
   return {
     id: String(course._id),
-    menu: course.menu === "premium" ? "premium" : "standard",
+    menu: catalog,
     order: Number(course.order),
     name: String(course.name),
     description: String(course.description ?? ""),
-    required: Boolean(course.required),
+    // A promotion is never compulsory, whatever the stored flag says.
+    required: catalog === "promo" ? false : Boolean(course.required),
     active: Boolean(course.active),
     imageUrl: typeof course.imageUrl === "string" ? course.imageUrl : "",
     translations: (course.translations as MenuCourse["translations"]) ?? {},
@@ -94,20 +109,28 @@ function toMenuCourse(course: MongoDocument, options: MongoDocument[]): MenuCour
  * has to be able to see and re-enable what it switched off.
  */
 /**
- * Absent reads as the everyday menu, so older courses need no migration. It is
- * defined in `types/booking.ts` — the dashboard needs it in the browser, and
- * this module pulls in Mongoose — and re-exported here for existing callers.
+ * Absent reads as the everyday menu, so older courses need no migration. Both
+ * are defined in `types/booking.ts` — the dashboard needs them in the browser,
+ * and this module pulls in Mongoose — and re-exported here for existing
+ * callers.
  */
-export { menuKindOf };
+export { menuCatalogOf, menuKindOf };
 
-export async function getFullMenuCatalog(menu?: MenuKind): Promise<MenuCourse[]> {
+export async function getFullMenuCatalog(menu?: MenuCatalog): Promise<MenuCourse[]> {
   const all = await loadFullCatalog();
-  return menu ? all.filter((course) => menuKindOf(course) === menu) : all;
+  return menu ? all.filter((course) => menuCatalogOf(course) === menu) : all;
 }
 
 async function loadFullCatalog(): Promise<MenuCourse[]> {
   if (!isMongoConfigured()) {
-    return getLocalMenu();
+    // The local store keeps whatever was written to it, so the legacy `addOn`
+    // flag is resolved on the way out here too.
+    const courses = await getLocalMenu();
+    return courses.map((course) => ({
+      ...course,
+      menu: menuCatalogOf(course),
+      required: menuCatalogOf(course) === "promo" ? false : course.required,
+    }));
   }
 
   await connectToDatabase();
@@ -123,7 +146,7 @@ async function loadFullCatalog(): Promise<MenuCourse[]> {
  * Both this and the admin editor now read the same store, so a saved menu
  * change is immediately visible in the booking flow.
  */
-export async function getMenuCatalog(language = "en", menu: MenuKind = "standard"): Promise<MenuCourse[]> {
+export async function getMenuCatalog(language = "en", menu: MenuCatalog = "standard"): Promise<MenuCourse[]> {
   const catalog = await getFullMenuCatalog(menu);
 
   const visible = catalog
@@ -140,6 +163,37 @@ export async function getMenuCatalog(language = "en", menu: MenuKind = "standard
     .sort((a, b) => a.order - b.order);
 
   return localizeMenuCatalog(visible, language);
+}
+
+/**
+ * The promotions a guest may be offered, in their language.
+ *
+ * Separate from `getMenuCatalog("…", "promo")` by one rule: a group with
+ * nothing left in it is dropped. An empty group renders as a heading with no
+ * choices under it, which reads as a page that failed to load — and it happens
+ * naturally, when the last bottle in a group is switched off for the season.
+ *
+ * Both the confirmation screen and the route that saves a choice read through
+ * here, so the two can never disagree about what was on offer.
+ */
+export async function getPromoCatalog(language = "en"): Promise<MenuCourse[]> {
+  const catalog = await getMenuCatalog(language, "promo");
+  return catalog.filter((course) => course.options.length > 0);
+}
+
+/**
+ * What a promotion costs, worked out from the catalogue rather than from
+ * anything the browser sent.
+ *
+ * The client is shown a price and computes the same figure to display, but the
+ * figure that is stored is this one — for the same reason dish names are
+ * resolved by id (rule 2.6): a request can otherwise claim its own discount.
+ */
+export function priceOfPromoOption(option: Pick<MenuOption, "price" | "discountPercent">) {
+  const price = toCents(Math.max(0, Number(option.price ?? 0)));
+  const discountPercent = Math.min(100, Math.max(0, Math.round(Number(option.discountPercent ?? 0))));
+
+  return { price, discountPercent, finalPrice: discountedPrice(price, discountPercent) };
 }
 
 /**
@@ -180,7 +234,7 @@ export async function findMenuImage(id: string) {
  * and it exists only once they press save — so opening the page to look does
  * not create a menu nobody asked for.
  */
-export function draftMenuCopy(courses: MenuCourse[], menu: MenuKind): MenuCourse[] {
+export function draftMenuCopy(courses: MenuCourse[], menu: MenuCatalog): MenuCourse[] {
   return courses.map((course, courseIndex) => {
     const courseId = `draft-course-${courseIndex + 1}`;
 
@@ -205,10 +259,13 @@ export function draftMenuCopy(courses: MenuCourse[], menu: MenuKind): MenuCourse
  * out again is how they drift apart. `isDraft` tells the editor to say so.
  */
 export async function getMenuCatalogForEditing(
-  menu: MenuKind,
+  menu: MenuCatalog,
 ): Promise<{ courses: MenuCourse[]; isDraft: boolean }> {
   const courses = await getFullMenuCatalog(menu);
 
+  // Only the premium menu opens as a copy. An empty promotions catalogue opens
+  // blank on purpose: a wine list seeded with the starters would have to be
+  // emptied before it could be filled.
   if (courses.length > 0 || menu !== "premium") {
     return { courses, isDraft: false };
   }
@@ -228,15 +285,35 @@ export async function getMenuCatalogForEditing(
  * deleted the whole collection and re-created it, which orphaned every
  * historical reservation.
  */
-export async function saveMenuCatalog(courses: MenuCourse[], menu: MenuKind = "standard"): Promise<MenuCourse[]> {
-  // Each menu is saved on its own; the editor only ever sends one of them,
-  // and the other must survive untouched.
-  const tagged = courses.map((course) => ({ ...course, menu }));
+export async function saveMenuCatalog(
+  courses: MenuCourse[],
+  menu: MenuCatalog = "standard",
+): Promise<MenuCourse[]> {
+  /**
+   * Each catalogue is saved on its own; the editor only ever sends one of
+   * them, and the other two must survive untouched.
+   *
+   * `addOn: false` is written on every course, not just promotions. It is how
+   * the legacy flag is retired: a course the first version marked `addOn` is
+   * read as a promotions course, appears in the promotions editor, and the
+   * first save there writes `menu: "promo"` and clears the flag. Leaving it set
+   * would mean a course matching both the promotions filter and — once `menu`
+   * said otherwise — nothing at all.
+   */
+  const tagged = courses.map((course) => ({
+    ...course,
+    menu,
+    addOn: false,
+    // A promotion nobody may decline is not a promotion. Forced here rather
+    // than trusted from the client, which is also where the editor hides the
+    // checkbox.
+    required: menu === "promo" ? false : course.required,
+  }));
 
   if (!isMongoConfigured()) {
-    const others = (await getLocalMenu()).filter((course) => menuKindOf(course) !== menu);
+    const others = (await getLocalMenu()).filter((course) => menuCatalogOf(course) !== menu);
     const saved = await saveLocalMenu([...others, ...tagged]);
-    return saved.filter((course) => menuKindOf(course) === menu);
+    return saved.filter((course) => menuCatalogOf(course) === menu);
   }
 
   await connectToDatabase();
@@ -252,6 +329,7 @@ export async function saveMenuCatalog(courses: MenuCourse[], menu: MenuKind = "s
       description: course.description,
       required: course.required,
       active: course.active,
+      addOn: false,
       imageUrl: course.imageUrl ?? "",
       translations: course.translations ?? {},
     };
@@ -278,6 +356,12 @@ export async function saveMenuCatalog(courses: MenuCourse[], menu: MenuKind = "s
         imageUrl: option.imageUrl ?? "",
         ingredients: option.ingredients ?? "",
         vegan: option.vegan ?? false,
+        // Only promotions are priced, and a price that survived being moved
+        // out of the promotions catalogue would be charged for a dinner course
+        // nobody agreed to pay for.
+        price: menu === "promo" ? toCents(Math.max(0, Number(option.price ?? 0))) : 0,
+        discountPercent:
+          menu === "promo" ? Math.min(100, Math.max(0, Math.round(Number(option.discountPercent ?? 0)))) : 0,
         translations: option.translations ?? {},
       };
 
@@ -293,10 +377,24 @@ export async function saveMenuCatalog(courses: MenuCourse[], menu: MenuKind = "s
   }
 
   /**
-   * Pruning is scoped to this menu. Courses on the other menu have ids that are
-   * not in `keptCourseIds`, and deleting by that alone would wipe them.
+   * Pruning is scoped to this catalogue. Courses in the other two have ids that
+   * are not in `keptCourseIds`, and deleting by that alone would wipe them —
+   * which is rule 2.3, and the bug it is named after.
+   *
+   * The everyday filter is the awkward one, and it is awkward for a reason:
+   * "standard" is the *absence* of a marking, so it cannot be matched by
+   * equality. It is everything not marked premium, not marked promo, and not
+   * carrying the legacy `addOn` flag — because a course flagged that way is
+   * read as a promotion everywhere else, and a filter that disagreed would
+   * delete it the next time the everyday menu was saved.
    */
-  const menuFilter = menu === "standard" ? { menu: { $ne: "premium" } } : { menu: "premium" };
+  const menuFilter: Record<string, unknown> =
+    menu === "premium"
+      ? { menu: "premium" }
+      : menu === "promo"
+        ? { $or: [{ menu: "promo" }, { addOn: true }] }
+        : { menu: { $nin: ["premium", "promo"] }, addOn: { $ne: true } };
+
   const survivingCourses = await MenuCourseModel.find(menuFilter).select("_id").lean();
   const survivingIds = survivingCourses.map((course) => String(course._id));
 

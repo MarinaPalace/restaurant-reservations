@@ -12,6 +12,9 @@ import { NONE_OPTION_ID, NONE_OPTION_NAME } from "@/lib/menu-selection";
 import { useSearchParams } from "next/navigation";
 import { useBookingSession } from "@/hooks/use-booking-session";
 import { useI18n } from "@/components/i18n-provider";
+import { PromoSummary } from "@/components/promo-summary";
+import { localizeMenuCatalog } from "@/lib/menu-localization";
+import type { Currency } from "@/lib/money";
 import { format, localeOf, plural } from "@/lib/i18n";
 import { translateApiError } from "@/lib/i18n/errors";
 import { PASS_KEY_PREFIX, formatPassKey, isValidPassKeyFormat, normalizePassKey } from "@/lib/pass-key";
@@ -56,7 +59,16 @@ function replaceEntry(loaded: Loaded, reservation: ReservationRecord, patch: Par
  * to other rooms so they can share a table, and any of those rooms could
  * otherwise change or cancel the booking.
  */
-export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
+export function ManageReservation({
+  menu,
+  /** For swapping a promotion already held. Nothing here can add one. */
+  promoGroups,
+  currency,
+}: {
+  menu: MenuCourse[];
+  promoGroups: MenuCourse[];
+  currency: Currency;
+}) {
   const searchParams = useSearchParams();
   const session = useBookingSession();
   const { t, language } = useI18n();
@@ -435,6 +447,37 @@ export function ManageReservation({ menu }: { menu: MenuCourse[] }) {
           );
         })}
       </div>
+
+      {/*
+        Read-only, and placed after the dishes rather than among them: a
+        promotion is not a course, and nothing on this screen can add or remove
+        one — they are offered on the confirmation screen and nowhere else. It
+        is here so a guest can see what is on their booking, which is the only
+        way "I never ordered that" has an answer they can check themselves.
+      */}
+      <PromoSummary
+        addOns={reservation.addOns}
+        currency={currency}
+        className="mt-4"
+        /**
+         * Editable only while the booking itself is: inside the change
+         * deadline, and not cancelled. Past it the kitchen and the bar are
+         * already counting, so this becomes a plain record — the same line the
+         * dish choices follow.
+         */
+        editing={
+          canModify && !isCancelled
+            ? {
+                groups: localizeMenuCatalog(promoGroups, language),
+                passKey: normalizePassKey(passKey),
+                reservationNumber: reservation.reservationNumber,
+                onSaved: (updated) => {
+                  setLoaded(replaceEntry(loaded, updated));
+                },
+              }
+            : undefined
+        }
+      />
 
       {editing ? (
         <div className="mt-6 space-y-5">

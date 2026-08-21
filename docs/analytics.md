@@ -116,13 +116,21 @@ and the two diverge exactly when it matters.
 The field: `ReservationRecord.attendance?: "seated" | "no-show"`. Absent reads as unknown — **not**
 as "seated", because guessing here quietly inflates every number that uses it.
 
-Where it gets set: the service sheet already has a row per table and per booking, and a column of
-actions. This is one tap per row on the night. **It is the same data `docs/service-tracking.md`
-proposes collecting** — read that note before designing this, because building two different
-check-in mechanisms would be worse than building neither. If service tracking is built first,
-analytics should read what it produces rather than adding a second field.
+Where it gets set: **the service board — `docs/service-tracking.md`, which is now the plan for
+this.** Do not add a second attendance field here; read what that produces.
 
-Until this exists, **do not publish a no-show number**, and do not label booked covers as "served".
+Three things from it that analytics has to honour:
+
+- The field is `attendance?: { status: "seated" | "no-show"; … }`, and **absent is unknown** —
+  neither seated nor no-show. Nothing may infer a no-show from silence: on a busy night nobody
+  taps, and reading that as "nobody came" would poison every number built on it.
+- **Report coverage beside the rate.** *"No-shows: 3 of 38 — attendance recorded for 38 of 42."*
+  A no-show rate over a night nobody marked is a confident number about nothing, and the coverage
+  figure is what stops it being quoted.
+- Once it exists, occupancy gains a **served** figure beside **booked**, and the two diverging is
+  itself the interesting number.
+
+Until then, **do not publish a no-show number**, and do not label booked covers as "served".
 
 ### 4.2 The guest's language
 

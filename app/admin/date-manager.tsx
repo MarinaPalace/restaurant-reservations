@@ -9,6 +9,7 @@ import { Field, Input } from "@/components/ui/field";
 import { KitchenReport } from "@/app/admin/kitchen-report";
 import { formatLongDate, isPastDateKey, isValidDateKey, startOfMonth, todayKey } from "@/lib/date";
 import { canGuestBookDate, getBookingDeadline } from "@/lib/reservation-policy";
+import { toRestaurantDatePayload } from "@/lib/restaurant-date-form";
 import { compareRoomNumbers } from "@/lib/room";
 import {
   menuKindOf,
@@ -249,14 +250,10 @@ export function AdminDateManager({
       const response = await fetch("/api/admin/dates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          date: selectedEntry.date,
-          isOpen: selectedEntry.isOpen,
-          capacity: Number(selectedEntry.capacity),
-          serviceTime: selectedEntry.serviceTime || undefined,
-          serviceEndTime: selectedEntry.serviceEndTime || undefined,
-          premium: Boolean(selectedEntry.premium),
-        }),
+        // Built by `toRestaurantDatePayload`, not listed here: a field added
+        // to the type later must not be silently dropped on the way out, which
+        // is exactly how the booking cutoff came to save as 0 every time.
+        body: JSON.stringify(toRestaurantDatePayload(selectedEntry)),
       });
 
       if (!response.ok) {

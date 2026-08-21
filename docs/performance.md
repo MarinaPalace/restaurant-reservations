@@ -1,17 +1,15 @@
 # Performance — why it got slow, and how to find out
 
-**Status: the structural fixes are in; the cause is still unconfirmed.** Signing in takes around a
-minute, and it began after the service board shipped. This note was the plan; §7 records what was
-actually changed against it.
+**Status: found, and fixed — pending confirmation on the deployment.** It was §3.1: the pages that
+read the whole reservation collection. §7 lists what changed, and **§8 is the part worth reading**,
+because it records how the cause was actually identified and which of the theories below were wrong.
 
-**Nothing here is a confirmed cause.** The findings below come from reading the code, not from
-measuring the deployment, and the first section exists precisely so the next session does not spend
-its time optimising the wrong thing.
+**Sections 1 to 6 are the original note, left as written.** They are a plan for an investigation
+that had not happened yet, and their ranking of suspects is *not* what turned out to be true — §1.1
+in particular is confidently argued and wrong. They are kept because the reasoning is worth having
+next to the outcome, not because they should be followed again as they stand.
 
-**§1 has still not been done.** The work in §7 was the part that is right regardless of what the
-measurement says — an unindexed full-collection scan on a polled page is worth removing whether or
-not it is *the* minute. It is not a substitute for measuring, and if signing in is still slow, §1.1
-is where to go first, not back into the query layer.
+Read §8 first.
 
 ---
 
@@ -233,18 +231,60 @@ depend on. One test asserts the new query and the old filter return the same res
 
 ### What was deliberately left
 
-**`/admin` still loads every reservation.** `AdminDateManager` holds the whole list client-side and
-its calendar can select *any* date, past included — narrowing the query blanks out every evening
-outside the window until the manager can fetch a date on demand. That is a real change to the
-component, not a query swap, and it wanted its own commit. The `createdAt` index (§3.1) makes the
-scan it still does cheaper, and unlike the board this page is not on a poll: it is paid once per
-sign-in.
-
 **No caching**, per §6.
 
-### Still to measure
+`getReservationsList` is still exported and still does what it always did. Nothing on a page calls
+it any more.
 
-§1.1 (**is the Atlas cluster paused** — still the best single match for *about a minute*), §1.2 (the
-function durations in the Vercel logs) and §3.5 (**confirm `MONGODB_URI` is set in the deployment** —
-there is no `.env` in the checkout to confirm it from). If the cluster is paused or the URI is
-missing, that is the answer and the rest of this note is a footnote to it.
+### The dashboard, which was the actual complaint
+
+`/admin` was doing the same thing as the board and analytics, and it kept doing it after the first
+commit narrowed those two. It is now narrowed as well:
+
+| Change | Where |
+|---|---|
+| `getDashboardCounts(today)` — an aggregate and a `countDocuments`, both off the `date` index | `lib/services/reservations.ts` |
+| Dashboard reads its two counts instead of folding them from every reservation | `app/admin/page.tsx` |
+| Dashboard sends the date manager one evening, not the book | `app/admin/page.tsx` |
+| `GET /api/admin/reservations?date=` — one evening, for the calendar | `app/api/admin/reservations/route.ts` |
+| The manager fetches an evening the first time it is selected, and keeps it | `app/admin/date-manager.tsx` |
+| An evening still loading says so, instead of reading as an empty one | `app/admin/kitchen-report.tsx` |
+
+The counts match `status` as **not cancelled** rather than equal to `confirmed`, because `status` is
+one of the optional fields of §2.2 in `HANDOVER.md`: a booking taken before it existed has none, and
+`toReservationRecord` reads that absence as confirmed. Asking for `confirmed` would have dropped
+every one of them from the dashboard silently. There is a test that unsets the field and asserts it
+is still counted.
+
+---
+
+## 8. What the testing actually showed
+
+The measurement in §1 never happened in the form it was written. Something better did: the symptom
+was narrowed by elimination, from the outside.
+
+| Observation | What it eliminates |
+|---|---|
+| Guest pages are fast | The cluster, the region, the network. They query the same database. |
+| Sign-in is slow **every** time, not just the first | A paused cluster (§1.1) and cold starts (§3.4). Both are slow once, then fast. |
+| `/admin/pass-keys` is fast; `/admin` takes upwards of a minute | Everything the two share — the proxy, the auth guard, the session check, the bcryptjs import (§3.3), `force-dynamic`. The only difference between those two pages is which collection they read. |
+
+That last row is the whole diagnosis. Pass-keys reads a small collection and returns promptly; the
+dashboard read the entire reservation book, sorted on an unindexed field, and then serialised every
+row into the payload sent to the browser. Both costs grow with the number of bookings ever taken and
+neither appears on any page a guest sees.
+
+**§3.1 was right and §1.1 was wrong.** Worth being plain about that, because §1.1 was written as the
+most likely answer and stayed the leading theory until the deployment was actually poked at. *About
+a minute* sounded like a cluster resuming; it was a collection scan all along, and the thing that
+told them apart was not a stopwatch but a second admin page that stayed fast.
+
+`GET /api/admin/diagnostics/timing` was built to settle this and was overtaken by the evidence
+before it was ever deployed. It is still worth one look after this deploys — `pingMs` is the floor
+under every query in the app and nobody here has ever seen the number — but it is a curiosity now,
+not a diagnosis. It can be deleted whenever.
+
+### If the dashboard is still slow after this
+
+Then the remaining suspects are §3.4 and §3.5, and `mongoConfigured` in the diagnostics endpoint
+answers the second in one request. But the elimination above says it will not be.

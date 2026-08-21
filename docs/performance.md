@@ -1,12 +1,17 @@
 # Performance — why it got slow, and how to find out
 
-**Status: reported, not diagnosed.** Signing in takes around a minute, and it began after the
-service board shipped. This note is the plan for the next session: what to measure, in what order,
-and the specific suspects the code already points at.
+**Status: the structural fixes are in; the cause is still unconfirmed.** Signing in takes around a
+minute, and it began after the service board shipped. This note was the plan; §7 records what was
+actually changed against it.
 
 **Nothing here is a confirmed cause.** The findings below come from reading the code, not from
 measuring the deployment, and the first section exists precisely so the next session does not spend
 its time optimising the wrong thing.
+
+**§1 has still not been done.** The work in §7 was the part that is right regardless of what the
+measurement says — an unindexed full-collection scan on a polled page is worth removing whether or
+not it is *the* minute. It is not a substitute for measuring, and if signing in is still slow, §1.1
+is where to go first, not back into the query layer.
 
 ---
 
@@ -200,3 +205,46 @@ measuring in §1 happens.
 - **Do not lower the bcrypt cost.**
 - **Do not optimise from this note alone.** Every item here is a hypothesis from reading the code.
   §1 exists because the last time this project guessed at a cause it was wrong twice.
+
+---
+
+## 7. What was done
+
+Everything in this section is committed. It is §5 items 3, 4, 5 and 6 — the ones that stand on their
+own merits without the measurement, and none of them changes what any page can show.
+
+| § | Change | Where |
+|---|---|---|
+| 3.1 | `createdAt: -1` index on the reservation schema | `lib/models/reservation.ts` |
+| 3.1 | `getReservationsByDate(date)` — one evening, off the `date` index | `lib/services/reservations.ts` |
+| 3.1 | `getReservationsBetween(from, to)` — an inclusive `date` range | `lib/services/reservations.ts` |
+| 3.1 | Service board reads one evening instead of filtering everything in JS | `app/admin/service/page.tsx` |
+| 3.1 | Analytics reads the range ∪ its comparison period, not the collection | `app/admin/analytics/page.tsx` |
+| 3.2 | Board poll widened 5s → 20s | `app/admin/service/service-board.tsx` |
+| 3.3 | `DUMMY_HASH` computed on first use instead of at import | `lib/services/staff-users.ts` |
+
+The local JSON store got matching `listLocalReservationsByDate` / `listLocalReservationsBetween`, so
+development does not quietly keep the full-file read the deployment no longer does.
+
+Narrowing a query is only safe if it selects the same rows the JavaScript filter did, so
+`lib/services/reservations-range.mongo.test.ts` pins the boundaries: both ends inclusive,
+neighbouring evenings excluded, month and year boundaries, and the newest-first order the lists
+depend on. One test asserts the new query and the old filter return the same reservations.
+
+### What was deliberately left
+
+**`/admin` still loads every reservation.** `AdminDateManager` holds the whole list client-side and
+its calendar can select *any* date, past included — narrowing the query blanks out every evening
+outside the window until the manager can fetch a date on demand. That is a real change to the
+component, not a query swap, and it wanted its own commit. The `createdAt` index (§3.1) makes the
+scan it still does cheaper, and unlike the board this page is not on a poll: it is paid once per
+sign-in.
+
+**No caching**, per §6.
+
+### Still to measure
+
+§1.1 (**is the Atlas cluster paused** — still the best single match for *about a minute*), §1.2 (the
+function durations in the Vercel logs) and §3.5 (**confirm `MONGODB_URI` is set in the deployment** —
+there is no `.env` in the checkout to confirm it from). If the cluster is paused or the URI is
+missing, that is the answer and the rest of this note is a footnote to it.

@@ -4,7 +4,7 @@ import { PageShell } from "@/components/page-shell";
 import { ServiceBoard } from "@/app/admin/service/service-board";
 import { getCurrentStaffUser } from "@/lib/auth/guard";
 import { hasPermission } from "@/lib/auth/permissions";
-import { getReservationsList } from "@/lib/services/reservations";
+import { getReservationsByDate } from "@/lib/services/reservations";
 import { getFullMenuCatalog } from "@/lib/services/restaurant";
 import { buildBoard } from "@/lib/service-board";
 import { isValidDateKey, todayKey } from "@/lib/date";
@@ -44,7 +44,10 @@ export default async function ServicePage({ searchParams }: PageProps<"/admin/se
   const requested = typeof params.date === "string" && isValidDateKey(params.date) ? params.date : null;
   const date = requested ?? todayKey();
 
-  const [reservations, menu] = await Promise.all([getReservationsList(), getFullMenuCatalog()]);
+  // One evening only. `getReservationsByDate` walks the `date` index rather than
+  // loading the whole collection to filter it in JS — the board is re-read on a
+  // poll, so this is the read that matters most. See docs/performance.md §3.1.
+  const [evening, menu] = await Promise.all([getReservationsByDate(date), getFullMenuCatalog()]);
 
   /**
    * Dishes are named from the everyday catalogue unless this evening is served
@@ -52,7 +55,6 @@ export default async function ServicePage({ searchParams }: PageProps<"/admin/se
    * `menuKindOf` returns null for promotions: a bottle of wine is not a course
    * to be served off this board.
    */
-  const evening = reservations.filter((reservation) => reservation.date === date);
   const kind = evening.some((reservation) => reservation.kind === "premium") ? "premium" : "standard";
   const courses = menu.filter((course) => menuKindOf(course) === kind);
 

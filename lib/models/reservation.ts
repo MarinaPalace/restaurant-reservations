@@ -118,5 +118,10 @@ const reservationSchema = new Schema(
   { timestamps: true },
 );
 
+// The staff lists sort newest-first on `createdAt` (added by `timestamps`).
+// Without this index that sort is a blocking in-memory stage on a full-collection
+// scan — and fails outright past 32MB. See docs/performance.md §3.1.
+reservationSchema.index({ createdAt: -1 });
+
 export const ReservationModel =
   mongoose.models.Reservation || mongoose.model("Reservation", reservationSchema);

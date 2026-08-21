@@ -135,6 +135,20 @@ export async function listLocalReservations(): Promise<ReservationRecord[]> {
   return [...reservations].sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
 }
 
+export async function listLocalReservationsByDate(date: string): Promise<ReservationRecord[]> {
+  const reservations = await readReservations();
+  return reservations
+    .filter((entry) => entry.date === date)
+    .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+}
+
+export async function listLocalReservationsBetween(from: string, to: string): Promise<ReservationRecord[]> {
+  const reservations = await readReservations();
+  return reservations
+    .filter((entry) => entry.date >= from && entry.date <= to)
+    .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+}
+
 export async function getLocalReservation(reservationNumber: string): Promise<ReservationRecord | null> {
   const reservations = await readReservations();
   return reservations.find((entry) => entry.reservationNumber === reservationNumber) ?? null;

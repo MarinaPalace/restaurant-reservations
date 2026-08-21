@@ -9,6 +9,8 @@ import {
   findLocalReservationsByPassKey,
   getLocalReservation,
   listLocalReservations,
+  listLocalReservationsByDate,
+  listLocalReservationsBetween,
   reservationNumberExists,
   deleteLocalReservation,
   restoreLocalReservation,
@@ -789,6 +791,43 @@ export async function getReservationsList(): Promise<ReservationRecord[]> {
 
   await connectToDatabase();
   const reservations = await ReservationModel.find().sort({ createdAt: -1 }).lean();
+  return reservations.map((reservation) => toReservationRecord(reservation as MongoReservationDocument));
+}
+
+/**
+ * Every reservation for a single evening, newest-first.
+ *
+ * `date` is indexed, so this is a range walk rather than the full-collection
+ * scan `getReservationsList` does. The service board needs exactly one evening
+ * and is re-read on a poll — see docs/performance.md §3.1.
+ */
+export async function getReservationsByDate(date: string): Promise<ReservationRecord[]> {
+  if (!isMongoConfigured()) {
+    return listLocalReservationsByDate(date);
+  }
+
+  await connectToDatabase();
+  const reservations = await ReservationModel.find({ date }).sort({ createdAt: -1 }).lean();
+  return reservations.map((reservation) => toReservationRecord(reservation as MongoReservationDocument));
+}
+
+/**
+ * Reservations whose evening falls in `[fromKey, toKey]` inclusive, newest-first.
+ *
+ * `date` keys are `YYYY-MM-DD`, so a string range is a chronological range and
+ * the `date` index carries it. Analytics folds a window on read; it should fold
+ * this month, not everything since the restaurant opened — docs/performance.md
+ * §3.1 and docs/analytics.md §5.4.
+ */
+export async function getReservationsBetween(fromKey: string, toKey: string): Promise<ReservationRecord[]> {
+  if (!isMongoConfigured()) {
+    return listLocalReservationsBetween(fromKey, toKey);
+  }
+
+  await connectToDatabase();
+  const reservations = await ReservationModel.find({ date: { $gte: fromKey, $lte: toKey } })
+    .sort({ createdAt: -1 })
+    .lean();
   return reservations.map((reservation) => toReservationRecord(reservation as MongoReservationDocument));
 }
 

@@ -438,8 +438,25 @@ shown "30.00" learns nothing; a guest shown "40.00 30.00 −25%" learns they are
 something. `price: 0` reads as complimentary and still has to be chosen, which is what tells the
 kitchen to pour it.
 
-What a guest took is stored on the reservation as `addOns`, priced by the server, and printed with
-the confirmation.
+What a guest took is stored on the reservation as `addOns`, priced by the server, and shown in four
+more places — because an order nobody can see is not an order:
+
+- the **staff reservation page**, with prices and a total, since it goes on the bill;
+- the **service sheet**, in the Comment column as `+ Chardonnay`, in accent rather than the red that
+  means an allergy;
+- the **kitchen slip**, under its own "Promotions to bring" heading with its own count;
+- the **guest's manage screen**, read-only. That one is not decoration: without it the only party
+  who could say what had been ordered was the restaurant, and "I never ordered a bottle of wine"
+  had no answer the guest could check for themselves.
+
+**A promotion is never a plate.** It shares no column with the dishes, is not counted in
+`buildOptionTotals`, and does not appear in `buildOptionColumns` — it is poured and carried, not
+cooked, and a bottle of wine among the plate counts is exactly the confusion the separate catalogue
+exists to prevent. `buildExtrasList` is its own tally. Tests in `lib/kitchen-report.test.ts` hold
+the line.
+
+It shares the Comment column rather than taking one of its own, because a new column changes the
+sheet's percentage widths — the arithmetic rule 2.8 is about — and would sit empty most evenings.
 
 **Currency.** `promo.currency` in the settings store, default `EUR`, changed in the promotions
 editor beside the prices it applies to. It is the only setting so far; `lib/services/settings.ts` is
@@ -752,7 +769,7 @@ Roughly in the order I would tackle them for beta.
 
 ```bash
 npm run dev          # local, JSON store, admin/admin123
-npm test             # 481 tests; the Mongo suite runs an in-memory mongod
+npm test             # 492 tests; the Mongo suite runs an in-memory mongod
 npm run typecheck
 npm run lint
 npm run build

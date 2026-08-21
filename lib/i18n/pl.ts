@@ -308,6 +308,8 @@ export const pl: PartialDictionary = {
     error: "Nie udało się zapisać wyboru. Nadal widnieje na ekranie — prosimy spróbować ponownie.",
     gone: "To nie jest już dostępne. Prosimy odświeżyć stronę, aby zobaczyć aktualną ofertę.",
     groupOptions: "Wybór w grupie {group}",
+    takenTitle: "Zamówione do Państwa rezerwacji",
+    takenNote: "Wybrane na ekranie potwierdzenia. Prosimy o kontakt z recepcją, jeśli to się nie zgadza.",
   },
 
   contact: {

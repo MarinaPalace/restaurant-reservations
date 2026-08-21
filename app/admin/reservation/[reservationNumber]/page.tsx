@@ -11,6 +11,8 @@ import { getReservationByNumber } from "@/lib/services/reservations";
 import { getAuditEntries } from "@/lib/services/audit-log";
 import { getPassKeyById } from "@/lib/services/pass-keys";
 import { formatPassKey } from "@/lib/pass-key";
+import { getCurrency } from "@/lib/services/settings";
+import { formatPrice, sumFinalPrices } from "@/lib/money";
 import { getMenuCatalog } from "@/lib/services/restaurant";
 import { canonicalizeSelections } from "@/lib/menu-selection";
 import { reservationLabel } from "@/lib/kitchen-report";
@@ -29,11 +31,13 @@ export default async function ReservationDetailPage({
   }
 
   const { reservationNumber } = await params;
-  const [stored, menu, history] = await Promise.all([
+  const [stored, menu, history, currency] = await Promise.all([
     getReservationByNumber(reservationNumber),
     getMenuCatalog(),
     // Everything that has happened to this booking, newest first.
     getAuditEntries({ reservationNumber, limit: 50 }),
+    // What promotions on this booking are priced in.
+    getCurrency(),
   ]);
 
   if (!stored) {
@@ -262,6 +266,50 @@ export default async function ReservationDetailPage({
             </section>
           ))}
         </div>
+
+        {/*
+          What the guest took on the confirmation screen.
+
+          It is not a course and not a plate, so it is deliberately not folded
+          into the guest lists above: nobody cooks it, and counting it there
+          would put it in the kitchen's totals. Reception needs it because it
+          goes on the bill, which is why the prices are here in full rather
+          than just the names.
+        */}
+        {reservation.addOns?.length ? (
+          <section className="mt-6 rounded-control border border-gold/40 bg-accent-soft p-4">
+            <h2 className="eyebrow">Promotions ordered</h2>
+            <table className="mt-2 w-full text-sm">
+              <tbody>
+                {reservation.addOns.map((addOn) => (
+                  <tr key={addOn.optionId} className="border-t border-gold/20 first:border-t-0">
+                    <td className="py-1.5 pr-4 font-semibold text-ink">{addOn.optionName}</td>
+                    <td className="py-1.5 pr-4 text-ink-muted">{addOn.courseName}</td>
+                    <td className="py-1.5 text-right whitespace-nowrap tabular-nums">
+                      {addOn.discountPercent > 0 ? (
+                        <>
+                          <s className="text-ink-subtle">{formatPrice(addOn.price, currency, "en")}</s>{" "}
+                          <span className="font-medium text-success">−{addOn.discountPercent}%</span>{" "}
+                        </>
+                      ) : null}
+                      <span className="font-semibold text-ink">{formatPrice(addOn.finalPrice, currency, "en")}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-gold/40">
+                  <td className="py-1.5 pr-4 text-ink-subtle" colSpan={2}>
+                    To settle at the table
+                  </td>
+                  <td className="py-1.5 text-right font-semibold tabular-nums text-ink">
+                    {formatPrice(sumFinalPrices(reservation.addOns), currency, "en")}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </section>
+        ) : null}
 
         {/*
           The trail. It is append-only and outlives the record it describes,

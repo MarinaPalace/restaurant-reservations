@@ -15,6 +15,7 @@ import {
   buildCombinedTableRows,
   buildOptionTotals,
   buildPrepList,
+  buildExtrasList,
   buildRoomRows,
   buildTableCsv,
   chooseSheetPrintSize,
@@ -83,6 +84,12 @@ export function KitchenReport({
   );
   const totals = useMemo(() => buildOptionTotals(roomRows, optionColumns), [roomRows, optionColumns]);
   const prepList = useMemo(() => buildPrepList(optionColumns, totals), [optionColumns, totals]);
+  /**
+   * Promotions for the evening. Worked out from the bookings rather than from
+   * the option columns, because promotions are not columns on this sheet —
+   * they are not plates and must stay out of the kitchen's counts.
+   */
+  const extrasList = useMemo(() => buildExtrasList(reservations), [reservations]);
 
   /**
    * How large the sheet may be printed. Rows and dish columns are what decide
@@ -340,10 +347,23 @@ export function KitchenReport({
                     ))}
                     <td className="px-3 py-2">
                       {row.comment ? (
-                        <span className="font-medium text-danger">{row.comment}</span>
-                      ) : (
+                        <span className="block font-medium text-danger">{row.comment}</span>
+                      ) : null}
+                      {/*
+                        Promotions share the Comment column rather than getting
+                        one of their own. A new column would change the sheet's
+                        percentage widths, which is the arithmetic rule 2.8 is
+                        about — and most evenings would leave it empty. Accent,
+                        not danger: red on this sheet means an allergy.
+                      */}
+                      {row.extras.map((item) => (
+                        <span key={item} className="block font-medium text-accent-ink">
+                          + {item}
+                        </span>
+                      ))}
+                      {!row.comment && row.extras.length === 0 ? (
                         <span className="text-ink-subtle">—</span>
-                      )}
+                      ) : null}
                     </td>
                     <td className="px-3 py-2" data-print="hide">
                       {firstRowOfBooking.has(row.key) ? (
@@ -473,6 +493,11 @@ export function KitchenReport({
                           {entry.note}
                         </span>
                       ))}
+                      {row.extras.map((entry) => (
+                        <span key={entry.room} className="block font-medium text-accent-ink">
+                          {row.isShared ? `${entry.room}: ` : ""}+ {entry.items.join(", ")}
+                        </span>
+                      ))}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2" data-print="hide">
                       <div className="flex flex-col gap-1">
@@ -522,7 +547,7 @@ export function KitchenReport({
 
       {/* The slip the kitchen actually gets: no tables, no rooms, just how
           many of each dish to make. Printed below a cut line. */}
-      {prepList.length > 0 ? (
+      {prepList.length > 0 || extrasList.length > 0 ? (
         <div data-print="prep" className="mt-10">
           <div
             aria-hidden="true"
@@ -538,6 +563,7 @@ export function KitchenReport({
             {serviceTime ? ` · ${serviceTime}` : ""}
           </h3>
 
+          {prepList.length > 0 ? (
           <table className="mt-2 border-collapse text-left text-sm">
             <caption className="sr-only">Quantities of each dish for the kitchen</caption>
             <thead>
@@ -565,6 +591,34 @@ export function KitchenReport({
               </tr>
             </tfoot>
           </table>
+          ) : null}
+
+          {/*
+            The bar's half of the slip. On the same page as the kitchen's,
+            because it is one piece of paper that goes behind the pass, but
+            under its own heading and its own total — a bottle of wine counted
+            among the plates is the confusion the promotions catalogue exists
+            to prevent.
+          */}
+          {extrasList.length > 0 ? (
+            <div className="mt-5">
+              <h4 className="text-sm font-semibold text-ink">Promotions to bring</h4>
+              <table className="mt-1 border-collapse text-left text-sm">
+                <caption className="sr-only">Promotions ordered for this evening</caption>
+                <tbody>
+                  {extrasList.map((line) => (
+                    <tr key={`${line.courseName}-${line.optionName}`} className="border-b border-line">
+                      <td className="py-1 pr-6 text-ink-muted">{line.courseName}</td>
+                      <td className="py-1 pr-6 font-medium text-ink">{line.optionName}</td>
+                      <td className="py-1 text-right text-base font-semibold tabular-nums text-ink">
+                        {line.quantity}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
 
           {reservations.some((reservation) => reservation.notes && reservation.status === "confirmed") ? (
             <div className="mt-4">

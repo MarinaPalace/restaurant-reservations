@@ -302,6 +302,8 @@ export const ro: PartialDictionary = {
     error: "Nu am putut salva alegerea. Este încă pe ecran — vă rugăm să încercați din nou.",
     gone: "Acest produs nu mai este disponibil. Reîncărcați pagina pentru a vedea oferta actuală.",
     groupOptions: "Opțiuni în {group}",
+    takenTitle: "Comandat odată cu rezervarea",
+    takenNote: "Ales pe ecranul de confirmare. Vă rugăm să vă adresați recepției dacă nu este corect.",
   },
 
   contact: {

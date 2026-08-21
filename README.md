@@ -244,7 +244,14 @@ tells the kitchen to pour it. Prices are quoted in a currency set in the promoti
 `EUR` by default — and rendered in the guest's language, so the symbol lands where that language
 puts it.
 
-What the guest took is stored with the booking and prints with the confirmation.
+What the guest took is stored with the booking and shown everywhere it is needed: on the guest's
+confirmation and their manage screen, on the staff reservation page with prices and a total, in the
+service sheet's Comment column as `+ Chardonnay`, and on the kitchen slip under its own heading. It
+is never counted as a plate — nobody cooks it.
+
+The manage screen shows it read-only, and deliberately so. Promotions are offered once and cannot
+be added later, but a guest looking at their booking afterwards must be able to see what they
+agreed to, or "I never ordered that" is a conversation with no evidence on the guest's side.
 
 ## Run locally
 

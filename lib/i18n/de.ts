@@ -296,6 +296,8 @@ export const de: PartialDictionary = {
     error: "Das konnten wir nicht speichern. Ihre Wahl steht noch auf der Seite — bitte versuchen Sie es erneut.",
     gone: "Das ist nicht mehr verfügbar. Laden Sie die Seite neu, um das aktuelle Angebot zu sehen.",
     groupOptions: "Auswahl in {group}",
+    takenTitle: "Zu Ihrer Reservierung bestellt",
+    takenNote: "Auf Ihrer Bestätigungsseite gewählt. Bitte wenden Sie sich an die Rezeption, falls das nicht stimmt.",
   },
 
   contact: {

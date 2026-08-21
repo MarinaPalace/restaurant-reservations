@@ -327,6 +327,12 @@ export const en = {
     gone: "That is no longer available. Reload the page to see what is on offer.",
     /** Read out by a screen reader as the group's choices are announced. */
     groupOptions: "Choices in {group}",
+    /**
+     * Shown wherever a booking's promotions are listed back to the guest, so
+     * "I never ordered that" has an answer on the guest's own screen.
+     */
+    takenTitle: "Ordered with your booking",
+    takenNote: "Chosen on your confirmation screen. Please speak to reception if this is not right.",
   },
 
   contact: {

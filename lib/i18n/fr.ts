@@ -296,6 +296,8 @@ export const fr: PartialDictionary = {
     error: "Nous n'avons pas pu enregistrer ce choix. Il figure toujours à l'écran — veuillez réessayer.",
     gone: "Ce n'est plus disponible. Rechargez la page pour voir l'offre actuelle.",
     groupOptions: "Choix dans {group}",
+    takenTitle: "Commandé avec votre réservation",
+    takenNote: "Choisi sur votre écran de confirmation. Merci de vous adresser à la réception si ce n'est pas exact.",
   },
 
   contact: {

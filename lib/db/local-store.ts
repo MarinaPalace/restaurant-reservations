@@ -609,6 +609,13 @@ export type LocalReservationPatch = {
   notes?: string;
   contact?: ReservationRecord["contact"];
   tableNumber?: string;
+  /**
+   * Which table group this booking now belongs to, already resolved by the
+   * service — `null` to take it off one, absent to leave it alone. Resolved
+   * out there because finding it writes to the *other* booking, and that write
+   * takes the store lock this update is holding.
+   */
+  tableGroupId?: string | null;
 };
 
 export type LocalUpdateResult =
@@ -698,6 +705,10 @@ export async function updateLocalReservationDetails(
       notes: patch.notes ?? existing.notes,
       contact: patch.contact ?? existing.contact,
       tableNumber: patch.tableNumber ?? existing.tableNumber,
+      // null means it was taken off the table, which is a real change and so
+      // cannot fall back to the group it was on.
+      tableGroupId:
+        patch.tableGroupId === undefined ? existing.tableGroupId : (patch.tableGroupId ?? undefined),
       // Moving evenings adopts that evening's sitting times.
       time: dateChanged ? targetDate?.serviceTime : existing.time,
       endTime: dateChanged ? targetDate?.serviceEndTime : existing.endTime,

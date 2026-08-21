@@ -8,6 +8,7 @@ import { Button, ButtonLink } from "@/components/ui/button";
 import { Alert, Badge } from "@/components/ui/feedback";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { ContactFields } from "@/components/contact-fields";
+import { RESERVATION_PREFIX } from "@/lib/brand";
 import { formatLongDate } from "@/lib/date";
 import { NONE_OPTION_ID, NONE_OPTION_NAME } from "@/lib/menu-selection";
 import { MAX_ADDITIONAL_ROOMS, MAX_GUESTS_PER_RESERVATION } from "@/lib/validation/booking";
@@ -69,6 +70,14 @@ export function ReservationForm({
   const [selections, setSelections] = useState<ReservationSelection[]>(reservation?.selections ?? []);
   const [notes, setNotes] = useState(reservation?.notes ?? "");
   const [tableNumber, setTableNumber] = useState(reservation?.tableNumber ?? "");
+  /**
+   * Another booking to sit with, by reservation number.
+   *
+   * Seeded from the table this one is already on, so the field shows the
+   * current arrangement rather than looking unset — and clearing it is how you
+   * take a booking off a shared table.
+   */
+  const [joinReservationNumber, setJoinReservationNumber] = useState(reservation?.tableGroupId ?? "");
   const [contact, setContact] = useState<ReservationContact>(
     reservation?.contact ?? { method: "email", email: "", messagingApp: "phone" },
   );
@@ -161,6 +170,19 @@ export function ReservationForm({
 
   const filledAdditionalRooms = additionalRooms.map((room) => room.trim()).filter(Boolean);
 
+  /**
+   * Only sent when it actually changes.
+   *
+   * The anchor of a table carries its *own* reservation number as the group,
+   * so a booking that started the table seeds this field with itself. Sending
+   * that unchanged would read as "seat this booking with itself", which the
+   * service refuses — correctly, since typing your own number is otherwise a
+   * mistake. Saying nothing when nothing changed avoids the question, and
+   * avoids rewriting a table arrangement that nobody touched.
+   */
+  const joinChanged =
+    joinReservationNumber.trim().toUpperCase() !== (reservation?.tableGroupId ?? "").toUpperCase();
+
   const save = async () => {
     if (saving) {
       return;
@@ -207,6 +229,7 @@ export function ReservationForm({
       notes: notes.trim() || undefined,
       tableNumber: tableNumber.trim() || undefined,
       contact: withContact ? contact : undefined,
+      joinReservationNumber: joinChanged ? joinReservationNumber.trim() : undefined,
     };
 
     try {
@@ -315,6 +338,34 @@ export function ReservationForm({
               </Button>
             ) : null}
           </div>
+
+          {/* Sitting two *bookings* together, as against listing more rooms on
+              this one. Each keeps its own dishes, which is the difference that
+              matters to the kitchen: the rooms above share one ticket and one
+              line of dish counts, whereas these two ordered separately and both
+              orders have to reach the sheet. Guests routinely miss the pairing
+              when booking, so reception has to be able to do it afterwards. */}
+          <Field
+            label="Seated with reservation"
+            hint={
+              reservation?.tableGroupId
+                ? "Clear this to take the booking off that table. Both parties keep their own dishes."
+                : "Optional. The other party's reservation number — they must be booked for the same evening."
+            }
+          >
+            {(fieldProps) => (
+              <Input
+                {...fieldProps}
+                maxLength={40}
+                placeholder={`${RESERVATION_PREFIX}-A1B2C3`}
+                value={joinReservationNumber}
+                onChange={(event) => {
+                  setJoinReservationNumber(event.target.value.trim().toUpperCase());
+                  setError("");
+                }}
+              />
+            )}
+          </Field>
 
           <Field label="Table" hint="Optional. Applies to everyone sharing the table.">
             {(fieldProps) => (

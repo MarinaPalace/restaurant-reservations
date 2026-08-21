@@ -27,6 +27,8 @@ export const BOOKING_MESSAGES = {
   pastDate: "That evening has already passed. Please choose an upcoming date.",
   unavailable: "Unfortunately, this date is no longer available. Please select another date.",
   fullyBooked: "Unfortunately, this date is fully booked. Please choose another evening.",
+  bookingClosed:
+    "Bookings for that evening have closed. Please dial 9 from your room and reception will arrange it.",
   invalidOption: "Invalid menu option selected.",
   repeatedRoom: "Each room may only be listed once on a booking.",
 } as const;

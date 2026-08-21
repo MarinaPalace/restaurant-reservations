@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { ConfirmationView } from "@/app/booking/confirmation/confirmation-view";
 import { getPromoCatalog } from "@/lib/services/restaurant";
-import { getCurrency } from "@/lib/services/settings";
+import { getCurrency, getTimeZone } from "@/lib/services/settings";
+import { timeZoneLabel } from "@/lib/timezone";
 
 export const metadata: Metadata = { title: "Reservation confirmed" };
 
@@ -22,7 +23,22 @@ export const dynamic = "force-dynamic";
  * switching language is instant rather than a round trip per change.
  */
 export default async function ConfirmationPage() {
-  const [promoGroups, currency] = await Promise.all([getPromoCatalog(), getCurrency()]);
+  const [promoGroups, currency, timeZone] = await Promise.all([
+    getPromoCatalog(),
+    getCurrency(),
+    getTimeZone(),
+  ]);
 
-  return <ConfirmationView promoGroups={promoGroups} currency={currency} />;
+  /**
+   * Resolved on the server. The offset moves with the seasons — Sofia is
+   * UTC+2 in winter and UTC+3 in summer — and the browser must not be asked,
+   * because it would answer for wherever the guest happens to be.
+   */
+  return (
+    <ConfirmationView
+      promoGroups={promoGroups}
+      currency={currency}
+      timeZoneLabel={timeZoneLabel(timeZone)}
+    />
+  );
 }

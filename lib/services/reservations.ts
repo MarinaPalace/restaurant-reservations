@@ -659,6 +659,8 @@ export async function updateRestaurantDate(input: {
   serviceTime?: string;
   serviceEndTime?: string;
   premium?: boolean;
+  /** How many hours before the sitting guest bookings close. 0 = at the sitting. */
+  bookingCutoffHours?: number;
 }) {
   if (!isMongoConfigured()) {
     return upsertLocalDate(input);
@@ -675,6 +677,7 @@ export async function updateRestaurantDate(input: {
         serviceTime: input.serviceTime ?? null,
         serviceEndTime: input.serviceEndTime ?? null,
         premium: input.premium ?? false,
+        bookingCutoffHours: Math.max(0, Math.round(Number(input.bookingCutoffHours ?? 0))),
       },
       $setOnInsert: { reservedSeats: 0 },
     },
@@ -689,5 +692,6 @@ export async function updateRestaurantDate(input: {
     serviceTime: updated.serviceTime ? String(updated.serviceTime) : undefined,
     serviceEndTime: updated.serviceEndTime ? String(updated.serviceEndTime) : undefined,
     premium: Boolean(updated.premium),
+    bookingCutoffHours: Number(updated.bookingCutoffHours ?? 0),
   });
 }

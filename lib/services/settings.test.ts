@@ -87,3 +87,38 @@ describe("the promotions currency", () => {
     expect(await settings.getCurrency()).toBe("PLN");
   });
 });
+
+describe("the restaurant time zone", () => {
+  it("reads as the default when nothing has ever been saved", async () => {
+    const settings = await loadSettings();
+    const { DEFAULT_TIME_ZONE } = await import("@/lib/timezone");
+
+    expect(await settings.getTimeZone()).toBe(DEFAULT_TIME_ZONE);
+  });
+
+  it("survives a save", async () => {
+    const settings = await loadSettings();
+    await settings.setTimeZone("Europe/Berlin");
+
+    expect(await settings.getTimeZone()).toBe("Europe/Berlin");
+  });
+
+  it("refuses a zone Intl would not recognise", async () => {
+    const settings = await loadSettings();
+    const { DEFAULT_TIME_ZONE } = await import("@/lib/timezone");
+
+    await settings.setTimeZone("Mars/Olympus" as never);
+    expect(await settings.getTimeZone()).toBe(DEFAULT_TIME_ZONE);
+  });
+
+  /** Two settings, two rows: saving one must not disturb the other. */
+  it("does not disturb the currency", async () => {
+    const settings = await loadSettings();
+
+    await settings.setCurrency("GBP");
+    await settings.setTimeZone("Europe/Warsaw");
+
+    expect(await settings.getCurrency()).toBe("GBP");
+    expect(await settings.getTimeZone()).toBe("Europe/Warsaw");
+  });
+});

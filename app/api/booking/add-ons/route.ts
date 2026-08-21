@@ -66,6 +66,31 @@ export async function POST(request: Request) {
     }
 
     /**
+     * Changes made from the manage screen may only touch groups the booking
+     * already holds.
+     *
+     * Promotions are offered once, on the confirmation screen. A guest who
+     * took a bottle of wine may swap it or give it back; a guest who declined
+     * cannot come back later and take one, because the offer was the moment,
+     * not the booking. Enforced here rather than only in the UI, so the two
+     * screens cannot drift apart about what each allows.
+     */
+    if (parsed.data.mode === "manage") {
+      const held = new Set((reservation.addOns ?? []).map((addOn) => addOn.courseId));
+      const introduced = parsed.data.addOns.find((requested) => !held.has(requested.courseId));
+
+      if (introduced) {
+        return NextResponse.json(
+          {
+            error: "That can only be added on the confirmation screen, when the booking is made.",
+            code: "PROMO_CLOSED",
+          },
+          { status: 409 },
+        );
+      }
+    }
+
+    /**
      * English, deliberately. The guest's screen shows the product in their
      * language, but what is stored is what staff read off the service sheet —
      * the same rule the dinner selections follow (rule 2.6).

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { isValidDateKey } from "@/lib/date";
 import { CURRENCIES } from "@/lib/money";
+import { TIME_ZONES } from "@/lib/timezone";
 import { PASS_KEY_LENGTH, normalizePassKey } from "@/lib/pass-key";
 import { isValidRoomNumber, normalizeRoomNumber } from "@/lib/room";
 import { MAX_USES_CAP, MENU_CATALOGS, STAFF_PERMISSIONS } from "@/types/booking";
@@ -94,6 +95,12 @@ export const restaurantDateSchema = z.object({
   serviceTime: timeSchema.optional(),
   serviceEndTime: timeSchema.optional(),
   premium: z.boolean().optional(),
+  /**
+   * How many hours before the sitting guest bookings close. Ten days is the
+   * cap: beyond that the evening is effectively not bookable online, which is
+   * what "closed" is for.
+   */
+  bookingCutoffHours: z.number().int().min(0).max(240).optional(),
 });
 
 /**
@@ -128,6 +135,20 @@ export const updateSelectionsSchema = manageReservationSchema.extend({
  */
 export const updateAddOnsSchema = manageReservationSchema.extend({
   reservationNumber: z.string().trim().min(1).max(40),
+  /**
+   * Which screen is asking.
+   *
+   * `confirmation` is the one place a promotion can be *taken*. `manage` may
+   * only change or drop what the booking already holds — a guest who declined
+   * cannot come back a week later and help themselves.
+   *
+   * Not a security boundary, and not pretending to be one: both screens are
+   * driven by the same pass-key, and the holder of that key is the legitimate
+   * owner of this booking. It is a rule about what each screen offers, and
+   * lying about it gains a guest nothing they could not already do from the
+   * confirmation screen. Nobody else's data is reachable either way.
+   */
+  mode: z.enum(["confirmation", "manage"]).optional(),
   addOns: z
     .array(
       z.object({
@@ -137,6 +158,21 @@ export const updateAddOnsSchema = manageReservationSchema.extend({
     )
     // One per group, and a catalogue with more groups than this is not a
     // promotion any more. The route also refuses two from the same group.
+    .max(24),
+});
+
+/**
+ * Promotions set by staff. No `mode`: reception is never limited to what the
+ * guest already holds — see the route.
+ */
+export const staffAddOnsSchema = z.object({
+  addOns: z
+    .array(
+      z.object({
+        courseId: z.string().min(1).max(64),
+        optionId: z.string().min(1).max(64),
+      }),
+    )
     .max(24),
 });
 
@@ -413,6 +449,15 @@ export const cancelReservationSchema = z.object({
  */
 export const currencySchema = z.enum(CURRENCIES);
 
-export const updateSettingsSchema = z.object({
-  currency: currencySchema,
-});
+/** Which clock the restaurant's times are quoted on. A label, not a conversion. */
+export const timeZoneSchema = z.enum(TIME_ZONES);
+
+/** Every field optional: a screen may save one setting without knowing the others. */
+export const updateSettingsSchema = z
+  .object({
+    currency: currencySchema.optional(),
+    timeZone: timeZoneSchema.optional(),
+  })
+  .refine((row) => row.currency !== undefined || row.timeZone !== undefined, {
+    message: "Nothing to save.",
+  });

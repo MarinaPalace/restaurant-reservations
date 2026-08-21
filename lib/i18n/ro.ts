@@ -132,6 +132,8 @@ export const ro: PartialDictionary = {
       afterStay: "după încheierea sejurului",
       afterStayHint: "După sejur",
       available: "{count} locuri libere",
+      closedForBooking: "rezervările pentru această seară s-au închis",
+      closedForBookingHint: "Prea târziu",
     },
   },
 
@@ -304,6 +306,11 @@ export const ro: PartialDictionary = {
     groupOptions: "Opțiuni în {group}",
     takenTitle: "Comandat odată cu rezervarea",
     takenNote: "Ales pe ecranul de confirmare. Vă rugăm să vă adresați recepției dacă nu este corect.",
+    change: "Modificați",
+    changeHint: "Îl puteți schimba cu altul sau renunța. Ceva nou se poate adăuga doar la momentul rezervării.",
+    removeOne: "Eliminați",
+    keepEditing: "Gata",
+    removedAll: "Eliminat. Promoțiile se oferă doar la rezervare, deci acesta nu mai poate fi adăugat aici.",
   },
 
   contact: {
@@ -337,6 +344,8 @@ export const ro: PartialDictionary = {
     passKeyTooManyGuests: "Rezervarea dumneavoastră la noi este pentru mai puține persoane. Adresați-vă recepției.",
     dateUnavailable: "Din păcate, această dată nu mai este disponibilă. Vă rugăm să alegeți alta.",
     dateFull: "Din păcate, această dată este ocupată complet. Vă rugăm să alegeți altă seară.",
+    bookingClosed:
+      "Rezervările pentru acea seară s-au închis. Vă rugăm să formați 9 din cameră, iar recepția se va ocupa.",
     tableJoinFailed: "Nu v-am putut așeza la acea rezervare. Verificați numărul și încercați din nou.",
     changesClosed: "Modificările se închid cu douăsprezece ore înainte de cină. Adresați-vă recepției și vă vom ajuta.",
     notFound: "Nu am găsit nicio rezervare pentru această cheie de acces.",

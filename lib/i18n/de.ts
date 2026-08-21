@@ -127,6 +127,8 @@ export const de: PartialDictionary = {
       afterStay: "nach dem Ende Ihres Aufenthalts",
       afterStayHint: "Nach Ihrem Aufenthalt",
       available: "{count} Plätze frei",
+      closedForBooking: "Reservierungen für diesen Abend sind geschlossen",
+      closedForBookingHint: "Zu spät",
     },
   },
 
@@ -298,6 +300,11 @@ export const de: PartialDictionary = {
     groupOptions: "Auswahl in {group}",
     takenTitle: "Zu Ihrer Reservierung bestellt",
     takenNote: "Auf Ihrer Bestätigungsseite gewählt. Bitte wenden Sie sich an die Rezeption, falls das nicht stimmt.",
+    change: "Ändern",
+    changeHint: "Sie können es tauschen oder zurückgeben. Etwas Neues hinzufügen geht nur bei der Reservierung.",
+    removeOne: "Entfernen",
+    keepEditing: "Fertig",
+    removedAll: "Entfernt. Angebote gibt es nur bei der Reservierung, dies kann hier nicht erneut hinzugefügt werden.",
   },
 
   contact: {
@@ -331,6 +338,8 @@ export const de: PartialDictionary = {
     passKeyTooManyGuests: "Ihre Buchung bei uns ist für weniger Gäste. Bitte wenden Sie sich an die Rezeption.",
     dateUnavailable: "Dieser Termin ist leider nicht mehr verfügbar. Bitte wählen Sie einen anderen.",
     dateFull: "Dieser Termin ist leider ausgebucht. Bitte wählen Sie einen anderen Abend.",
+    bookingClosed:
+      "Reservierungen für diesen Abend sind geschlossen. Bitte wählen Sie die 9 von Ihrem Zimmer aus, die Rezeption hilft Ihnen weiter.",
     tableJoinFailed: "Wir konnten Sie nicht zu dieser Reservierung setzen. Bitte prüfen Sie die Nummer und versuchen Sie es erneut.",
     changesClosed: "Änderungen sind bis zwölf Stunden vor dem Abendessen möglich. Bitte wenden Sie sich an die Rezeption, wir helfen Ihnen gern.",
     notFound: "Wir haben keine Reservierung zu diesem Zugangscode gefunden.",

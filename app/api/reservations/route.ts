@@ -6,6 +6,7 @@ import {
   reserveReservationNumber,
 } from "@/lib/services/reservations";
 import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
+import { canGuestBookDate } from "@/lib/reservation-policy";
 import { BOOKING_MESSAGES, validateReservationRequest } from "@/lib/services/booking-rules";
 import {
   PASS_KEY_MESSAGES,
@@ -122,6 +123,18 @@ export async function POST(request: Request) {
     if (restaurantDate?.premium) {
       return NextResponse.json(
         { error: BOOKING_MESSAGES.unavailable, code: "DATE_UNAVAILABLE" },
+        { status: 409 },
+      );
+    }
+
+    /**
+     * Guest bookings close a set number of hours before the sitting, per date.
+     * Greying the evening out in the calendar is presentation; this is the
+     * rule (2.5). Staff are not bound by it and their routes do not check it.
+     */
+    if (restaurantDate && !canGuestBookDate(restaurantDate).allowed) {
+      return NextResponse.json(
+        { error: BOOKING_MESSAGES.bookingClosed, code: "BOOKING_CLOSED" },
         { status: 409 },
       );
     }

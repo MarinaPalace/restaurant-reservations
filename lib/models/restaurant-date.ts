@@ -10,6 +10,11 @@ const restaurantDateSchema = new Schema(
     serviceTime: { type: String },
     serviceEndTime: { type: String },
     premium: { type: Boolean, default: false },
+    /**
+     * Added later; absent reads as 0, which closes guest bookings when the
+     * sitting starts. Staff are never bound by it.
+     */
+    bookingCutoffHours: { type: Number, min: 0, max: 240 },
   },
   { timestamps: true },
 );

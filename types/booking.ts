@@ -156,6 +156,16 @@ export type StoredRestaurantDate = {
    * /premium.
    */
   premium?: boolean;
+  /**
+   * How many hours before the sitting a **guest** may still book this evening
+   * for themselves. Absent reads as 0, which closes bookings when the sitting
+   * starts — the same evening it always was.
+   *
+   * Staff are never bound by it. Reception takes a booking for a table that
+   * has just walked up to the desk, and a rule that stopped them would only
+   * be worked around by writing it on paper.
+   */
+  bookingCutoffHours?: number;
 };
 
 export type RestaurantDateAvailability = StoredRestaurantDate & {

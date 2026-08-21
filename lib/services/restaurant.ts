@@ -33,6 +33,7 @@ export async function getRestaurantDates(): Promise<RestaurantDateAvailability[]
       serviceTime: date.serviceTime ? String(date.serviceTime) : undefined,
       serviceEndTime: date.serviceEndTime ? String(date.serviceEndTime) : undefined,
       premium: Boolean(date.premium),
+      bookingCutoffHours: Number(date.bookingCutoffHours ?? 0),
     }),
   );
 }
@@ -56,6 +57,7 @@ export async function getRestaurantDate(date: string): Promise<RestaurantDateAva
     serviceTime: record.serviceTime ? String(record.serviceTime) : undefined,
     serviceEndTime: record.serviceEndTime ? String(record.serviceEndTime) : undefined,
     premium: Boolean(record.premium),
+    bookingCutoffHours: Number(record.bookingCutoffHours ?? 0),
   });
 }
 

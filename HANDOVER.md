@@ -55,7 +55,7 @@ absent = standard). `saveMenuCatalog` prunes **only within the catalogue being s
 "ids not in the list I just saved" would wipe the other two entirely.
 
 Read the field through `menuCatalogOf`, never directly. It also resolves the legacy `addOn` flag —
-see 2.16.
+see 2.17.
 
 **The everyday filter is the one that goes wrong.** "Standard" is the *absence* of a marking, so it
 cannot be matched by equality; it is expressed as `{ menu: { $nin: ["premium", "promo"] }, addOn:
@@ -303,7 +303,24 @@ render caused a hydration mismatch on the confirmation page.
 ---
 
 
-### 2.16 Promotions are a catalogue, not a flag on a dinner course
+### 2.16 A time on a screen must say which clock it is on
+
+Every date in this app is a **local calendar string** and every time is computed against the
+machine's clock (rule 2.1). That is deliberate and it works, because the server and the restaurant
+are in the same place. `lib/timezone.ts` does **not** change it: nothing converts between zones, and
+nothing there may start to.
+
+What it adds is a *name* for that clock — `Sofia time (UTC+3)` — because "19:00" tells a guest
+booking from another country nothing. The offset is computed, never tabulated: Sofia is UTC+2 in
+winter and UTC+3 in summer, so any constant is wrong for half the year.
+
+**The setting can lie, and that is the dangerous part.** It labels the server's clock; it does not
+move it. A deployment running in UTC while the setting says Sofia prints "19:00 Sofia time" for a
+sitting the server thinks is 19:00 UTC — two hours out, stated with confidence, with nothing else on
+any screen to hint at it. `describeClockMismatch` compares the two and the dashboard shows a red
+alert naming the fix (`TZ=Europe/Sofia` on the deployment). Do not remove that alert.
+
+### 2.17 Promotions are a catalogue, not a flag on a dinner course
 
 The first version marked a course `addOn: true` on the everyday menu and filtered it out of every
 dinner query. That is one filter per query and one bug away from a bottle of wine appearing as a
@@ -318,7 +335,7 @@ migration. `menuCatalogOf` reads such a course as a promotion, so it moves catal
 `saveMenuCatalog` writes `menu` and clears the flag on every save, so the compatibility arm goes
 quiet on its own. Do not delete that arm until you have checked production for `addOn: true`.
 
-### 2.17 A promotion's price is the server's, never the client's
+### 2.18 A promotion's price is the server's, never the client's
 
 The browser sends two ids. Names, prices and discounts are resolved from the catalogue by id, the
 same rule dish names follow (2.6) and for the same reason: anything the client can name, the client
@@ -328,7 +345,7 @@ re-pricing the wine next week must not change what they owe.
 All money goes through `lib/money.ts`. `40 * 0.85` is `33.999999999999996` in binary floating point,
 and that must never reach a guest or a bill.
 
-### 2.18 A save fired on every tap must be ordered
+### 2.19 A save fired on every tap must be ordered
 
 The promotions screen saves each choice as it is made, because a guest who has already got their
 reservation number will not press a second button. Two taps in quick succession — changing your mind
@@ -339,6 +356,40 @@ wine, the booking held nothing. It was reported as "selecting an option does not
 concurrent, so the server applies them in order; and only the **newest** may write to the screen,
 checked *after* every await rather than once at the top. Both halves are needed, and both are
 tested.
+### 2.20 Who may change a promotion, and when
+
+Three different answers, and they are different on purpose:
+
+- **The confirmation screen** is the only place a promotion can be *taken*. That is the whole
+  product: offered once, with the booking.
+- **The guest's manage screen** may change or give back a group the booking **already holds**, and
+  may not introduce one it does not. A guest who declined cannot come back a week later and help
+  themselves. Enforced in the route on `mode: "manage"`, not only in the screen.
+  **Giving one back is final** — the group is then no longer held, so there is nothing left to
+  change. That is the intended consequence of the rule, and the copy warns before it happens.
+- **Staff may do anything**, through `/api/admin/reservations/[n]/add-ons`: add, change, remove, at
+  any time. Reception is the fallback for every rule here, and a rule they cannot override is one
+  that ends up written on paper instead. Every staff change is in the audit log, because it changes
+  what a guest is charged.
+
+The `mode` flag is not a security boundary and does not pretend to be one — both guest screens are
+driven by the same pass-key, and its holder is the legitimate owner of that booking. It is a rule
+about what each screen offers.
+
+### 2.21 Guest bookings close before the sitting; staff bookings never do
+
+`bookingCutoffHours` is set **per date**, because it is not one number: a quiet Tuesday can take a
+booking an hour before service and a full Saturday with a set menu cannot. Absent reads as 0, which
+closes guest bookings when the sitting starts — what every evening did before this existed, so no
+date needed touching.
+
+It also closed a real hole. Only *past dates* were blocked before, so tonight's dinner stayed
+bookable at midnight, hours after everyone had eaten.
+
+`/api/reservations` refuses a late booking outright (rule 2.5 — greying the day out is
+presentation). The staff routes deliberately do not consult it: reception takes bookings for tables
+standing at the desk.
+
 ## 3. Configuration
 
 | Variable | Required | Purpose |
@@ -417,6 +468,19 @@ declarables plus whatever the menu already used, and photos. Uploads are resized
 ~100–200 KB; stored photos are served from `/api/menu/images/<id>` with a content hash and
 immutable cache headers, so the menu payload stays small.
 
+**When bookings close.** Each evening carries `bookingCutoffHours` — how long before the sitting
+guests stop being able to book it themselves, set in the date editor with the arrival time. 0, and
+absent, mean "when the sitting starts". Reception is never bound by it. See rule 2.21.
+
+**Past evenings on the calendar.** Struck through, dashed and sunken, rather than showing seats that
+cannot be sold. Still selectable, because reception reads last night's sheet all the time. An
+evening that is open but past its guest cutoff reads `39 · desk`.
+
+**Time zones.** `restaurant.timeZone` in the settings store, default `Europe/Sofia`, chosen at the
+top of the dashboard. It **labels** the clock — `Sofia time (UTC+3)` on the confirmation — and
+converts nothing. If it disagrees with the server's own zone the dashboard says so in red, because
+the times would then be mislabelled rather than merely unlabelled. Rule 2.16.
+
 **Declining a course.** `NONE_OPTION_ID` is a real selection, so "does not want a starter" is
 distinguishable from "has not chosen yet". Never counted in prep totals.
 
@@ -425,9 +489,9 @@ reservation number — a bottle of wine, a dessert, a welcome glass. That is the
 screen is the only place they are offered, and the copy says so, because a guest who assumes they
 can add the wine later and cannot has been misled by the wording rather than by the rule.
 
-They live in their own catalogue (rule 2.16), edited at `/admin/menu?menu=promo`, so adding a
+They live in their own catalogue (rule 2.17), edited at `/admin/menu?menu=promo`, so adding a
 promotion never means adding a course to the dinner menu. Each group offers at most one product,
-"no, thank you" included, and each choice saves itself as it is made (rules 2.17 and 2.18). The
+"no, thank you" included, and each choice saves itself as it is made (rules 2.18 and 2.19). The
 picker is `components/promo-picker.tsx`; the catalogue and currency are loaded on the server by
 `app/booking/confirmation/page.tsx` and handed down, so the offer arrives with the confirmation
 rather than a round trip after it.
@@ -457,6 +521,9 @@ the line.
 
 It shares the Comment column rather than taking one of its own, because a new column changes the
 sheet's percentage widths — the arithmetic rule 2.8 is about — and would sit empty most evenings.
+
+**Who may change one.** See rule 2.20 — the confirmation screen takes, the guest's manage screen
+swaps or gives back what is already held, and staff do anything from the reservation page.
 
 **Currency.** `promo.currency` in the settings store, default `EUR`, changed in the promotions
 editor beside the prices it applies to. It is the only setting so far; `lib/services/settings.ts` is
@@ -769,7 +836,7 @@ Roughly in the order I would tackle them for beta.
 
 ```bash
 npm run dev          # local, JSON store, admin/admin123
-npm test             # 492 tests; the Mongo suite runs an in-memory mongod
+npm test             # 529 tests; the Mongo suite runs an in-memory mongod
 npm run typecheck
 npm run lint
 npm run build

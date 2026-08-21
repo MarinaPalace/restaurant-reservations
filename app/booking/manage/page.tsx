@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { PageShell } from "@/components/page-shell";
 import { ManageReservation } from "@/app/booking/manage/manage-reservation";
-import { getMenuCatalog } from "@/lib/services/restaurant";
+import { getMenuCatalog, getPromoCatalog } from "@/lib/services/restaurant";
 import { getCurrency } from "@/lib/services/settings";
 
 export const metadata: Metadata = { title: "Manage your reservation" };
@@ -15,13 +15,23 @@ export default async function ManageReservationPage() {
   // back — the promotions catalogue itself is not needed here, because nothing
   // on this screen offers one: what a booking already holds is stored on the
   // booking, priced as it was agreed.
-  const [menu, currency] = await Promise.all([getMenuCatalog(), getCurrency()]);
+  /**
+   * The promotions catalogue is here so a guest can *swap* what they already
+   * took. Nothing on this screen can add one — the route refuses a group the
+   * booking does not hold — so sending the whole catalogue is safe: the
+   * component only ever offers the groups already on the booking.
+   */
+  const [menu, promoGroups, currency] = await Promise.all([
+    getMenuCatalog(),
+    getPromoCatalog(),
+    getCurrency(),
+  ]);
 
   return (
     <PageShell width="md">
       {/* The key can arrive in the address, which useSearchParams reads. */}
       <Suspense fallback={null}>
-        <ManageReservation menu={menu} currency={currency} />
+        <ManageReservation menu={menu} promoGroups={promoGroups} currency={currency} />
       </Suspense>
     </PageShell>
   );

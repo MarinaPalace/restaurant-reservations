@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Alert, Badge, EmptyState } from "@/components/ui/feedback";
 import { Field, Input } from "@/components/ui/field";
 import { KitchenReport } from "@/app/admin/kitchen-report";
-import { formatLongDate, isValidDateKey, startOfMonth, todayKey } from "@/lib/date";
+import { formatLongDate, isPastDateKey, isValidDateKey, startOfMonth, todayKey } from "@/lib/date";
+import { canGuestBookDate, getBookingDeadline } from "@/lib/reservation-policy";
 import { compareRoomNumbers } from "@/lib/room";
 import {
   menuKindOf,
@@ -17,19 +18,49 @@ import {
   type RestaurantDateAvailability,
   type StaffPermission,
 } from "@/types/booking";
+import { TIME_ZONES, cityOf, shortTimeZoneLabel, utcOffsetLabel, type TimeZone } from "@/lib/timezone";
+
+/**
+ * What a cutoff actually means for this evening, spelled out.
+ *
+ * "4 hours before the sitting" is a rule; "guests may book until 15:00, then
+ * reception only" is what somebody at the desk needs to know. The second is
+ * derived from the first and the arrival time, so it cannot drift out of step
+ * with it.
+ */
+function describeCutoff(entry: RestaurantDateAvailability) {
+  const hours = Math.max(0, Number(entry.bookingCutoffHours ?? 0));
+  const deadline = getBookingDeadline(entry);
+  const clock = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(deadline);
+  const closes = hours === 0 ? "the sitting starts" : clock;
+
+  return `Guests may book until ${closes}. Reception can always add a booking, whatever this says.`;
+}
 
 export function AdminDateManager({
   initialDates,
   initialReservations,
   menu,
   permissions,
+  /** Which clock every time on these screens is quoted on. */
+  initialTimeZone,
+  /**
+   * Set when the configured zone disagrees with the server's own clock, which
+   * would mislabel every time by the difference. Worked out on the server,
+   * because the server's clock is the one the app computes against.
+   */
+  clockMismatch,
 }: {
   initialDates: RestaurantDateAvailability[];
   initialReservations: ReservationRecord[];
   menu: MenuCourse[];
   /** What the signed-in account may do; the API enforces the same list. */
   permissions: StaffPermission[];
+  initialTimeZone: TimeZone;
+  clockMismatch: string | null;
 }) {
+  const [timeZone, setTimeZone] = useState<TimeZone>(initialTimeZone);
+  const [savingTimeZone, setSavingTimeZone] = useState(false);
   const [dates, setDates] = useState(initialDates);
   const [reservations, setReservations] = useState(initialReservations);
   const [selectedDate, setSelectedDate] = useState(initialDates[0]?.date ?? todayKey());
@@ -71,12 +102,53 @@ export function AdminDateManager({
   const getDayState = (dateKey: string): DayState => {
     const entry = dates.find((item) => item.date === dateKey);
 
+    /**
+     * An evening that has been and gone.
+     *
+     * It used to read "39 free", which is true and useless: seats on a dinner
+     * that already happened are not seats anybody can sell, and a month of
+     * them looked identical to a month of open evenings. Staff scanning the
+     * calendar for where to put a walk-in were reading last week as if it were
+     * next week.
+     *
+     * Still selectable, and deliberately so — reception looks at last night's
+     * sheet all the time — but it says what it is, and it is not styled as
+     * availability.
+     */
+    if (isPastDateKey(dateKey)) {
+      return {
+        past: true,
+        hint: entry ? "Past" : "—",
+        status: entry
+          ? `in the past · ${entry.capacity - entry.remainingSeats} of ${entry.capacity} seats taken`
+          : "in the past",
+        tone: "muted",
+        premium: entry?.premium,
+      };
+    }
+
     if (!entry) {
       return { hint: "—", status: "not configured" };
     }
 
     if (!entry.isOpen) {
       return { hint: "Closed", status: "closed", premium: entry.premium };
+    }
+
+    /**
+     * Open, with seats, but guests can no longer take them: the cutoff has
+     * passed. Staff still can, which is why this is a note rather than a
+     * disabled cell.
+     */
+    if (!canGuestBookDate(entry).allowed) {
+      return {
+        hint: `${entry.remainingSeats} · desk`,
+        status:
+          `${entry.remainingSeats} of ${entry.capacity} seats free, guest bookings closed — ` +
+          "reception only" + (entry.premium ? ", invitation only" : ""),
+        tone: "default",
+        premium: entry.premium,
+      };
     }
 
     return {
@@ -118,6 +190,43 @@ export function AdminDateManager({
     setNewDate("");
     setError("");
     setNotice("Date added. Remember to save it.");
+  };
+
+  /**
+   * Saved on change, through the settings endpoint.
+   *
+   * It is a label, not a conversion: nothing in this app converts between
+   * zones, and every time is worked out from the server's clock. What this
+   * changes is what those times are *called* on a guest's screen — which is
+   * why the mismatch warning below matters more than the select does.
+   */
+  const saveTimeZone = async (next: TimeZone) => {
+    const previous = timeZone;
+    setTimeZone(next);
+    setSavingTimeZone(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const response = await fetch("/api/admin/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ timeZone: next }),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to save the time zone.");
+      }
+
+      setNotice(`Times are now shown as ${shortTimeZoneLabel(next)}. Reload to update the warning, if any.`);
+    } catch (saveError) {
+      // Put it back, so the select never shows a zone that was not stored.
+      setTimeZone(previous);
+      setError(saveError instanceof Error ? saveError.message : "Unable to save the time zone.");
+    } finally {
+      setSavingTimeZone(false);
+    }
   };
 
   const saveDate = async () => {
@@ -360,9 +469,43 @@ export function AdminDateManager({
               <Button variant="secondary" onClick={addDate}>
                 Add date
               </Button>
+
+              <div>
+                <label htmlFor="restaurant-time-zone" className="text-sm font-medium text-ink">
+                  Times are
+                </label>
+                <select
+                  id="restaurant-time-zone"
+                  value={timeZone}
+                  disabled={savingTimeZone}
+                  onChange={(event) => void saveTimeZone(event.target.value as TimeZone)}
+                  className="mt-2 block min-h-11 rounded-control border border-line-strong bg-surface px-3 text-sm font-medium text-ink"
+                >
+                  {TIME_ZONES.map((zone) => (
+                    <option key={zone} value={zone}>
+                      {zone === "UTC" ? "UTC" : `${cityOf(zone)} — ${utcOffsetLabel(zone)}`}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           }
         />
+
+        {/*
+          Loud on purpose. Every time this app prints is computed from the
+          server's clock, so a zone that disagrees with it does not shift the
+          times — it mislabels them, confidently, by the difference. A guest
+          told "19:00 Sofia time" for a sitting the server thinks is 19:00 UTC
+          arrives two hours late, and nothing else on any screen would hint at
+          it.
+        */}
+        {clockMismatch ? (
+          <Alert tone="danger" className="mt-4">
+            <span className="font-semibold">The server clock and the time zone setting disagree.</span>{" "}
+            {clockMismatch}
+          </Alert>
+        ) : null}
 
         {error ? (
           <Alert tone="danger" className="mt-4">
@@ -476,6 +619,42 @@ export function AdminDateManager({
                       )}
                     </Field>
                   </div>
+
+                  {/*
+                    Per evening, because it is not one number: a quiet Tuesday
+                    can take a booking an hour before service and a full
+                    Saturday cannot. Reception is never bound by it, and the
+                    hint says so — otherwise the first thing anyone does with a
+                    cutoff is worry they have locked themselves out.
+                  */}
+                  <Field
+                    label="Guest bookings close"
+                    hint={describeCutoff(selectedEntry)}
+                  >
+                    {(fieldProps) => (
+                      <div className="flex items-center gap-2">
+                        <Input
+                          {...fieldProps}
+                          type="number"
+                          min={0}
+                          max={240}
+                          step={1}
+                          inputMode="numeric"
+                          className="w-28"
+                          value={selectedEntry.bookingCutoffHours ?? 0}
+                          onChange={(event) =>
+                            patchSelected({
+                              bookingCutoffHours: Math.max(
+                                0,
+                                Math.min(240, Math.round(Number(event.target.value) || 0)),
+                              ),
+                            })
+                          }
+                        />
+                        <span className="text-sm text-ink-muted">hours before the sitting</span>
+                      </div>
+                    )}
+                  </Field>
 
                   <div className="flex flex-wrap gap-2">
                     <Badge tone={selectedEntry.isOpen ? "success" : "info"}>

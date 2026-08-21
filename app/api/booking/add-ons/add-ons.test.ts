@@ -406,3 +406,133 @@ describe("authorisation", () => {
     expect(response.status).toBe(404);
   });
 });
+
+/**
+ * Promotions are offered once, on the confirmation screen.
+ *
+ * From the manage screen a guest may change or give back what they took —
+ * their own order, their own bill — but may not take something they declined.
+ * The rule lives in the route, not only in the screen, so the two cannot drift
+ * apart about what is allowed.
+ */
+describe("changing promotions later", () => {
+  async function withWineTaken() {
+    const { POST } = await import("@/app/api/booking/add-ons/route");
+    const context = await setUp();
+
+    await POST(
+      post({
+        passKey: context.key.code,
+        reservationNumber: "VDM-AAA111",
+        addOns: [{ courseId: context.wines.id, optionId: context.wines.options[0].id }],
+      }),
+    );
+
+    return { POST, ...context };
+  }
+
+  it("lets a guest swap what they took for another in the same group", async () => {
+    const { POST, key, wines, reservations } = await withWineTaken();
+
+    const response = await POST(
+      post({
+        passKey: key.code,
+        reservationNumber: "VDM-AAA111",
+        mode: "manage",
+        addOns: [{ courseId: wines.id, optionId: wines.options[1].id }],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect((await reservations.getReservationByNumber("VDM-AAA111"))?.addOns?.[0].optionName).toBe("Merlot");
+  });
+
+  it("lets a guest give it back", async () => {
+    const { POST, key, reservations } = await withWineTaken();
+
+    const response = await POST(
+      post({ passKey: key.code, reservationNumber: "VDM-AAA111", mode: "manage", addOns: [] }),
+    );
+
+    expect(response.status).toBe(200);
+    expect((await reservations.getReservationByNumber("VDM-AAA111"))?.addOns).toEqual([]);
+  });
+
+  /** The rule the whole thing turns on. */
+  it("refuses a group the booking does not already hold", async () => {
+    const { POST, key, wines, desserts, reservations } = await withWineTaken();
+
+    const response = await POST(
+      post({
+        passKey: key.code,
+        reservationNumber: "VDM-AAA111",
+        mode: "manage",
+        addOns: [
+          { courseId: wines.id, optionId: wines.options[0].id },
+          { courseId: desserts.id, optionId: desserts.options[0].id },
+        ],
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("PROMO_CLOSED");
+    // And nothing was written: the whole request is refused, not half of it.
+    expect((await reservations.getReservationByNumber("VDM-AAA111"))?.addOns).toHaveLength(1);
+  });
+
+  it("refuses a guest who declined everything and came back for one", async () => {
+    const { POST } = await import("@/app/api/booking/add-ons/route");
+    const { key, wines } = await setUp();
+
+    const response = await POST(
+      post({
+        passKey: key.code,
+        reservationNumber: "VDM-AAA111",
+        mode: "manage",
+        addOns: [{ courseId: wines.id, optionId: wines.options[0].id }],
+      }),
+    );
+
+    expect(response.status).toBe(409);
+  });
+
+  /**
+   * Giving it back is final, and that is the intended consequence: the group
+   * is no longer held, so there is nothing left to change.
+   */
+  it("cannot take it back after giving it back", async () => {
+    const { POST, key, wines } = await withWineTaken();
+
+    await POST(post({ passKey: key.code, reservationNumber: "VDM-AAA111", mode: "manage", addOns: [] }));
+
+    const response = await POST(
+      post({
+        passKey: key.code,
+        reservationNumber: "VDM-AAA111",
+        mode: "manage",
+        addOns: [{ courseId: wines.id, optionId: wines.options[0].id }],
+      }),
+    );
+
+    expect(response.status).toBe(409);
+  });
+
+  /** The confirmation screen is unaffected: that is where the offer lives. */
+  it("still lets the confirmation screen take a second group", async () => {
+    const { POST, key, wines, desserts, reservations } = await withWineTaken();
+
+    const response = await POST(
+      post({
+        passKey: key.code,
+        reservationNumber: "VDM-AAA111",
+        addOns: [
+          { courseId: wines.id, optionId: wines.options[0].id },
+          { courseId: desserts.id, optionId: desserts.options[0].id },
+        ],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect((await reservations.getReservationByNumber("VDM-AAA111"))?.addOns).toHaveLength(2);
+  });
+});

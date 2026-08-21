@@ -91,6 +91,7 @@ export async function upsertLocalDate(input: {
   serviceTime?: string;
   serviceEndTime?: string;
   premium?: boolean;
+  bookingCutoffHours?: number;
 }): Promise<RestaurantDateAvailability> {
   return withStoreLock(async () => {
     const dates = await readDates();
@@ -106,6 +107,7 @@ export async function upsertLocalDate(input: {
             serviceTime: input.serviceTime,
             serviceEndTime: input.serviceEndTime,
             premium: input.premium ?? false,
+            bookingCutoffHours: Math.max(0, Math.round(Number(input.bookingCutoffHours ?? 0))),
           }
         : {
             ...dates[index],
@@ -114,6 +116,7 @@ export async function upsertLocalDate(input: {
             serviceTime: input.serviceTime,
             serviceEndTime: input.serviceEndTime,
             premium: input.premium ?? false,
+            bookingCutoffHours: Math.max(0, Math.round(Number(input.bookingCutoffHours ?? 0))),
           };
 
     if (index === -1) {

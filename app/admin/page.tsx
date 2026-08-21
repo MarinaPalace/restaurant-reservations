@@ -9,6 +9,8 @@ import { hasPermission, permissionsOf } from "@/lib/auth/permissions";
 import { getReservationsList } from "@/lib/services/reservations";
 import { getFullMenuCatalog, getRestaurantDates } from "@/lib/services/restaurant";
 import { todayKey } from "@/lib/date";
+import { getTimeZone } from "@/lib/services/settings";
+import { describeClockMismatch } from "@/lib/timezone";
 
 export const metadata: Metadata = { title: "Staff dashboard" };
 
@@ -21,11 +23,19 @@ export default async function AdminPage() {
     redirect("/admin/login");
   }
 
-  const [reservations, restaurantDates, menu] = await Promise.all([
+  const [reservations, restaurantDates, menu, timeZone] = await Promise.all([
     getReservationsList(),
     getRestaurantDates(),
     getFullMenuCatalog(),
+    getTimeZone(),
   ]);
+
+  /**
+   * Worked out on the server, because that is the clock every time in this app
+   * is computed against. Asking the browser would answer for the machine the
+   * receptionist happens to be sitting at, which is not the one that matters.
+   */
+  const clockMismatch = describeClockMismatch(timeZone);
 
   const permissions = permissionsOf(user);
 
@@ -97,6 +107,8 @@ export default async function AdminPage() {
         initialReservations={reservations}
         menu={menu}
         permissions={permissions}
+        initialTimeZone={timeZone}
+        clockMismatch={clockMismatch}
       />
     </PageShell>
   );

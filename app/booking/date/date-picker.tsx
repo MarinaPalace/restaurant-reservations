@@ -12,6 +12,7 @@ import { useBookingGuard, writeBookingSession } from "@/hooks/use-booking-sessio
 import { useI18n } from "@/components/i18n-provider";
 import { format, localeOf, plural } from "@/lib/i18n";
 import { formatLongDate, isPastDateKey, startOfMonth } from "@/lib/date";
+import { canGuestBookDate } from "@/lib/reservation-policy";
 import type { RestaurantDateAvailability } from "@/types/booking";
 
 /**
@@ -47,6 +48,24 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
 
       if (!entry.isOpen) {
         return { disabled: true, hint: t.dateStep.day.closedHint, status: t.dateStep.day.closed };
+      }
+
+      /**
+       * Bookings close a set number of hours before the sitting, chosen per
+       * evening by staff. Shown here so the guest sees it on the calendar
+       * rather than picking the date and being refused at the end — the route
+       * refuses it either way (rule 2.5).
+       *
+       * This is also what closes tonight's dinner once it has started. Before
+       * this existed only *past* dates were blocked, so today's evening stayed
+       * bookable at midnight.
+       */
+      if (!canGuestBookDate(entry).allowed) {
+        return {
+          disabled: true,
+          hint: t.dateStep.day.closedForBookingHint,
+          status: t.dateStep.day.closedForBooking,
+        };
       }
 
       if (entry.remainingSeats <= 0) {

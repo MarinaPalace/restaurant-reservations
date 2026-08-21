@@ -394,3 +394,58 @@ describe("staff edits (local store)", () => {
     });
   });
 });
+
+/**
+ * How late a guest may book, per evening. Additive and optional (rule 2.2), so
+ * a date written before this existed reads as 0 — bookings close when the
+ * sitting starts, which is what it always did.
+ */
+describe("the guest booking cutoff", () => {
+  it("keeps the cutoff across a restart", async () => {
+    const store = await loadStore();
+    await store.upsertLocalDate({
+      date: "2026-08-25",
+      isOpen: true,
+      capacity: 40,
+      serviceTime: "19:00",
+      bookingCutoffHours: 6,
+    });
+
+    const reloaded = await import("@/lib/db/local-store");
+    const dates = await reloaded.getLocalDates();
+
+    expect(dates.find((entry) => entry.date === "2026-08-25")?.bookingCutoffHours).toBe(6);
+  });
+
+  it("reads a date saved without one as no cutoff", async () => {
+    const store = await loadStore();
+    await store.upsertLocalDate({ date: "2026-08-26", isOpen: true, capacity: 40 });
+
+    const saved = await store.getLocalDate("2026-08-26");
+    expect(saved?.bookingCutoffHours ?? 0).toBe(0);
+  });
+
+  it("does not lose the seats already taken when the cutoff changes", async () => {
+    const store = await loadStore();
+    await store.upsertLocalDate({ date: "2026-08-27", isOpen: true, capacity: 40, serviceTime: "19:00" });
+    await store.createLocalReservation({
+      reservationNumber: "VDM-CUT001",
+      roomNumber: "402",
+      guestCount: 2,
+      date: "2026-08-27",
+      selections: SELECTIONS,
+    });
+
+    await store.upsertLocalDate({
+      date: "2026-08-27",
+      isOpen: true,
+      capacity: 40,
+      serviceTime: "19:00",
+      bookingCutoffHours: 3,
+    });
+
+    const saved = await store.getLocalDate("2026-08-27");
+    expect(saved?.reservedSeats).toBe(2);
+    expect(saved?.bookingCutoffHours).toBe(3);
+  });
+});

@@ -137,6 +137,8 @@ export const pl: PartialDictionary = {
       afterStay: "po zakończeniu Państwa pobytu",
       afterStayHint: "Po pobycie",
       available: "{count} wolnych miejsc",
+      closedForBooking: "rezerwacje na ten wieczór zostały zamknięte",
+      closedForBookingHint: "Za późno",
     },
   },
 
@@ -310,6 +312,11 @@ export const pl: PartialDictionary = {
     groupOptions: "Wybór w grupie {group}",
     takenTitle: "Zamówione do Państwa rezerwacji",
     takenNote: "Wybrane na ekranie potwierdzenia. Prosimy o kontakt z recepcją, jeśli to się nie zgadza.",
+    change: "Zmień",
+    changeHint: "Mogą Państwo zamienić to na coś innego lub zrezygnować. Dodanie nowego jest możliwe tylko przy rezerwacji.",
+    removeOne: "Usuń",
+    keepEditing: "Gotowe",
+    removedAll: "Usunięto. Promocje są oferowane tylko przy rezerwacji, więc nie można tego tu dodać ponownie.",
   },
 
   contact: {
@@ -343,6 +350,8 @@ export const pl: PartialDictionary = {
     passKeyTooManyGuests: "Państwa rezerwacja u nas obejmuje mniej osób. Prosimy o kontakt z recepcją.",
     dateUnavailable: "Niestety ten termin nie jest już dostępny. Prosimy wybrać inny.",
     dateFull: "Niestety na ten termin nie ma już miejsc. Prosimy wybrać inny wieczór.",
+    bookingClosed:
+      "Rezerwacje na ten wieczór zostały zamknięte. Prosimy wybrać 9 z pokoju, a recepcja to zorganizuje.",
     tableJoinFailed: "Nie udało się posadzić Państwa przy tej rezerwacji. Prosimy sprawdzić numer i spróbować ponownie.",
     changesClosed: "Zmiany zamykają się dwanaście godzin przed kolacją. Prosimy o kontakt z recepcją, pomożemy.",
     notFound: "Nie znaleziono rezerwacji dla tego klucza dostępu.",

@@ -13,6 +13,7 @@ import { useSearchParams } from "next/navigation";
 import { useBookingSession } from "@/hooks/use-booking-session";
 import { useI18n } from "@/components/i18n-provider";
 import { PromoSummary } from "@/components/promo-summary";
+import { localizeMenuCatalog } from "@/lib/menu-localization";
 import type { Currency } from "@/lib/money";
 import { format, localeOf, plural } from "@/lib/i18n";
 import { translateApiError } from "@/lib/i18n/errors";
@@ -60,10 +61,12 @@ function replaceEntry(loaded: Loaded, reservation: ReservationRecord, patch: Par
  */
 export function ManageReservation({
   menu,
-  /** Only for reading promotion prices back; nothing here sells one. */
+  /** For swapping a promotion already held. Nothing here can add one. */
+  promoGroups,
   currency,
 }: {
   menu: MenuCourse[];
+  promoGroups: MenuCourse[];
   currency: Currency;
 }) {
   const searchParams = useSearchParams();
@@ -452,7 +455,29 @@ export function ManageReservation({
         is here so a guest can see what is on their booking, which is the only
         way "I never ordered that" has an answer they can check themselves.
       */}
-      <PromoSummary addOns={reservation.addOns} currency={currency} className="mt-4" />
+      <PromoSummary
+        addOns={reservation.addOns}
+        currency={currency}
+        className="mt-4"
+        /**
+         * Editable only while the booking itself is: inside the change
+         * deadline, and not cancelled. Past it the kitchen and the bar are
+         * already counting, so this becomes a plain record — the same line the
+         * dish choices follow.
+         */
+        editing={
+          canModify && !isCancelled
+            ? {
+                groups: localizeMenuCatalog(promoGroups, language),
+                passKey: normalizePassKey(passKey),
+                reservationNumber: reservation.reservationNumber,
+                onSaved: (updated) => {
+                  setLoaded(replaceEntry(loaded, updated));
+                },
+              }
+            : undefined
+        }
+      />
 
       {editing ? (
         <div className="mt-6 space-y-5">

@@ -11,9 +11,10 @@ import { getReservationByNumber } from "@/lib/services/reservations";
 import { getAuditEntries } from "@/lib/services/audit-log";
 import { getPassKeyById } from "@/lib/services/pass-keys";
 import { formatPassKey } from "@/lib/pass-key";
+import { StaffPromotions } from "@/app/admin/reservation/[reservationNumber]/staff-promotions";
 import { getCurrency } from "@/lib/services/settings";
 import { formatPrice, sumFinalPrices } from "@/lib/money";
-import { getMenuCatalog } from "@/lib/services/restaurant";
+import { getPromoCatalog, getMenuCatalog } from "@/lib/services/restaurant";
 import { canonicalizeSelections } from "@/lib/menu-selection";
 import { reservationLabel } from "@/lib/kitchen-report";
 import { findMissingCourses, summarizeSelections } from "@/lib/reservation-ticket";
@@ -31,13 +32,15 @@ export default async function ReservationDetailPage({
   }
 
   const { reservationNumber } = await params;
-  const [stored, menu, history, currency] = await Promise.all([
+  const [stored, menu, history, currency, promoGroups] = await Promise.all([
     getReservationByNumber(reservationNumber),
     getMenuCatalog(),
     // Everything that has happened to this booking, newest first.
     getAuditEntries({ reservationNumber, limit: 50 }),
     // What promotions on this booking are priced in.
     getCurrency(),
+    // In English: staff screens stay English, and so do the stored names.
+    getPromoCatalog("en"),
   ]);
 
   if (!stored) {
@@ -310,6 +313,14 @@ export default async function ReservationDetailPage({
             </table>
           </section>
         ) : null}
+
+        {/* Reception's own control: add, change or remove, at any time. */}
+        <StaffPromotions
+          reservationNumber={reservation.reservationNumber}
+          groups={promoGroups}
+          initialAddOns={reservation.addOns ?? []}
+          currency={currency}
+        />
 
         {/*
           The trail. It is append-only and outlives the record it describes,

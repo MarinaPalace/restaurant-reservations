@@ -27,9 +27,12 @@ export function ConfirmationView({
   /** Untranslated; the picker localizes them in the browser. */
   promoGroups,
   currency,
+  /** e.g. "Sofia time (UTC+3)". Resolved on the server — see the page. */
+  timeZoneLabel,
 }: {
   promoGroups: MenuCourse[];
   currency: Currency;
+  timeZoneLabel: string;
 }) {
   const reservation = useConfirmation();
   // The key they booked with, so changing it later needs no typing.
@@ -124,7 +127,16 @@ export function ConfirmationView({
           {reservation.time ? (
             <div className="flex justify-between gap-3">
               <dt className="text-ink-subtle">{t.confirmation.arrivalTime}</dt>
-              <dd className="font-semibold text-ink">{reservation.time}</dd>
+              <dd className="text-right font-semibold text-ink">
+                {reservation.time}
+                {/*
+                  Which 19:00. A guest who booked from another country, or who
+                  is reading this on a phone still set to home, has no way to
+                  know otherwise — and the offset moves with the seasons, so it
+                  cannot be written into the copy.
+                */}
+                <span className="block text-xs font-normal text-ink-muted">{timeZoneLabel}</span>
+              </dd>
             </div>
           ) : null}
           <div className="flex justify-between gap-3">

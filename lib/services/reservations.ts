@@ -19,6 +19,8 @@ import {
   updateLocalReservationAddOns,
   updateLocalReservationAttendance,
   updateLocalReservationCourseServed,
+  updateLocalReservationGuestServed,
+  updateLocalReservationCourseGuests,
   upsertLocalDate,
 } from "@/lib/db/local-store";
 import { getRestaurantDate } from "@/lib/services/restaurant";
@@ -662,6 +664,79 @@ export async function setReservationAttendance(
  * update on a single key, the same shape as the seat claims (rule 2.7), so it
  * is idempotent and last-write-wins per course rather than per table.
  */
+/**
+ * Marks one guest's plate served, or not.
+ *
+ * **One key per plate.** `service.servedGuests.<courseId>.<guestIndex>` is its
+ * own document key, so two waiters marking different guests on the same course
+ * both land — the write never reads the map back first. That is the same
+ * property the seat claims have (rule 2.7), and it is why the shape is nested
+ * maps rather than an array of indices.
+ */
+export async function setReservationGuestServed(
+  reservationNumber: string,
+  courseId: string,
+  guestIndex: number,
+  servedAt: string | null,
+): Promise<ReservationRecord | null> {
+  if (!isMongoConfigured()) {
+    return updateLocalReservationGuestServed(reservationNumber, courseId, guestIndex, servedAt);
+  }
+
+  await connectToDatabase();
+  const path = `service.servedGuests.${courseId}.${guestIndex}`;
+  const updated = await ReservationModel.findOneAndUpdate(
+    { reservationNumber },
+    servedAt ? { $set: { [path]: servedAt } } : { $unset: { [path]: "" } },
+    { returnDocument: "after" },
+  ).lean();
+
+  return updated ? toReservationRecord(updated as MongoReservationDocument) : null;
+}
+
+/**
+ * Marks every guest's plate of one course at once — the fast path, for a
+ * waiter carrying the whole course out in one trip.
+ *
+ * Still one update, so it is as atomic as a single-plate mark; the difference
+ * is only how many keys it names. The legacy whole-course `servedAt` key is
+ * cleared alongside, so a record written by the first version of the board
+ * cannot linger and contradict the per-guest detail.
+ */
+export async function setReservationCourseServedForGuests(
+  reservationNumber: string,
+  courseId: string,
+  guestIndexes: readonly number[],
+  servedAt: string | null,
+): Promise<ReservationRecord | null> {
+  if (!isMongoConfigured()) {
+    return updateLocalReservationCourseGuests(reservationNumber, courseId, guestIndexes, servedAt);
+  }
+
+  await connectToDatabase();
+  const update = servedAt
+    ? {
+        $set: Object.fromEntries(
+          guestIndexes.map((index) => [`service.servedGuests.${courseId}.${index}`, servedAt]),
+        ),
+        $unset: { [`service.servedAt.${courseId}`]: "" },
+      }
+    : {
+        $unset: {
+          ...Object.fromEntries(
+            guestIndexes.map((index) => [`service.servedGuests.${courseId}.${index}`, ""]),
+          ),
+          [`service.servedAt.${courseId}`]: "",
+        },
+      };
+
+  const updated = await ReservationModel.findOneAndUpdate({ reservationNumber }, update, {
+    returnDocument: "after",
+  }).lean();
+
+  return updated ? toReservationRecord(updated as MongoReservationDocument) : null;
+}
+
 export async function setReservationCourseServed(
   reservationNumber: string,
   courseId: string,

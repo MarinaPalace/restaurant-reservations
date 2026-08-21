@@ -84,11 +84,24 @@ minutes" flag possible later without another schema change.
 read of the sheet, and the sheet is the hottest read in the app. Both fields belong with the
 booking they describe.
 
-**Per course per table, not per guest.** A waiter carries four mains to one table in one trip; a
-per-guest tick would quadruple the taps to record something nobody asks afterwards. If per-guest is
-ever wanted it arrives as a *second* additive field (`servedGuests?: Record<string, number[]>`)
-rather than by changing the shape of this one — which is the only reason the recommendation is safe
-to make now.
+**Per guest, with a whole-course fast path.** The first version tracked whole courses only, on the
+reasoning that a waiter carries four mains in one trip. That was half right: the trip is one, but
+the *table* is not uniform. Two things broke it in use — "2 Amuse Bouche" does not say what anybody
+is eating, so a waiter cannot tell what to carry; and an allergy note says **"guest 2 is allergic to
+gluten"**, so guest 2's plate comes from a different pan and goes out on its own.
+
+So `servedGuests` arrived as the second additive field the note predicted — as nested maps
+(`courseId → guestIndex → when`) rather than the array of indices originally sketched, because each
+guest then has **its own document key**: `$set`/`$unset` touches one plate and two waiters marking
+different guests on the same course cannot lose each other. An array would have been a
+read-modify-write, which is what rule 2.7 says not to do.
+
+Tapping the course header is still one tap; it writes every plate of that course in one update.
+Which guests those are is worked out on the **server**, from the booking's own selections, so a
+guest who declined the course never gets a plate marked for them.
+
+The legacy `servedAt` map is still read: a course with a timestamp there counts as fully served
+(rule 2.2, no migration).
 
 ---
 
@@ -121,9 +134,13 @@ correcting yesterday.
 
 - **Arrived is the gate.** Nothing else on the row is offered until it is pressed: a table that has
   not sat down cannot have been served, and offering the courses first invites exactly that error.
-- Each course cell: tap to mark served, tap again to undo. **Undo must be one tap** — the common
-  mistake is marking the wrong table, and a mistake that needs a menu to fix will instead be left
-  wrong.
+- Each course cell names **which dishes**, not just how many: `2 × Salmon · 1 × Velouté`. Tap to
+  mark the whole course, tap again to undo. **Undo must be one tap** — the common mistake is marking
+  the wrong table, and a mistake that needs a menu to fix will instead be left wrong.
+- **Show what each guest chose** expands the row into a plate per guest, each with its own tick and
+  its own time. Collapsed by default: the board is read at a glance across a room, and every table
+  expanded is a screen nobody can scan. A partly-sent course reads `1/2` on its cell, and the
+  outstanding strip counts only what is genuinely left.
 - Served cells show the time it went out, because "how long has table 7 been waiting" is the
   question the pass actually asks.
 

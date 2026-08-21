@@ -49,12 +49,59 @@ function booking(overrides: Partial<ReservationRecord> = {}): ReservationRecord 
 }
 
 describe("building the board", () => {
-  it("counts the plates each table needs, per course", () => {
+  it("lists the plates each table needs, per course", () => {
     const [table] = buildBoard([booking()], menu);
 
-    expect(table.courses.map((course) => [course.courseName, course.plates])).toEqual([
+    expect(table.courses.map((course) => [course.courseName, course.plates.length])).toEqual([
       ["Starter", 2],
       ["Main", 2],
+    ]);
+  });
+
+  /**
+   * "2 Amuse Bouche" does not tell a waiter what to carry. The summary is what
+   * the collapsed row shows, and it names the dishes.
+   */
+  it("groups the plates by dish for the collapsed row", () => {
+    const [table] = buildBoard(
+      [
+        booking({
+          guestCount: 3,
+          selections: [
+            pick(0, "c1", "o1", "Salmon"),
+            pick(1, "c1", "o1", "Salmon"),
+            pick(2, "c1", "o2", "Velouté"),
+          ],
+        }),
+      ],
+      menu,
+    );
+
+    expect(table.courses[0].summary).toEqual([
+      { optionName: "Salmon", count: 2 },
+      { optionName: "Velouté", count: 1 },
+    ]);
+  });
+
+  /** Each plate knows whose it is, because an allergy note says "guest 2". */
+  it("names the guest on every plate", () => {
+    const [table] = buildBoard([booking()], menu);
+
+    expect(table.courses[0].plates.map((plate) => plate.label)).toEqual(["Guest 1", "Guest 2"]);
+  });
+
+  it("puts the room on the label only when the table is shared", () => {
+    const board = buildBoard(
+      [
+        booking({ reservationNumber: "A", roomNumber: "402", selections: [pick(0, "c1", "o1")] }),
+        booking({ reservationNumber: "B", roomNumber: "118", selections: [pick(0, "c1", "o1")] }),
+      ],
+      menu,
+    );
+
+    expect(board[0].courses[0].plates.map((plate) => plate.label)).toEqual([
+      "402 · Guest 1",
+      "118 · Guest 1",
     ]);
   });
 
@@ -65,7 +112,7 @@ describe("building the board", () => {
       menu,
     );
 
-    expect(table.courses.map((course) => [course.courseName, course.plates])).toEqual([["Main", 1]]);
+    expect(table.courses.map((course) => [course.courseName, course.plates.length])).toEqual([["Main", 1]]);
   });
 
   it("puts the courses in menu order, not the order they were chosen", () => {
@@ -91,7 +138,7 @@ describe("building the board", () => {
     expect(board[0].guests).toBe(4);
     expect(board[0].reservationNumbers).toEqual(["A", "B"]);
     // Plates add up across the rooms.
-    expect(board[0].courses[0].plates).toBe(4);
+    expect(board[0].courses[0].plates).toHaveLength(4);
   });
 
   it("groups rooms that asked to sit together before a table was assigned", () => {
@@ -177,13 +224,34 @@ describe("what is still to go out", () => {
     ]);
   });
 
-  it("drops a course once it has been served", () => {
+  it("drops a course once every plate of it has gone out", () => {
     const board = buildBoard(
-      [booking({ attendance: seated, service: { servedAt: { c1: "2026-08-25T18:04:00.000Z" } } })],
+      [
+        booking({
+          attendance: seated,
+          service: { servedGuests: { c1: { 0: "2026-08-25T18:04:00.000Z", 1: "2026-08-25T18:05:00.000Z" } } },
+        }),
+      ],
       menu,
     );
 
     expect(outstandingPlates(board).map((course) => course.courseName)).toEqual(["Main"]);
+  });
+
+  /**
+   * A half-sent course counts what is **left**, not all of it. Counting the
+   * whole course again would have the kitchen plate twice.
+   */
+  it("counts only the plates still to go on a half-sent course", () => {
+    const board = buildBoard(
+      [booking({ attendance: seated, service: { servedGuests: { c1: { 0: "2026-08-25T18:04:00.000Z" } } } })],
+      menu,
+    );
+
+    expect(outstandingPlates(board).map((course) => [course.courseName, course.plates])).toEqual([
+      ["Starter", 1],
+      ["Main", 2],
+    ]);
   });
 
   /**
@@ -218,26 +286,31 @@ describe("what is still to go out", () => {
     ]);
   });
 
-  /** A course went out when its first plate did, not its last. */
-  it("takes the earliest time across a shared table's bookings", () => {
+  /**
+   * A course is out when its **last** plate is. "When did table 7 finish its
+   * starter" is the question; the first plate leaving answers nothing.
+   */
+  it("times a course by its last plate, across a shared table", () => {
     const board = buildBoard(
       [
         booking({
           reservationNumber: "A",
+          selections: [pick(0, "c1", "o1")],
           attendance: seated,
-          service: { servedAt: { c1: "2026-08-25T18:10:00.000Z" } },
+          service: { servedGuests: { c1: { 0: "2026-08-25T18:10:00.000Z" } } },
         }),
         booking({
           reservationNumber: "B",
           roomNumber: "118",
+          selections: [pick(0, "c1", "o1")],
           attendance: seated,
-          service: { servedAt: { c1: "2026-08-25T18:04:00.000Z" } },
+          service: { servedGuests: { c1: { 0: "2026-08-25T18:04:00.000Z" } } },
         }),
       ],
       menu,
     );
 
-    expect(board[0].courses[0].servedAt).toBe("2026-08-25T18:04:00.000Z");
+    expect(board[0].courses[0].servedAt).toBe("2026-08-25T18:10:00.000Z");
   });
 });
 
@@ -279,5 +352,43 @@ describe("the evening at a glance", () => {
       menu,
     );
     expect(boardSummary(done).finished).toBe(1);
+  });
+});
+
+/**
+ * Records written by the first version of the board marked whole courses.
+ * Rule 2.2: they must keep reading correctly with no migration.
+ */
+describe("records from the first version of the board", () => {
+  const seated = { status: "seated" as const, at: "2026-08-25T17:00:00.000Z", byName: "Ivan" };
+
+  it("reads a whole-course mark as every plate of it being out", () => {
+    const [table] = buildBoard(
+      [booking({ attendance: seated, service: { servedAt: { c1: "2026-08-25T18:04:00.000Z" } } })],
+      menu,
+    );
+
+    const starter = table.courses[0];
+    expect(starter.outstanding).toBe(0);
+    expect(starter.plates.every((plate) => plate.servedAt)).toBe(true);
+    expect(outstandingPlates([table]).map((course) => course.courseName)).toEqual(["Main"]);
+  });
+
+  /** A per-guest mark is the newer truth and wins over the legacy key. */
+  it("prefers a per-guest mark over the legacy whole-course one", () => {
+    const [table] = buildBoard(
+      [
+        booking({
+          attendance: seated,
+          service: {
+            servedAt: { c1: "2026-08-25T18:00:00.000Z" },
+            servedGuests: { c1: { 0: "2026-08-25T18:30:00.000Z" } },
+          },
+        }),
+      ],
+      menu,
+    );
+
+    expect(table.courses[0].plates[0].servedAt).toBe("2026-08-25T18:30:00.000Z");
   });
 });

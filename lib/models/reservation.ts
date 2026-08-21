@@ -89,7 +89,15 @@ const reservationSchema = new Schema(
      * the keys are menu ids, which Mongoose cannot type ahead of time.
      */
     service: {
-      type: new Schema({ servedAt: { type: Schema.Types.Mixed, default: {} } }, { _id: false }),
+      type: new Schema(
+        {
+          /** Legacy whole-course marks; still read. */
+          servedAt: { type: Schema.Types.Mixed, default: {} },
+          /** Course id -> guest index -> when that plate went out. */
+          servedGuests: { type: Schema.Types.Mixed, default: {} },
+        },
+        { _id: false },
+      ),
       required: false,
     },
     // Optional so reservations taken before contact details existed still load.

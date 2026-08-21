@@ -190,6 +190,13 @@ export const serviceMarkSchema = z
     guests: z.number().int().min(0).max(MAX_GUESTS_PER_RESERVATION).optional(),
     courseId: z.string().min(1).max(64).optional(),
     served: z.boolean().optional(),
+    /**
+     * One guest's plate rather than the whole course. Absent means the course:
+     * the fast path, for a waiter carrying it all out in one trip.
+     */
+    guestIndex: z.number().int().min(0).max(MAX_GUESTS_PER_RESERVATION - 1).optional(),
+    /** Which booking's guest, when a shared table is marked plate by plate. */
+    reservationNumber: z.string().trim().max(40).optional(),
   })
   .refine((row) => row.attendance !== undefined || row.courseId !== undefined, {
     message: "Nothing to mark.",

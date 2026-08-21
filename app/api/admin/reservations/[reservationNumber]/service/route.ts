@@ -4,8 +4,10 @@ import { recordAuditEntry } from "@/lib/services/audit-log";
 import {
   getReservationByNumber,
   setReservationAttendance,
-  setReservationCourseServed,
+  setReservationCourseServedForGuests,
+  setReservationGuestServed,
 } from "@/lib/services/reservations";
+import { NONE_OPTION_ID } from "@/lib/menu-selection";
 import { serviceMarkSchema } from "@/lib/validation/booking";
 
 /**
@@ -92,12 +94,40 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ re
       return NextResponse.json({ reservation: updated });
     }
 
-    /* ---- a course going out: operational, not audited ---- */
-    const updated = await setReservationCourseServed(
-      reservationNumber,
-      parsed.data.courseId!,
-      parsed.data.served ? new Date().toISOString() : null,
-    );
+    /* ---- plates going out: operational, not audited ---- */
+    const courseId = parsed.data.courseId!;
+    const at = parsed.data.served ? new Date().toISOString() : null;
+
+    /**
+     * One guest's plate. The tap that answers "guest 2's main is out" — which
+     * is the tap an allergy note makes necessary, since guest 2 is the one
+     * whose dish came from a different pan.
+     */
+    if (parsed.data.guestIndex !== undefined) {
+      const updated = await setReservationGuestServed(reservationNumber, courseId, parsed.data.guestIndex, at);
+      return updated
+        ? NextResponse.json({ reservation: updated })
+        : NextResponse.json({ error: "Reservation not found." }, { status: 404 });
+    }
+
+    /**
+     * The whole course, in one update.
+     *
+     * Which guests it covers is worked out **here**, from the booking's own
+     * selections, rather than taken from the request: a guest who declined this
+     * course has no plate, and marking one for them would put a plate into the
+     * outstanding count that nobody is carrying. Rule 2.6's habit — resolve it
+     * from what is stored, not from what was posted.
+     */
+    const guestIndexes = [
+      ...new Set(
+        existing.selections
+          .filter((selection) => selection.courseId === courseId && selection.optionId !== NONE_OPTION_ID)
+          .map((selection) => selection.guestIndex ?? 0),
+      ),
+    ];
+
+    const updated = await setReservationCourseServedForGuests(reservationNumber, courseId, guestIndexes, at);
 
     if (!updated) {
       return NextResponse.json({ error: "Reservation not found." }, { status: 404 });

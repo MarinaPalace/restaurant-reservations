@@ -571,3 +571,88 @@ describe("attendance and service progress", () => {
     expect(saved?.guestCount).toBe(2);
   });
 });
+
+/**
+ * Plates, per guest.
+ *
+ * The unit the board works in once a table has a guest with an allergy: "guest
+ * 2's main is out" is a different fact from "the main course is out".
+ */
+describe("per-guest plates", () => {
+  async function seedBooking(store: Awaited<ReturnType<typeof loadStore>>, number = "VDM-PLT001") {
+    await store.upsertLocalDate({ date: "2026-08-25", isOpen: true, capacity: 40 });
+    await store.createLocalReservation({
+      reservationNumber: number,
+      roomNumber: "402",
+      guestCount: 2,
+      date: "2026-08-25",
+      selections: SELECTIONS,
+    });
+    return number;
+  }
+
+  it("marks one guest's plate without touching the other", async () => {
+    const store = await loadStore();
+    const number = await seedBooking(store);
+
+    await store.updateLocalReservationGuestServed(number, "course-1", 0, "2026-08-25T18:04:00.000Z");
+
+    expect((await store.getLocalReservation(number))?.service?.servedGuests).toEqual({
+      "course-1": { "0": "2026-08-25T18:04:00.000Z" },
+    });
+  });
+
+  it("unmarks one plate and leaves the rest", async () => {
+    const store = await loadStore();
+    const number = await seedBooking(store);
+
+    await store.updateLocalReservationGuestServed(number, "course-1", 0, "2026-08-25T18:04:00.000Z");
+    await store.updateLocalReservationGuestServed(number, "course-1", 1, "2026-08-25T18:05:00.000Z");
+    await store.updateLocalReservationGuestServed(number, "course-1", 0, null);
+
+    expect((await store.getLocalReservation(number))?.service?.servedGuests?.["course-1"]).toEqual({
+      "1": "2026-08-25T18:05:00.000Z",
+    });
+  });
+
+  /** Two waiters, two guests, one course. Neither may lose the other. */
+  it("does not lose a plate when several land at once", async () => {
+    const store = await loadStore();
+    const number = await seedBooking(store);
+
+    await Promise.all([
+      store.updateLocalReservationGuestServed(number, "course-1", 0, "2026-08-25T18:04:00.000Z"),
+      store.updateLocalReservationGuestServed(number, "course-1", 1, "2026-08-25T18:04:30.000Z"),
+      store.updateLocalReservationGuestServed(number, "course-2", 0, "2026-08-25T19:00:00.000Z"),
+    ]);
+
+    const saved = await store.getLocalReservation(number);
+    expect(Object.keys(saved?.service?.servedGuests?.["course-1"] ?? {})).toHaveLength(2);
+    expect(Object.keys(saved?.service?.servedGuests?.["course-2"] ?? {})).toHaveLength(1);
+  });
+
+  it("marks a whole course's guests in one go", async () => {
+    const store = await loadStore();
+    const number = await seedBooking(store);
+
+    await store.updateLocalReservationCourseGuests(number, "course-1", [0, 1], "2026-08-25T18:04:00.000Z");
+
+    expect((await store.getLocalReservation(number))?.service?.servedGuests?.["course-1"]).toEqual({
+      "0": "2026-08-25T18:04:00.000Z",
+      "1": "2026-08-25T18:04:00.000Z",
+    });
+  });
+
+  /** A legacy whole-course mark must not linger and contradict the detail. */
+  it("clears the legacy whole-course mark when the course is re-marked", async () => {
+    const store = await loadStore();
+    const number = await seedBooking(store);
+
+    await store.updateLocalReservationCourseServed(number, "course-1", "2026-08-25T18:00:00.000Z");
+    await store.updateLocalReservationCourseGuests(number, "course-1", [0, 1], null);
+
+    const saved = await store.getLocalReservation(number);
+    expect(saved?.service?.servedAt?.["course-1"]).toBeUndefined();
+    expect(saved?.service?.servedGuests?.["course-1"]).toEqual({});
+  });
+});

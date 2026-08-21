@@ -17,13 +17,35 @@ import { NONE_OPTION_ID } from "@/lib/menu-selection";
  * `assignTableNumber` already works.
  */
 
+/**
+ * One plate: a named guest's dish.
+ *
+ * The unit the board actually works in. "2 Amuse Bouche" does not say what
+ * anybody is eating, and an allergy note says "guest 2 is allergic to gluten" —
+ * so a plate has to know whose it is and what it is, or neither of those can be
+ * answered from the screen.
+ */
+export type BoardPlate = {
+  /** Which booking; a shared table has several, each with its own guest 0. */
+  reservationNumber: string;
+  guestIndex: number;
+  /** "Guest 2", or "402 · Guest 2" when the table is shared. */
+  label: string;
+  optionName: string;
+  servedAt?: string;
+};
+
 export type BoardCourse = {
   courseId: string;
   courseName: string;
   order: number;
-  /** Plates this table needs of this course. Declines are not plates. */
-  plates: number;
-  /** When it went out, if it has. The earliest across the table's bookings. */
+  /** Every plate of this course, in guest order. Declines are not plates. */
+  plates: BoardPlate[];
+  /** How many, grouped by dish — what the collapsed row shows. */
+  summary: { optionName: string; count: number }[];
+  served: number;
+  outstanding: number;
+  /** When the last plate of it went out, if they all have. */
   servedAt?: string;
 };
 
@@ -52,18 +74,43 @@ export type BoardTable = {
   extras: string[];
 };
 
-/** Plates this booking needs of each course. `NONE_OPTION_ID` is a choice, not a plate. */
-function platesByCourse(reservation: ReservationRecord): Map<string, number> {
-  const counts = new Map<string, number>();
+/**
+ * Every plate this booking needs, by course.
+ *
+ * `NONE_OPTION_ID` is a real selection but never a plate — "guest 2 wants no
+ * starter" is a fact the kitchen wants and a plate nobody carries.
+ */
+function platesByCourse(reservation: ReservationRecord, isShared: boolean): Map<string, BoardPlate[]> {
+  const byCourse = new Map<string, BoardPlate[]>();
+  const room = reservation.roomNumber || reservation.guestName?.trim() || "—";
 
   for (const selection of reservation.selections) {
     if (selection.optionId === NONE_OPTION_ID) {
       continue;
     }
-    counts.set(selection.courseId, (counts.get(selection.courseId) ?? 0) + 1);
+
+    const guestIndex = selection.guestIndex ?? 0;
+    const served =
+      reservation.service?.servedGuests?.[selection.courseId]?.[String(guestIndex)] ??
+      // A record from the first version of the board marked whole courses;
+      // every plate of such a course counts as out.
+      reservation.service?.servedAt?.[selection.courseId];
+
+    byCourse.set(selection.courseId, [
+      ...(byCourse.get(selection.courseId) ?? []),
+      {
+        reservationNumber: reservation.reservationNumber,
+        guestIndex,
+        // The room is only worth the space when the table is shared; on a
+        // single booking "Guest 2" is unambiguous and shorter to read at speed.
+        label: isShared ? `${room} · Guest ${guestIndex + 1}` : `Guest ${guestIndex + 1}`,
+        optionName: selection.optionName,
+        servedAt: served,
+      },
+    ]);
   }
 
-  return counts;
+  return byCourse;
 }
 
 function labelOf(reservation: ReservationRecord): string {
@@ -98,20 +145,12 @@ export function buildBoard(
   }
 
   const tables: BoardTable[] = [...groups].map(([key, members]) => {
-    const plates = new Map<string, number>();
-    const servedAt = new Map<string, string>();
+    const isShared = members.length > 1;
+    const plates = new Map<string, BoardPlate[]>();
 
     for (const reservation of members) {
-      for (const [courseId, count] of platesByCourse(reservation)) {
-        plates.set(courseId, (plates.get(courseId) ?? 0) + count);
-      }
-
-      for (const [courseId, at] of Object.entries(reservation.service?.servedAt ?? {})) {
-        const existing = servedAt.get(courseId);
-        // The earliest: the course went out when the first plate of it did.
-        if (!existing || at < existing) {
-          servedAt.set(courseId, at);
-        }
+      for (const [courseId, coursePlates] of platesByCourse(reservation, isShared)) {
+        plates.set(courseId, [...(plates.get(courseId) ?? []), ...coursePlates]);
       }
     }
 
@@ -119,13 +158,37 @@ export function buildBoard(
     const unanimous = statuses.every((status) => status === statuses[0]);
 
     const courses: BoardCourse[] = [...plates]
-      .map(([courseId, count]) => ({
-        courseId,
-        courseName: courseNames.get(courseId) ?? "Course",
-        order: courseOrder.get(courseId) ?? 99,
-        plates: count,
-        servedAt: servedAt.get(courseId),
-      }))
+      .map(([courseId, coursePlates]) => {
+        const ordered = [...coursePlates].sort(
+          (a, b) =>
+            a.reservationNumber.localeCompare(b.reservationNumber) || a.guestIndex - b.guestIndex,
+        );
+        const served = ordered.filter((plate) => plate.servedAt);
+
+        // Grouped by dish for the collapsed row: "2 x Salmon, 1 x Veloute".
+        const counts = new Map<string, number>();
+        for (const plate of ordered) {
+          counts.set(plate.optionName, (counts.get(plate.optionName) ?? 0) + 1);
+        }
+
+        return {
+          courseId,
+          courseName: courseNames.get(courseId) ?? "Course",
+          order: courseOrder.get(courseId) ?? 99,
+          plates: ordered,
+          summary: [...counts]
+            .map(([optionName, count]) => ({ optionName, count }))
+            .sort((a, b) => b.count - a.count || a.optionName.localeCompare(b.optionName)),
+          served: served.length,
+          outstanding: ordered.length - served.length,
+          // The course is out when its last plate is, so the time is the latest
+          // of them — "when did table 7 finish its starter", not when it began.
+          servedAt:
+            served.length === ordered.length && ordered.length > 0
+              ? served.map((plate) => plate.servedAt!).sort().at(-1)
+              : undefined,
+        };
+      })
       .sort((a, b) => a.order - b.order);
 
     return {
@@ -133,7 +196,7 @@ export function buildBoard(
       table: members[0].tableNumber ?? "",
       rooms: members.map(labelOf).sort(compareRoomNumbers),
       guests: members.reduce((sum, reservation) => sum + Math.max(0, reservation.guestCount), 0),
-      isShared: members.length > 1,
+      isShared,
       reservationNumbers: members.map((reservation) => reservation.reservationNumber),
       attendance: unanimous ? statuses[0] : null,
       attendanceMixed: !unanimous,
@@ -170,15 +233,22 @@ export function outstandingPlates(tables: readonly BoardTable[]): Outstanding[] 
     }
 
     for (const course of table.courses) {
-      if (course.servedAt) {
+      if (course.outstanding === 0) {
         continue;
       }
 
       const existing = totals.get(course.courseId);
       if (existing) {
-        existing.plates += course.plates;
+        existing.plates += course.outstanding;
       } else {
-        totals.set(course.courseId, { ...course, plates: course.plates });
+        // Only the plates genuinely still to go: a course half sent counts what
+        // is left, not all of it, or the kitchen plates twice.
+        totals.set(course.courseId, {
+          courseId: course.courseId,
+          courseName: course.courseName,
+          order: course.order,
+          plates: course.outstanding,
+        });
       }
     }
   }
@@ -200,6 +270,6 @@ export function boardSummary(tables: readonly BoardTable[]) {
     guestsSeated: seated.reduce((sum, table) => sum + table.guests, 0),
     guestsExpected: tables.reduce((sum, table) => sum + table.guests, 0),
     /** Tables fully served: arrived, and every course out. */
-    finished: seated.filter((table) => table.courses.every((course) => course.servedAt)).length,
+    finished: seated.filter((table) => table.courses.every((course) => course.outstanding === 0)).length,
   };
 }

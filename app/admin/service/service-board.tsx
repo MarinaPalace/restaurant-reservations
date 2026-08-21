@@ -7,7 +7,7 @@ import { Button, ButtonLink } from "@/components/ui/button";
 import { Alert, EmptyState } from "@/components/ui/feedback";
 import { cx } from "@/components/ui/utils";
 import { createSequentialSaver } from "@/lib/sequential-save";
-import { boardSummary, outstandingPlates, type BoardTable } from "@/lib/service-board";
+import { boardSummary, outstandingPlates, type BoardPlate, type BoardTable } from "@/lib/service-board";
 import { formatLongDate } from "@/lib/date";
 
 /**
@@ -62,6 +62,15 @@ export function ServiceBoard({
   const [tables, setTables] = useState(initialTables);
   const [rows, setRows] = useState<Record<string, RowState>>({});
   const [closing, setClosing] = useState(false);
+  /**
+   * Which tables are showing their plates.
+   *
+   * Collapsed by default: the board is read at a glance across a whole room,
+   * and every table expanded is a screen nobody can scan. Expanding is how you
+   * answer "what is guest 2 eating", which is the question an allergy note
+   * makes you ask about one table, not all of them.
+   */
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [notice, setNotice] = useState("");
 
   /** Rows with a mark still in flight. A poll must leave these alone. */
@@ -170,21 +179,27 @@ export function ServiceBoard({
   }, []);
 
   const mark = useCallback(
-    (table: BoardTable, body: Record<string, unknown>, optimistic: (current: BoardTable) => BoardTable) => {
+    (
+      table: BoardTable,
+      body: Record<string, unknown>,
+      optimistic: (current: BoardTable) => BoardTable,
+      /** The row the result belongs to; a plate mark targets one booking. */
+      rowKey: string = table.key,
+    ) => {
       if (!canRecord) {
         return;
       }
 
       // Paint first. The floor does not wait for a round trip.
-      const before = tables.find((entry) => entry.key === table.key);
-      setTables((current) => current.map((entry) => (entry.key === table.key ? optimistic(entry) : entry)));
+      const before = tables.find((entry) => entry.key === rowKey);
+      setTables((current) => current.map((entry) => (entry.key === rowKey ? optimistic(entry) : entry)));
       setRows((current) => ({
         ...current,
-        [table.key]: { pending: (current[table.key]?.pending ?? 0) + 1, error: null },
+        [rowKey]: { pending: (current[rowKey]?.pending ?? 0) + 1, error: null },
       }));
-      inFlight.current.add(table.key);
+      inFlight.current.add(rowKey);
 
-      saverFor(table.key).save(async (isLatest) => {
+      saverFor(rowKey).save(async (isLatest) => {
         try {
           /**
            * A shared table is several bookings. One tap writes to all of them,
@@ -206,8 +221,8 @@ export function ServiceBoard({
           }
 
           if (isLatest()) {
-            setRows((current) => ({ ...current, [table.key]: { pending: 0, error: null } }));
-            inFlight.current.delete(table.key);
+            setRows((current) => ({ ...current, [rowKey]: { pending: 0, error: null } }));
+            inFlight.current.delete(rowKey);
             router.refresh();
           }
         } catch (error) {
@@ -217,13 +232,13 @@ export function ServiceBoard({
 
           // Roll this row back, and say so on the row. The other twenty stand.
           if (before) {
-            setTables((current) => current.map((entry) => (entry.key === table.key ? before : entry)));
+            setTables((current) => current.map((entry) => (entry.key === rowKey ? before : entry)));
           }
           setRows((current) => ({
             ...current,
-            [table.key]: { pending: 0, error: error instanceof Error ? error.message : "Could not record that." },
+            [rowKey]: { pending: 0, error: error instanceof Error ? error.message : "Could not record that." },
           }));
-          inFlight.current.delete(table.key);
+          inFlight.current.delete(rowKey);
         }
       });
     },
@@ -244,10 +259,56 @@ export function ServiceBoard({
       ...current,
       courses: current.courses.map((course) =>
         course.courseId === courseId
-          ? { ...course, servedAt: served ? new Date().toISOString() : undefined }
+          ? {
+              ...course,
+              plates: course.plates.map((plate) => ({
+                ...plate,
+                servedAt: served ? new Date().toISOString() : undefined,
+              })),
+              served: served ? course.plates.length : 0,
+              outstanding: served ? 0 : course.plates.length,
+              servedAt: served ? new Date().toISOString() : undefined,
+            }
           : course,
       ),
     }));
+
+  /**
+   * One guest's plate.
+   *
+   * Written against that guest's own booking, not the table's — a shared table
+   * has several bookings and each has its own guest 0, so the reservation
+   * number is what disambiguates them.
+   */
+  const togglePlate = (table: BoardTable, courseId: string, plate: BoardPlate, served: boolean) =>
+    mark(
+      { ...table, reservationNumbers: [plate.reservationNumber] },
+      { courseId, guestIndex: plate.guestIndex, served },
+      (current) => ({
+        ...current,
+        courses: current.courses.map((course) => {
+          if (course.courseId !== courseId) {
+            return course;
+          }
+
+          const plates = course.plates.map((entry) =>
+            entry.reservationNumber === plate.reservationNumber && entry.guestIndex === plate.guestIndex
+              ? { ...entry, servedAt: served ? new Date().toISOString() : undefined }
+              : entry,
+          );
+          const servedCount = plates.filter((entry) => entry.servedAt).length;
+
+          return {
+            ...course,
+            plates,
+            served: servedCount,
+            outstanding: plates.length - servedCount,
+            servedAt: servedCount === plates.length ? new Date().toISOString() : undefined,
+          };
+        }),
+      }),
+      table.key,
+    );
 
   /**
    * Marks every table nobody has touched as a no-show, in one pass.
@@ -439,39 +500,131 @@ export function ServiceBoard({
                   first invites exactly that error.
                 */}
                 {seated ? (
-                  <div className="mt-3 flex flex-wrap gap-2 border-t border-line pt-3">
-                    {table.courses.map((course) => {
-                      const served = Boolean(course.servedAt);
+                  <div className="mt-3 border-t border-line pt-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {table.courses.map((course) => {
+                        const done = course.outstanding === 0;
 
-                      return (
-                        <button
-                          key={course.courseId}
-                          type="button"
-                          disabled={!canRecord}
-                          onClick={() => toggleCourse(table, course.courseId, !served)}
-                          aria-pressed={served}
-                          className={cx(
-                            "min-h-14 min-w-28 rounded-control border px-4 text-left transition-colors",
-                            served
-                              ? "border-success/40 bg-success-soft"
-                              : "border-line-strong bg-surface hover:border-accent",
-                            !canRecord && "cursor-default",
-                          )}
-                        >
-                          <span className={cx("block text-sm font-semibold", served ? "text-success" : "text-ink")}>
-                            {served ? "✓ " : ""}
-                            {course.courseName}
-                          </span>
-                          <span className="block text-xs text-ink-muted">
-                            {served
-                              ? new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(
-                                  new Date(course.servedAt!),
-                                )
-                              : `${course.plates} ${course.plates === 1 ? "plate" : "plates"}`}
-                          </span>
-                        </button>
-                      );
-                    })}
+                        return (
+                          <button
+                            key={course.courseId}
+                            type="button"
+                            disabled={!canRecord}
+                            onClick={() => toggleCourse(table, course.courseId, !done)}
+                            aria-pressed={done}
+                            className={cx(
+                              "min-h-16 min-w-40 rounded-control border px-4 py-2 text-left transition-colors",
+                              done
+                                ? "border-success/40 bg-success-soft"
+                                : course.served > 0
+                                  ? "border-gold/50 bg-accent-soft"
+                                  : "border-line-strong bg-surface hover:border-accent",
+                              !canRecord && "cursor-default",
+                            )}
+                          >
+                            <span className={cx("block text-sm font-semibold", done ? "text-success" : "text-ink")}>
+                              {done ? "✓ " : ""}
+                              {course.courseName}
+                              {!done && course.served > 0 ? (
+                                <span className="ml-1 font-normal text-ink-muted">
+                                  {course.served}/{course.plates.length}
+                                </span>
+                              ) : null}
+                            </span>
+
+                            {/*
+                              Which dishes, not just how many. "2 Amuse Bouche"
+                              does not tell a waiter what to carry; "2 x Salmon,
+                              1 x Veloute" does.
+                            */}
+                            <span className="mt-0.5 block text-xs text-ink-muted">
+                              {done && course.servedAt
+                                ? new Intl.DateTimeFormat("en-GB", {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                    hour12: false,
+                                  }).format(new Date(course.servedAt))
+                                : course.summary
+                                    .map((entry) => `${entry.count} × ${entry.optionName}`)
+                                    .join(" · ")}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/*
+                      Per guest, on demand. An allergy note says "guest 2 is
+                      allergic to gluten", so the board has to be able to say
+                      what guest 2 is actually eating — and to send that one
+                      plate out separately from the rest of the course.
+                    */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpanded((current) => ({ ...current, [table.key]: !current[table.key] }))
+                      }
+                      className="mt-2 min-h-11 text-sm font-medium text-accent-ink underline underline-offset-4"
+                      aria-expanded={Boolean(expanded[table.key])}
+                    >
+                      {expanded[table.key] ? "Hide each guest" : "Show what each guest chose"}
+                    </button>
+
+                    {expanded[table.key] ? (
+                      <div className="mt-2 space-y-3">
+                        {table.courses.map((course) => (
+                          <div key={course.courseId}>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-ink-subtle">
+                              {course.courseName}
+                            </p>
+                            <div className="mt-1 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+                              {course.plates.map((plate) => {
+                                const out = Boolean(plate.servedAt);
+
+                                return (
+                                  <button
+                                    key={`${plate.reservationNumber}-${plate.guestIndex}`}
+                                    type="button"
+                                    disabled={!canRecord}
+                                    aria-pressed={out}
+                                    onClick={() => togglePlate(table, course.courseId, plate, !out)}
+                                    className={cx(
+                                      "flex min-h-12 items-center justify-between gap-3 rounded-control border px-3 py-2 text-left transition-colors",
+                                      out
+                                        ? "border-success/40 bg-success-soft"
+                                        : "border-line bg-surface hover:border-accent",
+                                      !canRecord && "cursor-default",
+                                    )}
+                                  >
+                                    <span className="min-w-0">
+                                      <span className="block text-xs text-ink-subtle">{plate.label}</span>
+                                      <span
+                                        className={cx(
+                                          "block truncate text-sm font-medium",
+                                          out ? "text-success" : "text-ink",
+                                        )}
+                                      >
+                                        {out ? "✓ " : ""}
+                                        {plate.optionName}
+                                      </span>
+                                    </span>
+                                    {out && plate.servedAt ? (
+                                      <span className="shrink-0 text-xs tabular-nums text-ink-muted">
+                                        {new Intl.DateTimeFormat("en-GB", {
+                                          hour: "2-digit",
+                                          minute: "2-digit",
+                                          hour12: false,
+                                        }).format(new Date(plate.servedAt))}
+                                      </span>
+                                    ) : null}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
 

@@ -239,8 +239,29 @@ export type ReservationAttendance = {
  * schema change.
  */
 export type ReservationServiceProgress = {
-  /** Course id → when that course went out to this table. */
+  /**
+   * Course id → when that course went out to this table.
+   *
+   * **Legacy, and read-only from now on.** The first version of the board
+   * tracked whole courses. `servedGuests` below replaced it because a table of
+   * four rarely gets its four plates at once, and because an allergy note says
+   * "guest 2", not "the starter". Records written by that version still read
+   * correctly: a course with a timestamp here counts as fully served.
+   */
   servedAt?: Record<string, string>;
+  /**
+   * Course id → guest index → when *that guest's* plate went out.
+   *
+   * Nested maps rather than an array of indices, and deliberately: each guest
+   * is its own key, so `$set`/`$unset` touches one plate and two waiters
+   * marking different guests on the same course cannot lose each other. An
+   * array would be a read-modify-write, which is exactly what rule 2.7 says
+   * not to do.
+   *
+   * The guest index is per **booking**, so a shared table is unambiguous —
+   * both bookings have a guest 0, and they live under different reservations.
+   */
+  servedGuests?: Record<string, Record<string, string>>;
 };
 
 export type ReservationStatus = "confirmed" | "cancelled";

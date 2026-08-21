@@ -49,6 +49,40 @@ export type Totals = {
   promotionDiscount: number;
   /** 0–100 of confirmed bookings that took at least one promotion. */
   promotionTakeUp: number | null;
+
+  /* ---- attendance. See `docs/service-tracking.md` §7. ---- */
+
+  /** Confirmed bookings whose attendance was actually recorded, either way. */
+  attendanceRecorded: number;
+  /** Bookings marked seated. */
+  seated: number;
+  /** Bookings marked as not turning up. */
+  noShows: number;
+  /**
+   * Guests who actually sat down, on bookings where somebody said.
+   *
+   * Not comparable with `covers` — that counts every confirmed booking,
+   * recorded or not. The pair is only meaningful beside `attendanceCoverage`.
+   */
+  seatedCovers: number;
+  /**
+   * 0–100 of confirmed bookings that carry any attendance mark.
+   *
+   * **The number that stops the no-show rate being quoted.** A rate computed
+   * over a night nobody marked is a confident figure about nothing, so every
+   * screen showing `noShowRate` must show this beside it.
+   */
+  attendanceCoverage: number | null;
+  /**
+   * 0–100 of *recorded* bookings that did not turn up, or null when nothing was
+   * recorded.
+   *
+   * The denominator is deliberately the recorded ones, not every booking.
+   * Dividing by all of them would quietly report a night nobody marked as
+   * having no no-shows, which is the exact failure this design exists to
+   * prevent — silence is not attendance.
+   */
+  noShowRate: number | null;
 };
 
 function isConfirmed(reservation: ReservationRecord): boolean {
@@ -115,6 +149,15 @@ export function buildTotals(
         .filter((hours): hours is number => hours !== null)
     : [];
 
+  /**
+   * Only bookings somebody actually marked. Absent attendance is **unknown**,
+   * never "seated" and never "no-show" — on a busy night nobody taps, and
+   * reading silence either way would invent the answer.
+   */
+  const recorded = confirmed.filter((reservation) => reservation.attendance);
+  const seated = recorded.filter((reservation) => reservation.attendance?.status === "seated");
+  const noShows = recorded.filter((reservation) => reservation.attendance?.status === "no-show");
+
   return {
     covers,
     bookings: confirmed.length,
@@ -128,6 +171,18 @@ export function buildTotals(
     promotionRevenue: sumFinalPrices(promotions),
     promotionDiscount: toCents(sumListPrices(promotions) - sumFinalPrices(promotions)),
     promotionTakeUp: percent(withPromotions.length, confirmed.length),
+
+    attendanceRecorded: recorded.length,
+    seated: seated.length,
+    noShows: noShows.length,
+    seatedCovers: seated.reduce(
+      // A booking for four where three came records three; one that did not say
+      // counts the whole party, which is what "seated" means without a number.
+      (sum, reservation) => sum + (reservation.attendance?.guests ?? Math.max(0, reservation.guestCount)),
+      0,
+    ),
+    attendanceCoverage: percent(recorded.length, confirmed.length),
+    noShowRate: percent(noShows.length, recorded.length),
   };
 }
 

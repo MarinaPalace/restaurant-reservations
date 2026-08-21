@@ -232,7 +232,7 @@ export function AnalyticsView({
       ) : (
         <>
           {/* The one hero figure, then the supporting tiles. */}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             <StatTile
               hero
               label="Covers served"
@@ -245,7 +245,13 @@ export function AnalyticsView({
               value={totals.occupancy}
               previous={previousTotals.occupancy}
               suffix="%"
-              hint={`${totals.covers} of ${totals.seatsOffered} seats over ${totals.eveningsOpen} evenings`}
+              hint={
+                totals.attendanceRecorded > 0
+                  ? // Booked against served. The two diverging is the interesting
+                    // number, and it only exists once somebody marks the board.
+                    `${totals.covers} of ${totals.seatsOffered} seats booked · ${totals.seatedCovers} actually sat down`
+                  : `${totals.covers} of ${totals.seatsOffered} seats over ${totals.eveningsOpen} evenings`
+              }
             />
             <StatTile
               label="Cancellation rate"
@@ -256,6 +262,26 @@ export function AnalyticsView({
               // as a falling covers count.
               betterWhen="down"
               hint={`${totals.cancelled} cancelled`}
+            />
+            {/*
+              No-shows, and the coverage figure that qualifies them.
+
+              These two are inseparable. A no-show rate computed over a night
+              nobody marked is a confident number about nothing, so the tile
+              states how much of the period was actually recorded — and when
+              nothing was, it says so instead of showing 0%.
+            */}
+            <StatTile
+              label="No-show rate"
+              value={totals.noShowRate}
+              previous={previousTotals.noShowRate}
+              suffix="%"
+              betterWhen="down"
+              hint={
+                totals.attendanceRecorded === 0
+                  ? "Nobody marked attendance in this period"
+                  : `${totals.noShows} of ${totals.attendanceRecorded} recorded · ${totals.attendanceCoverage}% of bookings marked`
+              }
             />
             <StatTile
               label="Promotion revenue"

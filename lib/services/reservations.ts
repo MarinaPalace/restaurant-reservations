@@ -17,6 +17,8 @@ import {
   setLocalReservationTable,
   updateLocalReservationSelections,
   updateLocalReservationAddOns,
+  updateLocalReservationAttendance,
+  updateLocalReservationCourseServed,
   upsertLocalDate,
 } from "@/lib/db/local-store";
 import { getRestaurantDate } from "@/lib/services/restaurant";
@@ -27,6 +29,8 @@ import {
   type ReservationRecord,
   type ReservationSelection,
   type ReservationAddOn,
+  type ReservationAttendance,
+  type ReservationServiceProgress,
 } from "@/types/booking";
 
 export class BookingError extends Error {
@@ -83,6 +87,8 @@ type MongoReservationDocument = {
   guestName?: unknown;
   selections?: unknown;
   addOns?: unknown;
+  attendance?: unknown;
+  service?: unknown;
   contact?: unknown;
   time?: unknown;
   endTime?: unknown;
@@ -112,6 +118,10 @@ function toReservationRecord(document: MongoReservationDocument): ReservationRec
     date: String(document.date),
     selections: Array.isArray(document.selections) ? (document.selections as ReservationSelection[]) : [],
     addOns: Array.isArray(document.addOns) ? (document.addOns as ReservationAddOn[]) : undefined,
+    // Absent stays absent: unknown attendance is not "seated" (rule in
+    // `docs/service-tracking.md` §2), and nothing may default it.
+    attendance: (document.attendance as ReservationAttendance | undefined) ?? undefined,
+    service: (document.service as ReservationServiceProgress | undefined) ?? undefined,
     contact: (document.contact as ReservationContact | undefined) ?? undefined,
     time: document.time ? String(document.time) : undefined,
     endTime: document.endTime ? String(document.endTime) : undefined,
@@ -612,6 +622,61 @@ export async function updateReservationAddOns(
   const updated = await ReservationModel.findOneAndUpdate(
     { reservationNumber },
     { $set: { addOns } },
+    { returnDocument: "after" },
+  ).lean();
+
+  return updated ? toReservationRecord(updated as MongoReservationDocument) : null;
+}
+
+/**
+ * Records whether a table turned up.
+ *
+ * A permanent fact, so `null` **clears** it back to unknown rather than
+ * standing for "no-show" — undoing a mis-tap must not leave a different claim
+ * behind.
+ */
+export async function setReservationAttendance(
+  reservationNumber: string,
+  attendance: ReservationAttendance | null,
+): Promise<ReservationRecord | null> {
+  if (!isMongoConfigured()) {
+    return updateLocalReservationAttendance(reservationNumber, attendance);
+  }
+
+  await connectToDatabase();
+  const updated = await ReservationModel.findOneAndUpdate(
+    { reservationNumber },
+    attendance ? { $set: { attendance } } : { $unset: { attendance: "" } },
+    { returnDocument: "after" },
+  ).lean();
+
+  return updated ? toReservationRecord(updated as MongoReservationDocument) : null;
+}
+
+/**
+ * Marks one course served, or not.
+ *
+ * **One key, never the whole map.** Two waiters marking different courses on
+ * the same table at the same moment must both succeed — a read-modify-write
+ * would have the later one overwrite the earlier. This is a single conditional
+ * update on a single key, the same shape as the seat claims (rule 2.7), so it
+ * is idempotent and last-write-wins per course rather than per table.
+ */
+export async function setReservationCourseServed(
+  reservationNumber: string,
+  courseId: string,
+  servedAt: string | null,
+): Promise<ReservationRecord | null> {
+  if (!isMongoConfigured()) {
+    return updateLocalReservationCourseServed(reservationNumber, courseId, servedAt);
+  }
+
+  await connectToDatabase();
+  // The dotted path is the point: it touches this course and nothing else.
+  const path = `service.servedAt.${courseId}`;
+  const updated = await ReservationModel.findOneAndUpdate(
+    { reservationNumber },
+    servedAt ? { $set: { [path]: servedAt } } : { $unset: { [path]: "" } },
     { returnDocument: "after" },
   ).lean();
 

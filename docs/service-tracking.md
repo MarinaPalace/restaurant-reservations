@@ -1,8 +1,13 @@
 # The service board — design note
 
-**Status: not built.** This is the shape the feature would take, written down while it is fresh so
-the next session can start from a decision rather than a blank page. Nothing in the app does any of
-it yet.
+**Status: built — steps 1–4, 6 and 7.** The board is at `/admin/service`, behind `service:record`,
+and no-shows reach analytics with their coverage figure.
+
+**Not built: step 5, polling across devices in anger.** The board refreshes on a timer already, but
+it has only ever been used on one screen; the multi-device behaviour in §6 is written down and not
+yet exercised. Nor is the wake lock tested on a real tablet.
+
+The reasoning below is kept, because every trap in it still applies.
 
 This supersedes the earlier version of this note. The decisions it recorded are kept; what is new
 is the **board** as a device, the split between attendance and service progress (§2 — the most
@@ -281,18 +286,18 @@ the two diverging is itself the interesting number.
 Each step is independently useful. Do not start the next before somebody has used the last one on a
 real evening.
 
-1. **The two fields**, the store round-trips both ways, and the test that an old booking reads as
+1. ~~**The two fields**~~ **Done.**, the store round-trips both ways, and the test that an old booking reads as
    "not arrived, nothing served" — mirroring what `additionalRooms` did.
-2. **The route**, with the concurrent-write test: two marks at once, both succeed, one result.
+2. ~~**The route**~~ **Done** — with the concurrent-write test: two marks at once, both succeed, one result.
    Attendance audited, service not.
-3. **The board**, at `/admin/service`, behind `service:record`. Arrival gate, course cells, undo.
+3. ~~**The board**~~ **Done**, at `/admin/service`, behind `service:record`. Arrival gate, course cells, undo.
    This is the feature; steps 1–3 are the whole of it.
-4. **The outstanding-plates strip**, from `buildOptionTotals`.
-5. **Polling**, once more than one device is genuinely in use. A single-device board does not need
+4. ~~**The outstanding-plates strip**~~ **Done** — `outstandingPlates` in `lib/service-board.ts`, which counts only seated tables.
+5. **Polling** — a five-second refresh is in, paused when hidden and skipped while a tap is unacknowledged, but untested with two devices. Revisit once more than one screen is genuinely in use. A single-device board does not need
    it, and shipping it earlier is guessing at a problem.
-6. **Close-the-evening**, which is what makes no-show data actually get recorded.
-7. **Analytics**: served-vs-booked occupancy, the no-show rate, and the coverage figure beside it
-   (`docs/analytics.md` §4.1).
+6. ~~**Close-the-evening**~~ **Done** — confirms, names the tables, and is undoable per table.
+7. ~~**Analytics**~~ **Done** — occupancy reads "20 of 60 seats booked · 2 actually sat down", and the
+   no-show tile always carries its coverage figure.
 
 Steps 8 onwards — service times, delay flags, anything resembling a report — only if somebody asks
 after using it for a season.

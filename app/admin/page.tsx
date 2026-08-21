@@ -59,6 +59,7 @@ export default async function AdminPage() {
    */
   const links = [
     { href: "/admin/reservation/new", label: "New reservation", permission: "reservations:create" as const, primary: true },
+    { href: "/admin/service", label: "Service board", permission: "service:record" as const, primary: true },
     { href: "/admin/pass-keys", label: "Pass-keys", permission: "passkeys:issue" as const },
     { href: "/admin/menu", label: "Menu editor", permission: "menu:edit" as const },
     { href: "/admin/menu?menu=premium", label: "Premium menu", permission: "menu:edit" as const },

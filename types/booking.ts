@@ -206,6 +206,43 @@ export type ReservationAddOn = {
   finalPrice: number;
 };
 
+/**
+ * Did they come?
+ *
+ * A **permanent record**, unlike `ReservationServiceProgress` below. Nobody
+ * asks in March whether the soup went out at 20:14; everybody asks in March how
+ * many people did not turn up.
+ *
+ * **Absent is unknown** — neither seated nor no-show — and nothing may read it
+ * as either. On a busy night nobody taps anything, and a rule that treated
+ * silence as "did not turn up" would record the whole room as no-shows and
+ * poison every number built on it. See `docs/service-tracking.md` §7.
+ */
+export type ReservationAttendance = {
+  status: "seated" | "no-show";
+  at: string;
+  /** Who marked it. A no-show is disputable, so it names somebody. */
+  byName: string;
+  /** How many actually sat down. Absent reads as the whole party. */
+  guests?: number;
+};
+
+/**
+ * How far through the evening this table is.
+ *
+ * **Operational, not a record.** Worthless the next morning, never audited, and
+ * never shown for a past date.
+ *
+ * A map rather than a list of booleans: it answers "what is still to go out" by
+ * subtraction from the menu, it cannot drift out of order, and the timestamps
+ * are what make a "waiting forty minutes" flag possible later without another
+ * schema change.
+ */
+export type ReservationServiceProgress = {
+  /** Course id → when that course went out to this table. */
+  servedAt?: Record<string, string>;
+};
+
 export type ReservationStatus = "confirmed" | "cancelled";
 
 /** Which app the guest prefers to be messaged on, when they leave a phone number. */
@@ -249,6 +286,10 @@ export type ReservationRecord = {
    * before promotions existed, and on every booking that declined them.
    */
   addOns?: ReservationAddOn[];
+  /** Did they come? Permanent; absent is unknown, never "seated". */
+  attendance?: ReservationAttendance;
+  /** How far through their courses. Operational; absent is "nothing served". */
+  service?: ReservationServiceProgress;
   /** How to reach the guest. Optional so bookings made before this existed still load. */
   contact?: ReservationContact;
   /** Arrival time copied from the date when the booking was made. */
@@ -342,6 +383,15 @@ export const STAFF_PERMISSIONS = [
    * changing the calendar are different jobs.
    */
   "analytics:view",
+  /**
+   * Run the service board: mark tables arrived and courses served.
+   *
+   * Its own permission so a waiter's account can hold this and nothing else —
+   * no cancellations, no menu, no pass-keys. That is the account left signed
+   * in on a tablet on the floor, and it should be able to do as little as
+   * possible.
+   */
+  "service:record",
   "users:manage",
 ] as const;
 
@@ -544,6 +594,7 @@ export type AuditAction =
   | "user:delete"
   | "menu:save"
   | "settings:save"
+  | "reservation:attendance"
   | "date:update";
 
 export type AuditEntry = {

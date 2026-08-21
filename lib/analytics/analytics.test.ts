@@ -429,3 +429,87 @@ describe("the pass-key funnel", () => {
     expect(passKeyFunnel([{ usedCount: 1 }], AUGUST)[0].value).toBe(0);
   });
 });
+
+/**
+ * No-shows.
+ *
+ * The rule the whole design turns on: **silence is not attendance.** On a busy
+ * night nobody taps, and a system that read an unmarked booking either way
+ * would invent the answer. See `docs/service-tracking.md` §7.
+ */
+describe("attendance", () => {
+  const seated = { status: "seated" as const, at: "2026-08-10T17:00:00.000Z", byName: "Ivan" };
+  const noShow = { status: "no-show" as const, at: "2026-08-10T19:30:00.000Z", byName: "Ivan" };
+
+  it("counts nothing when nobody marked anything", () => {
+    const totals = buildTotals([booking(), booking({ reservationNumber: "B" })], [evening("2026-08-10")]);
+
+    expect(totals.attendanceRecorded).toBe(0);
+    expect(totals.seated).toBe(0);
+    expect(totals.noShows).toBe(0);
+  });
+
+  /** The one that matters: an unmarked night must not report "no no-shows". */
+  it("reports the rate as null, not zero, when nothing was recorded", () => {
+    const totals = buildTotals([booking()], [evening("2026-08-10")]);
+
+    expect(totals.noShowRate).toBeNull();
+    expect(totals.attendanceCoverage).toBe(0);
+  });
+
+  it("rates no-shows against the recorded bookings, not every booking", () => {
+    const totals = buildTotals(
+      [
+        booking({ attendance: seated }),
+        booking({ reservationNumber: "B", attendance: noShow }),
+        // Unmarked: in neither the numerator nor the denominator.
+        booking({ reservationNumber: "C" }),
+        booking({ reservationNumber: "D" }),
+      ],
+      [evening("2026-08-10")],
+    );
+
+    expect(totals.attendanceRecorded).toBe(2);
+    expect(totals.noShows).toBe(1);
+    // One of the two recorded, not one of the four booked.
+    expect(totals.noShowRate).toBe(50);
+    expect(totals.attendanceCoverage).toBe(50);
+  });
+
+  it("counts the guests who actually sat down", () => {
+    const totals = buildTotals(
+      [
+        // A booking for four where three came.
+        booking({ guestCount: 4, attendance: { ...seated, guests: 3 } }),
+        // One that did not say counts the whole party.
+        booking({ reservationNumber: "B", guestCount: 2, attendance: seated }),
+      ],
+      [evening("2026-08-10")],
+    );
+
+    expect(totals.covers).toBe(6);
+    expect(totals.seatedCovers).toBe(5);
+  });
+
+  it("leaves a no-show out of the seated covers", () => {
+    const totals = buildTotals(
+      [booking({ guestCount: 4, attendance: noShow })],
+      [evening("2026-08-10")],
+    );
+
+    expect(totals.seatedCovers).toBe(0);
+    // But the booking still counts as a cover booked — that is the point of
+    // the pair: booked and served diverging is the interesting number.
+    expect(totals.covers).toBe(4);
+  });
+
+  it("ignores a cancelled booking's attendance entirely", () => {
+    const totals = buildTotals(
+      [booking({ status: "cancelled", attendance: noShow })],
+      [evening("2026-08-10")],
+    );
+
+    expect(totals.attendanceRecorded).toBe(0);
+    expect(totals.noShows).toBe(0);
+  });
+});

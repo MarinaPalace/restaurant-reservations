@@ -177,6 +177,29 @@ export const staffAddOnsSchema = z.object({
 });
 
 /**
+ * One mark from the service board: either a table arriving, or a course going
+ * out. Exactly one of the two per request, so a single tap is a single write.
+ *
+ * `attendance: null` **clears** the record back to unknown. Undoing a mis-tap
+ * must not leave a different claim behind — see `docs/service-tracking.md` §7.
+ */
+export const serviceMarkSchema = z
+  .object({
+    attendance: z.enum(["seated", "no-show"]).nullable().optional(),
+    /** How many actually sat down. Absent reads as the whole party. */
+    guests: z.number().int().min(0).max(MAX_GUESTS_PER_RESERVATION).optional(),
+    courseId: z.string().min(1).max(64).optional(),
+    served: z.boolean().optional(),
+  })
+  .refine((row) => row.attendance !== undefined || row.courseId !== undefined, {
+    message: "Nothing to mark.",
+  })
+  .refine((row) => row.courseId === undefined || row.served !== undefined, {
+    message: "Say whether the course has been served.",
+    path: ["served"],
+  });
+
+/**
  * Staff booking form. Contact details are optional here: a reservation taken
  * over the phone may not have them, whereas a guest booking online always does.
  */

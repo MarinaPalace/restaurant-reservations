@@ -50,6 +50,11 @@ export const PERMISSION_DETAILS: Record<
     label: "Issue pass-keys",
     description: "Give arriving guests the key that lets them book, and withdraw one.",
   },
+  "service:record": {
+    group: "Restaurant",
+    label: "Run the service board",
+    description: "Mark tables arrived and courses served during service. Nothing else.",
+  },
   "analytics:view": {
     group: "Administration",
     label: "See the analytics",

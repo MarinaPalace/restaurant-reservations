@@ -1,6 +1,6 @@
 # Analytics — design note
 
-**Status: built, phases 0–3.** `/admin/analytics`, behind the `analytics:view` permission.
+**Status: built, phases 0–3, plus no-shows (§4.1).** `/admin/analytics`, behind the `analytics:view` permission.
 `lib/analytics/` holds the pure functions; `components/charts.tsx` the marks. What is **not** built
 is §4 — the fields that do not exist yet, no-shows chief among them. Read §4 before anybody
 publishes a "served" number.
@@ -110,7 +110,10 @@ default, no migration.**
 
 ### 4.1 No-shows — the big one
 
-Nothing records whether anybody turned up. Without it, "occupancy" means *booked*, not *served*,
+**Built.** The service board records it; this section is kept for the rules it states, which the
+analytics page still has to honour.
+
+Before it existed, nothing recorded whether anybody turned up. Without it, "occupancy" means *booked*, not *served*,
 and the two diverge exactly when it matters.
 
 The field: `ReservationRecord.attendance?: "seated" | "no-show"`. Absent reads as unknown — **not**

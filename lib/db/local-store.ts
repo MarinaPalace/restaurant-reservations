@@ -399,6 +399,72 @@ export async function updateLocalReservationAddOns(
   });
 }
 
+export async function updateLocalReservationAttendance(
+  reservationNumber: string,
+  attendance: ReservationRecord["attendance"] | null,
+) {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    const index = reservations.findIndex((entry) => entry.reservationNumber === reservationNumber);
+    if (index === -1) {
+      return null;
+    }
+
+    const next = { ...reservations[index], updatedAt: new Date().toISOString() };
+    if (attendance) {
+      next.attendance = attendance;
+    } else {
+      // Cleared, not set to a different claim: undoing a mis-tap returns the
+      // booking to "unknown".
+      delete next.attendance;
+    }
+
+    reservations[index] = next;
+    await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    return next;
+  });
+}
+
+/**
+ * Marks one course served, or not.
+ *
+ * The whole read-modify-write happens inside the store lock, which is what
+ * gives the local backend the same guarantee Mongo gets from a dotted `$set`:
+ * two marks on the same table cannot lose each other.
+ */
+export async function updateLocalReservationCourseServed(
+  reservationNumber: string,
+  courseId: string,
+  servedAt: string | null,
+) {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    const index = reservations.findIndex((entry) => entry.reservationNumber === reservationNumber);
+    if (index === -1) {
+      return null;
+    }
+
+    const current = reservations[index];
+    const servedMap = { ...(current.service?.servedAt ?? {}) };
+
+    if (servedAt) {
+      servedMap[courseId] = servedAt;
+    } else {
+      delete servedMap[courseId];
+    }
+
+    const next: ReservationRecord = {
+      ...current,
+      service: { ...current.service, servedAt: servedMap },
+      updatedAt: new Date().toISOString(),
+    };
+
+    reservations[index] = next;
+    await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    return next;
+  });
+}
+
 /**
  * Removes a booking outright, releasing its seats if it was still live. A
  * cancelled booking already gave its seats back, so they are not released

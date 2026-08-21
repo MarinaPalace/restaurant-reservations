@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, Badge, EmptyState } from "@/components/ui/feedback";
 import { Field, Input } from "@/components/ui/field";
 import { KitchenReport } from "@/app/admin/kitchen-report";
-import { formatLongDate, isPastDateKey, isValidDateKey, startOfMonth, todayKey } from "@/lib/date";
+import { formatLongDate, isPastDateKey, isValidDateKey, startOfMonth } from "@/lib/date";
 import { canGuestBookDate, getBookingDeadline } from "@/lib/reservation-policy";
 import { toRestaurantDatePayload } from "@/lib/restaurant-date-form";
 import { compareRoomNumbers } from "@/lib/room";
@@ -41,6 +41,11 @@ function describeCutoff(entry: RestaurantDateAvailability) {
 export function AdminDateManager({
   initialDates,
   initialReservations,
+  /**
+   * The evening the page was rendered for. Its bookings arrived with the page;
+   * every other evening is fetched when it is first selected.
+   */
+  initialSelectedDate,
   menu,
   permissions,
   /** Which clock every time on these screens is quoted on. */
@@ -54,6 +59,7 @@ export function AdminDateManager({
 }: {
   initialDates: RestaurantDateAvailability[];
   initialReservations: ReservationRecord[];
+  initialSelectedDate: string;
   menu: MenuCourse[];
   /** What the signed-in account may do; the API enforces the same list. */
   permissions: StaffPermission[];
@@ -64,7 +70,18 @@ export function AdminDateManager({
   const [savingTimeZone, setSavingTimeZone] = useState(false);
   const [dates, setDates] = useState(initialDates);
   const [reservations, setReservations] = useState(initialReservations);
-  const [selectedDate, setSelectedDate] = useState(initialDates[0]?.date ?? todayKey());
+  const [selectedDate, setSelectedDate] = useState(initialSelectedDate);
+  /**
+   * Which evenings are already in `reservations`.
+   *
+   * The dashboard holds the days it has been shown, not the whole book. An
+   * evening with no bookings still belongs here once it has been fetched —
+   * otherwise an empty day would be requested again every time it is selected.
+   */
+  const [loadedDates, setLoadedDates] = useState<ReadonlySet<string>>(
+    () => new Set([initialSelectedDate]),
+  );
+  const [loadingDay, setLoadingDay] = useState(false);
   const [month, setMonth] = useState(() => startOfMonth(new Date()));
   const [newDate, setNewDate] = useState("");
   const [saving, setSaving] = useState(false);
@@ -81,6 +98,55 @@ export function AdminDateManager({
         .sort((a, b) => compareRoomNumbers(a.roomNumber, b.roomNumber)),
     [reservations, selectedDate],
   );
+
+  /**
+   * Fetches an evening unless it is already held.
+   *
+   * Days are kept once loaded, so moving back and forth across the calendar
+   * costs one request per distinct evening and the edits already made on
+   * screen are not thrown away by a reload. Rows already in hand win the
+   * merge: one of them may have been changed since the request went out.
+   *
+   * Selecting a third evening while two are still in flight is harmless — the
+   * merge is keyed by reservation number and only the selected day is
+   * rendered, so a late answer for a day nobody is looking at cannot disturb
+   * the one they are.
+   */
+  const ensureDayLoaded = async (date: string) => {
+    if (loadedDates.has(date)) {
+      return;
+    }
+
+    setLoadingDay(true);
+
+    try {
+      const response = await fetch(`/api/admin/reservations?date=${encodeURIComponent(date)}`);
+
+      if (!response.ok) {
+        throw new Error("Unable to load this evening's reservations.");
+      }
+
+      const { reservations: loaded } = (await response.json()) as {
+        reservations: ReservationRecord[];
+      };
+
+      setReservations((current) => {
+        const held = new Set(current.map((entry) => entry.reservationNumber));
+        return [...current, ...loaded.filter((entry) => !held.has(entry.reservationNumber))];
+      });
+      setLoadedDates((current) => new Set(current).add(date));
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Unable to load this evening.");
+    } finally {
+      setLoadingDay(false);
+    }
+  };
+
+  /** Every route to a different evening goes through here, so none can skip the fetch. */
+  const selectDate = (date: string) => {
+    setSelectedDate(date);
+    void ensureDayLoaded(date);
+  };
 
   /**
    * The catalogue this evening is actually served from.
@@ -177,7 +243,7 @@ export function AdminDateManager({
 
     if (dates.some((entry) => entry.date === newDate)) {
       setError("That date is already in the availability list.");
-      setSelectedDate(newDate);
+      selectDate(newDate);
       return;
     }
 
@@ -186,7 +252,7 @@ export function AdminDateManager({
         a.date.localeCompare(b.date),
       ),
     );
-    setSelectedDate(newDate);
+    selectDate(newDate);
     setMonth(startOfMonth(new Date(`${newDate}T12:00:00`)));
     setNewDate("");
     setError("");
@@ -522,7 +588,7 @@ export function AdminDateManager({
               month={month}
               onMonthChange={setMonth}
               selectedDate={selectedDate}
-              onSelect={setSelectedDate}
+              onSelect={selectDate}
               getDayState={getDayState}
             />
 
@@ -697,6 +763,7 @@ export function AdminDateManager({
         onDelete={deleteReservation}
         busyReservationNumber={busyNumber}
         permissions={permissions}
+        loading={loadingDay}
       />
     </div>
   );

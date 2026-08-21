@@ -6,7 +6,7 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { ButtonLink } from "@/components/ui/button";
 import { getCurrentStaffUser } from "@/lib/auth/guard";
 import { hasPermission, permissionsOf } from "@/lib/auth/permissions";
-import { getReservationsList } from "@/lib/services/reservations";
+import { getDashboardCounts, getReservationsByDate } from "@/lib/services/reservations";
 import { getFullMenuCatalog, getRestaurantDates } from "@/lib/services/restaurant";
 import { todayKey } from "@/lib/date";
 import { getTimeZone } from "@/lib/services/settings";
@@ -23,12 +23,23 @@ export default async function AdminPage() {
     redirect("/admin/login");
   }
 
-  const [reservations, restaurantDates, menu, timeZone] = await Promise.all([
-    getReservationsList(),
+  const today = todayKey();
+
+  const [restaurantDates, menu, timeZone, counts] = await Promise.all([
     getRestaurantDates(),
     getFullMenuCatalog(),
     getTimeZone(),
+    getDashboardCounts(today),
   ]);
+
+  /**
+   * The evening the date manager opens on, decided here rather than in the
+   * browser so the server can send that day's bookings with the page and the
+   * calendar does not have to fetch them before it can show anything. It must
+   * stay in step with the manager's own initial selection.
+   */
+  const initialSelectedDate = restaurantDates[0]?.date ?? today;
+  const initialReservations = await getReservationsByDate(initialSelectedDate);
 
   /**
    * Worked out on the server, because that is the clock every time in this app
@@ -39,16 +50,11 @@ export default async function AdminPage() {
 
   const permissions = permissionsOf(user);
 
-  const today = todayKey();
-  const upcoming = reservations.filter((reservation) => reservation.date >= today && reservation.status === "confirmed");
-  const guestsTonight = reservations
-    .filter((reservation) => reservation.date === today && reservation.status === "confirmed")
-    .reduce((total, reservation) => total + reservation.guestCount, 0);
   const openDates = restaurantDates.filter((date) => date.isOpen && date.date >= today).length;
 
   const stats = [
-    { label: "Guests tonight", value: guestsTonight },
-    { label: "Upcoming reservations", value: upcoming.length },
+    { label: "Guests tonight", value: counts.guestsTonight },
+    { label: "Upcoming reservations", value: counts.upcomingReservations },
     { label: "Open evenings ahead", value: openDates },
   ];
 
@@ -106,7 +112,8 @@ export default async function AdminPage() {
 
       <AdminDateManager
         initialDates={restaurantDates}
-        initialReservations={reservations}
+        initialReservations={initialReservations}
+        initialSelectedDate={initialSelectedDate}
         menu={menu}
         permissions={permissions}
         initialTimeZone={timeZone}

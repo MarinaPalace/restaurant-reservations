@@ -831,6 +831,49 @@ export async function getReservationsBetween(fromKey: string, toKey: string): Pr
   return reservations.map((reservation) => toReservationRecord(reservation as MongoReservationDocument));
 }
 
+/**
+ * The two figures on the dashboard, counted in the database.
+ *
+ * These were folded in JavaScript from every reservation ever taken, which is
+ * why the dashboard had to load the lot. Both are answered off the `date`
+ * index instead — see docs/performance.md §3.1.
+ *
+ * `status` is matched as *not cancelled* rather than equal to `confirmed`,
+ * because it is one of the optional fields of HANDOVER §2.2: bookings taken
+ * before it existed have no `status` at all, and `toReservationRecord` reads
+ * their absence as confirmed. Asking for `confirmed` would quietly drop them.
+ */
+export async function getDashboardCounts(today: string): Promise<{
+  guestsTonight: number;
+  upcomingReservations: number;
+}> {
+  if (!isMongoConfigured()) {
+    const live = (await listLocalReservations()).filter((entry) => entry.status !== "cancelled");
+
+    return {
+      guestsTonight: live
+        .filter((entry) => entry.date === today)
+        .reduce((total, entry) => total + entry.guestCount, 0),
+      upcomingReservations: live.filter((entry) => entry.date >= today).length,
+    };
+  }
+
+  await connectToDatabase();
+
+  const [tonight, upcoming] = await Promise.all([
+    ReservationModel.aggregate<{ guests: number }>([
+      { $match: { date: today, status: { $ne: "cancelled" } } },
+      { $group: { _id: null, guests: { $sum: "$guestCount" } } },
+    ]),
+    ReservationModel.countDocuments({ date: { $gte: today }, status: { $ne: "cancelled" } }),
+  ]);
+
+  return {
+    guestsTonight: tonight[0]?.guests ?? 0,
+    upcomingReservations: upcoming,
+  };
+}
+
 export async function updateRestaurantDate(input: {
   date: string;
   isOpen: boolean;

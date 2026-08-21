@@ -153,3 +153,63 @@ describe("getReservationsBetween", () => {
     expect(await reservations.getReservationsBetween("2026-10-01", "2026-10-31")).toEqual([]);
   });
 });
+
+describe("getDashboardCounts", () => {
+  it("adds up tonight's covers and counts what is still ahead", async () => {
+    const { reservations } = await loadServices();
+
+    await book("2026-09-10", "401");
+    await book("2026-09-10", "402");
+    await book("2026-09-11", "403");
+    await book("2026-09-09", "404");
+
+    const counts = await reservations.getDashboardCounts("2026-09-10");
+
+    // One guest each, so tonight is two covers across the two rooms.
+    expect(counts.guestsTonight).toBe(2);
+    // Tonight and tomorrow, but not yesterday.
+    expect(counts.upcomingReservations).toBe(3);
+  });
+
+  it("leaves cancelled bookings out of both figures", async () => {
+    const { reservations } = await loadServices();
+
+    await book("2026-09-10", "401");
+    const cancelled = await book("2026-09-10", "402");
+    await reservations.cancelReservation(cancelled.reservationNumber);
+
+    const counts = await reservations.getDashboardCounts("2026-09-10");
+
+    expect(counts.guestsTonight).toBe(1);
+    expect(counts.upcomingReservations).toBe(1);
+  });
+
+  /**
+   * `status` is one of the optional fields of HANDOVER §2.2. A booking taken
+   * before it existed has none at all, and the record reader treats that as
+   * confirmed — so the counts must too, or the dashboard would silently
+   * under-report every old booking.
+   */
+  it("counts a legacy booking that has no status field", async () => {
+    const { reservations } = await loadServices();
+
+    const legacy = await book("2026-09-10", "401");
+    await mongoose.connection
+      .collection("reservations")
+      .updateOne({ reservationNumber: legacy.reservationNumber }, { $unset: { status: "" } });
+
+    const counts = await reservations.getDashboardCounts("2026-09-10");
+
+    expect(counts.guestsTonight).toBe(1);
+    expect(counts.upcomingReservations).toBe(1);
+  });
+
+  it("reports zero rather than nothing when the evening is empty", async () => {
+    const { reservations } = await loadServices();
+
+    expect(await reservations.getDashboardCounts("2026-09-10")).toEqual({
+      guestsTonight: 0,
+      upcomingReservations: 0,
+    });
+  });
+});

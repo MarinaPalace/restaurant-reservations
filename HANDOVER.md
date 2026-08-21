@@ -42,17 +42,26 @@ The calendar showed availability against the wrong cells and guests booked the w
 The production database holds a live menu and live bookings. Fields added after the fact
 (`ingredients`, `vegan`, `menu`, `premium`, `kind`, `guestName`, `time`, `endTime`, `notes`,
 `tableGroupId`, `tableNumber`, `serviceTime`, `serviceEndTime`, `passKeyId`, `cancellation`,
-`additionalRooms`) are all optional, and absent values read as sensible defaults. **No migration has ever been required, and it should stay that way.**
+`additionalRooms`, `addOns`, `price`, `discountPercent`) are all optional, and absent values read as
+sensible defaults. **No migration has ever been required, and it should stay that way.**
 
 `lib/services/reservations.mongo.test.ts` inserts documents in the *old* shape straight into Mongo
 and asserts they read correctly and survive a save round-trip field for field.
 
-### 2.3 Saving one menu must never touch the other
+### 2.3 Saving one catalogue must never touch the others
 
-There are two catalogues, separated by `MenuCourse.menu` (`"standard" | "premium"`, absent =
-standard). `saveMenuCatalog` prunes **only within the menu being saved**. Deleting by
-"ids not in the list I just saved" would wipe the other menu entirely. Two tests cover both
-directions.
+There are **three** catalogues, separated by `MenuCourse.menu` (`"standard" | "premium" | "promo"`,
+absent = standard). `saveMenuCatalog` prunes **only within the catalogue being saved**. Deleting by
+"ids not in the list I just saved" would wipe the other two entirely.
+
+Read the field through `menuCatalogOf`, never directly. It also resolves the legacy `addOn` flag —
+see 2.16.
+
+**The everyday filter is the one that goes wrong.** "Standard" is the *absence* of a marking, so it
+cannot be matched by equality; it is expressed as `{ menu: { $nin: ["premium", "promo"] }, addOn:
+{ $ne: true } }`. A `$nin` that forgets one of the others deletes that catalogue the next time
+somebody renames a starter. Every direction has a test — `lib/services/promotions.mongo.test.ts`
+covers the promotions ones, and the older pair are in `reservations.mongo.test.ts`.
 
 ### 2.4 Menu ids must survive a save
 
@@ -293,6 +302,43 @@ render caused a hydration mismatch on the confirmation page.
 
 ---
 
+
+### 2.16 Promotions are a catalogue, not a flag on a dinner course
+
+The first version marked a course `addOn: true` on the everyday menu and filtered it out of every
+dinner query. That is one filter per query and one bug away from a bottle of wine appearing as a
+starter, and it made "add another promotion" mean "add another course to the dinner menu".
+
+Promotions are now `menu: "promo"`, edited at `/admin/menu?menu=promo`. The dinner menu asks for
+`standard` and promotions are simply not in the answer — isolation by construction rather than by
+remembering.
+
+**The old flag still has to work.** Live databases hold courses marked `addOn`, and rule 2.2 says no
+migration. `menuCatalogOf` reads such a course as a promotion, so it moves catalogue on read;
+`saveMenuCatalog` writes `menu` and clears the flag on every save, so the compatibility arm goes
+quiet on its own. Do not delete that arm until you have checked production for `addOn: true`.
+
+### 2.17 A promotion's price is the server's, never the client's
+
+The browser sends two ids. Names, prices and discounts are resolved from the catalogue by id, the
+same rule dish names follow (2.6) and for the same reason: anything the client can name, the client
+can invent. The stored figures are copies, not references — a guest agreed to a number, and
+re-pricing the wine next week must not change what they owe.
+
+All money goes through `lib/money.ts`. `40 * 0.85` is `33.999999999999996` in binary floating point,
+and that must never reach a guest or a bill.
+
+### 2.18 A save fired on every tap must be ordered
+
+The promotions screen saves each choice as it is made, because a guest who has already got their
+reservation number will not press a second button. Two taps in quick succession — changing your mind
+— raced in the first version, and an older reply overwrote a newer choice: the screen showed the
+wine, the booking held nothing. It was reported as "selecting an option does not save it".
+
+`lib/sequential-save.ts` is the fix and carries the reasoning. Requests are **chained**, never
+concurrent, so the server applies them in order; and only the **newest** may write to the screen,
+checked *after* every await rather than once at the top. Both halves are needed, and both are
+tested.
 ## 3. Configuration
 
 | Variable | Required | Purpose |
@@ -361,7 +407,8 @@ proxy.ts              Optimistic /admin redirect only.
 
 ## 5. Features worth knowing about
 
-**Menus.** Two catalogues. Opening the premium editor while the premium catalogue is **empty**
+**Menus.** Three catalogues — everyday, premium and promotions — switched between at the top of
+`/admin/menu`. Opening the premium editor while the premium catalogue is **empty**
 fills it with a copy of the everyday menu as an *unsaved draft* — every id replaced with a `draft-`
 one, so the two can never share an id (see rules 2.3 and 2.4). Nothing is written and invited guests
 see nothing until somebody presses Save. Options carry description, optional ingredients (translatable, hidden
@@ -372,6 +419,32 @@ immutable cache headers, so the menu payload stays small.
 
 **Declining a course.** `NONE_OPTION_ID` is a real selection, so "does not want a starter" is
 distinguishable from "has not chosen yet". Never counted in prep totals.
+
+**Promotions.** Products offered **once**, on the confirmation screen, after the guest has their
+reservation number — a bottle of wine, a dessert, a welcome glass. That is the whole point: this
+screen is the only place they are offered, and the copy says so, because a guest who assumes they
+can add the wine later and cannot has been misled by the wording rather than by the rule.
+
+They live in their own catalogue (rule 2.16), edited at `/admin/menu?menu=promo`, so adding a
+promotion never means adding a course to the dinner menu. Each group offers at most one product,
+"no, thank you" included, and each choice saves itself as it is made (rules 2.17 and 2.18). The
+picker is `components/promo-picker.tsx`; the catalogue and currency are loaded on the server by
+`app/booking/confirmation/page.tsx` and handed down, so the offer arrives with the confirmation
+rather than a round trip after it.
+
+A product carries a `price` and an optional `discountPercent`, and the screen shows both — the
+original struck through beside the discounted one, with a `−25%` badge and a running total. A guest
+shown "30.00" learns nothing; a guest shown "40.00 30.00 −25%" learns they are being given
+something. `price: 0` reads as complimentary and still has to be chosen, which is what tells the
+kitchen to pour it.
+
+What a guest took is stored on the reservation as `addOns`, priced by the server, and printed with
+the confirmation.
+
+**Currency.** `promo.currency` in the settings store, default `EUR`, changed in the promotions
+editor beside the prices it applies to. It is the only setting so far; `lib/services/settings.ts` is
+where the next one goes. Prices are rendered with `Intl.NumberFormat`, which puts the symbol where
+the guest's language puts it — before the number in English, after it in French and Bulgarian.
 
 **Shared tables.** Rooms dining together pass a reservation number to each other; the service sheet
 shows them as **one row** with all rooms listed and choices already combined. Staff assign a table
@@ -679,7 +752,7 @@ Roughly in the order I would tackle them for beta.
 
 ```bash
 npm run dev          # local, JSON store, admin/admin123
-npm test             # 314 tests; the Mongo suite runs an in-memory mongod
+npm test             # 481 tests; the Mongo suite runs an in-memory mongod
 npm run typecheck
 npm run lint
 npm run build

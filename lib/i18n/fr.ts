@@ -276,6 +276,28 @@ export const fr: PartialDictionary = {
     startAgain: "Commencer une nouvelle réservation",
   },
 
+  promo: {
+    eyebrow: "Proposé avec votre réservation",
+    title: "Quelque chose pour la table",
+    description:
+      "Choisi maintenant, préparé pour la soirée. Nous le proposons ici et nulle part ailleurs : il ne sera à vous que si vous le choisissez sur cet écran.",
+    onlyNow: "Disponible uniquement sur cet écran",
+    none: "Non, merci",
+    noneHint: "Rien dans ce groupe",
+    free: "Avec nos compliments",
+    was: "Habituellement {price}",
+    discount: "−{percent} %",
+    chosenTitle: "Réservé pour votre table",
+    total: "À régler à table",
+    youSave: "Vous économisez {amount}",
+    saving: "Enregistrement…",
+    saved: "Enregistré sur votre réservation",
+    retry: "Réessayer",
+    error: "Nous n'avons pas pu enregistrer ce choix. Il figure toujours à l'écran — veuillez réessayer.",
+    gone: "Ce n'est plus disponible. Rechargez la page pour voir l'offre actuelle.",
+    groupOptions: "Choix dans {group}",
+  },
+
   contact: {
     legend: "Coordonnées",
     why: "Au cas où le restaurant devrait vous joindre au sujet de cette réservation.",

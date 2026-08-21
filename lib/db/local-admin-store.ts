@@ -15,6 +15,7 @@ import type { AuditEntry, PassKeyRecord, StaffPermission, StaffRole } from "@/ty
 const USERS_FILE = "staff-users.json";
 const PASS_KEYS_FILE = "pass-keys.json";
 const AUDIT_FILE = "audit-log.json";
+const SETTINGS_FILE = "settings.json";
 
 /** How much of the log is kept locally. Mongo keeps everything. */
 const LOCAL_AUDIT_LIMIT = 2000;
@@ -379,4 +380,31 @@ export async function listLocalAuditEntries(options: {
     : entries;
 
   return [...filtered].sort((a, b) => b.at.localeCompare(a.at)).slice(0, options.limit ?? 200);
+}
+
+/* ------------------------------------------------------------------ *
+ * Settings
+ * ------------------------------------------------------------------ */
+
+async function readSettings(): Promise<Record<string, unknown>> {
+  const settings = await readJsonFile<Record<string, unknown>>(getDataFilePath(SETTINGS_FILE), {});
+  return settings && typeof settings === "object" && !Array.isArray(settings) ? settings : {};
+}
+
+export async function getLocalSetting(key: string): Promise<unknown> {
+  const settings = await readSettings();
+  return settings[key];
+}
+
+/**
+ * Read-modify-write under the store lock, like everything else here: two
+ * settings saved at once must not lose one of them.
+ */
+export async function setLocalSetting(key: string, value: unknown): Promise<unknown> {
+  return withStoreLock(async () => {
+    const settings = await readSettings();
+    settings[key] = value;
+    await writeJsonFile(getDataFilePath(SETTINGS_FILE), settings);
+    return value;
+  });
 }

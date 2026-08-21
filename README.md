@@ -227,6 +227,25 @@ Apple Calendar and Outlook, including the per-guest menu choices and an alarm th
 the sitting. Reservations store a date but no time, so the sitting time comes from
 `NEXT_PUBLIC_DINNER_TIME`.
 
+**Promotions.** Products offered **once**, on the confirmation screen, after the guest has their
+reservation number — a bottle of wine, a dessert, a welcome glass. This screen is the only place
+they are offered, and the wording says so.
+
+They have their own catalogue, edited at *Promotions* in the staff dashboard, kept entirely separate
+from the two dinner menus: adding one never means adding a course to the menu, and nothing in it can
+appear in the booking flow. Each group offers at most one product, "no, thank you" included, and
+every choice saves itself the moment it is made — the guest has already finished booking and will
+not press a second button.
+
+Each product takes a price and an optional discount, and the guest sees both: the usual price struck
+through, the discounted one beside it, a `−25%` badge, and a running total of what to settle at the
+table. A product priced at zero reads as complimentary and still has to be chosen, which is what
+tells the kitchen to pour it. Prices are quoted in a currency set in the promotions editor —
+`EUR` by default — and rendered in the guest's language, so the symbol lands where that language
+puts it.
+
+What the guest took is stored with the booking and prints with the confirmation.
+
 ## Run locally
 
 ```bash
@@ -336,9 +355,11 @@ lib/
   auth/                 Credentials, signed sessions, permissions, route guard
   db/                   Mongo connection, JSON store, seed definitions
   services/             Booking rules, reservations, restaurant/menu,
-                        pass-keys, staff accounts, audit log
+                        pass-keys, staff accounts, audit log, settings
   pass-key.ts           Pass-key generation, normalisation and formatting
   date.ts               Local-timezone date keys (never UTC)
+  money.ts              Promotion prices, discounts and currency formatting
+  sequential-save.ts    Ordered saves for anything that saves as you tap it
   validation/           Zod schemas shared by the API routes
 proxy.ts                Optimistic /admin redirect (pages re-check the session)
 ```

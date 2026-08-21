@@ -1,18 +1,71 @@
 /**
- * Which menu a course belongs to. Absent means the everyday menu, so courses
- * saved before premium existed need no migration.
+ * Which dinner a booking is. Two values, and only two: an evening is either
+ * everyday or invitation-only, and a pass-key belongs to one of those flows.
+ *
+ * Deliberately *not* widened to include the promotions catalogue. `MenuKind`
+ * is also the type of `PassKeyRecord.kind` and of a date's premium flag, and a
+ * pass-key for "promo" is not a thing that can exist. Which catalogue a course
+ * sits in is `MenuCatalog` below — a different question with a different set
+ * of answers.
  */
 export type MenuKind = "standard" | "premium";
 
 /**
- * Which catalogue a course belongs to. Absent reads as the everyday menu, so
- * courses saved before premium existed need no migration.
+ * Which catalogue a course belongs to.
+ *
+ * - `standard` — the everyday dinner menu. Absent reads as this, so courses
+ *   saved before any of the others existed need no migration.
+ * - `premium` — the invitation-only dinner menu.
+ * - `promo` — products offered once, on the confirmation screen. Not a dinner:
+ *   nobody books an evening from it, and it never appears in the booking flow.
+ *
+ * Promotions are a catalogue rather than a flag on a dinner course because
+ * that is what makes them isolated by construction. The first version marked a
+ * course `addOn` and then had to remember to filter it out of every dinner
+ * query; one missed filter and a bottle of wine appears as a starter. Here the
+ * dinner menu asks for `standard` and promotions simply are not in the answer.
+ */
+export const MENU_CATALOGS = ["standard", "premium", "promo"] as const;
+
+export type MenuCatalog = (typeof MENU_CATALOGS)[number];
+
+/**
+ * Which catalogue a course is in.
+ *
+ * The `addOn` arm reads courses from the first version of promotions, which
+ * marked a course on the everyday menu instead of giving it its own. Those
+ * courses move to the promotions catalogue on read, so no migration is needed
+ * — and `saveMenuCatalog` writes the `menu` field and clears the flag the next
+ * time either catalogue is saved, so the compatibility arm goes quiet on its
+ * own.
  *
  * It lives here rather than in `lib/services/restaurant.ts` because the
  * dashboard needs it in the browser, and that module pulls in Mongoose.
  */
-export function menuKindOf(course: Pick<MenuCourse, "menu">): MenuKind {
-  return course.menu === "premium" ? "premium" : "standard";
+export function menuCatalogOf(course: Pick<MenuCourse, "menu" | "addOn">): MenuCatalog {
+  if (course.menu === "premium" || course.menu === "promo") {
+    return course.menu;
+  }
+  return course.addOn ? "promo" : "standard";
+}
+
+/** True when this catalogue is a dinner one, and so has evenings and pass-keys. */
+export function isDinnerCatalog(catalog: MenuCatalog): catalog is MenuKind {
+  return catalog !== "promo";
+}
+
+/**
+ * Which dinner a course is served at, or `null` when it is not a dinner course
+ * at all.
+ *
+ * Callers that column up an evening's dishes must use this rather than
+ * defaulting the unknown to `standard`: a promotions course answered
+ * "standard" under the old two-value reading, and every bottle of wine grew a
+ * column on the everyday service sheet.
+ */
+export function menuKindOf(course: Pick<MenuCourse, "menu" | "addOn">): MenuKind | null {
+  const catalog = menuCatalogOf(course);
+  return isDinnerCatalog(catalog) ? catalog : null;
 }
 
 export type MenuTranslation = {
@@ -36,23 +89,48 @@ export type MenuOption = {
   ingredients?: string;
   /** Shown to guests as a badge. Absent on older options, which reads false. */
   vegan?: boolean;
-  /** Price in the restaurant's currency. Add-ons may be free when omitted. */
+  /**
+   * What the product costs, before any discount, in the restaurant's currency.
+   *
+   * Only promotions charge for anything — a dinner course is part of the stay —
+   * so this is absent on every dish, and absent reads as free. A promotion at
+   * zero is a legitimate thing to offer: a welcome glass still has to be
+   * chosen, and choosing it is what tells the kitchen to pour it.
+   */
   price?: number;
-  /** Discount shown and applied to add-ons, from 0 to 100 percent. */
+  /**
+   * How much is taken off `price`, as a percentage from 0 to 100.
+   *
+   * Stored rather than a second price so the screen can show both — the
+   * original struck through and the discounted one beside it. A guest offered
+   * "30.00" learns nothing; a guest offered "40.00 30.00 −25%" learns they are
+   * being given something.
+   */
   discountPercent?: number;
   translations?: Record<string, MenuTranslation>;
 };
 
 export type MenuCourse = {
   id: string;
-  /** Absent reads as "standard". */
-  menu?: MenuKind;
+  /** Absent reads as "standard". Read it through `menuCatalogOf`, never directly. */
+  menu?: MenuCatalog;
   order: number;
   name: string;
   description: string;
+  /**
+   * Whether a guest must choose from this course. Always false on a promotions
+   * course: a promotion nobody may decline is not a promotion.
+   */
   required: boolean;
   active: boolean;
-  /** When true, this optional course is offered after a reservation is confirmed. */
+  /**
+   * Legacy. The first version of promotions flagged a course on the everyday
+   * menu instead of giving promotions their own catalogue. Still read by
+   * `menuCatalogOf` so those courses keep working, and cleared on the next
+   * save. Nothing new should set it.
+   *
+   * @deprecated Put the course in the `promo` catalogue instead.
+   */
   addOn?: boolean;
   imageUrl?: string;
   translations?: Record<string, MenuTranslation>;
@@ -92,13 +170,29 @@ export type ReservationSelection = {
   optionName: string;
 };
 
+/**
+ * A promotion a guest took on the confirmation screen.
+ *
+ * The prices are copied in rather than looked up from the catalogue later, for
+ * the same reason a reservation copies its dish names: the guest was shown a
+ * number and agreed to it, and the restaurant re-pricing the wine next week
+ * must not silently change what that guest owes. `finalPrice` is stored too,
+ * even though it can be derived, so the arithmetic that produced the figure on
+ * the screen is the arithmetic on the bill.
+ *
+ * The persisted field is still `addOns` — it exists in live documents under
+ * that name, and rule 2.2 says schema changes are additive, never renames.
+ */
 export type ReservationAddOn = {
   courseId: string;
   courseName: string;
   optionId: string;
   optionName: string;
+  /** Before the discount, as shown struck through. */
   price: number;
+  /** 0 when the product is offered at its usual price. */
   discountPercent: number;
+  /** What the guest actually pays: `price` less `discountPercent`, to a cent. */
   finalPrice: number;
 };
 
@@ -140,6 +234,10 @@ export type ReservationRecord = {
   guestCount: number;
   date: string;
   selections: ReservationSelection[];
+  /**
+   * Promotions taken on the confirmation screen. Absent on every booking made
+   * before promotions existed, and on every booking that declined them.
+   */
   addOns?: ReservationAddOn[];
   /** How to reach the guest. Optional so bookings made before this existed still load. */
   contact?: ReservationContact;
@@ -428,6 +526,7 @@ export type AuditAction =
   | "user:update"
   | "user:delete"
   | "menu:save"
+  | "settings:save"
   | "date:update";
 
 export type AuditEntry = {

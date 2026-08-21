@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { isValidDateKey } from "@/lib/date";
+import { CURRENCIES } from "@/lib/money";
 import { PASS_KEY_LENGTH, normalizePassKey } from "@/lib/pass-key";
 import { isValidRoomNumber, normalizeRoomNumber } from "@/lib/room";
-import { MAX_USES_CAP, STAFF_PERMISSIONS } from "@/types/booking";
+import { MAX_USES_CAP, MENU_CATALOGS, STAFF_PERMISSIONS } from "@/types/booking";
 
 export const MAX_GUESTS_PER_RESERVATION = 6;
 
@@ -77,7 +78,14 @@ export const timeSchema = z
   .string()
   .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "Please enter a time as HH:MM.");
 
+/**
+ * Which dinner. Used for pass-keys and evenings, where "promo" is not an
+ * answer — see `MenuKind` in `types/booking.ts`.
+ */
 export const menuKindSchema = z.enum(["standard", "premium"]);
+
+/** Which catalogue is being read or edited. Promotions are one of the three. */
+export const menuCatalogSchema = z.enum(MENU_CATALOGS);
 
 export const restaurantDateSchema = z.object({
   date: dateKeySchema,
@@ -107,14 +115,29 @@ export const updateSelectionsSchema = manageReservationSchema.extend({
   selections: z.array(reservationSelectionSchema).min(1),
 });
 
+/**
+ * Promotions taken on the confirmation screen.
+ *
+ * `reservationNumber` is required here, unlike the schema it extends: a key
+ * that booked three dinners has three confirmations, and "which one" cannot be
+ * inferred. It still is not what authorises the change — the pass-key is
+ * (rule 2.5) — it only says which of that key's bookings is meant.
+ *
+ * An empty array is valid and means "none, thank you", which is how a guest
+ * takes a promotion back off.
+ */
 export const updateAddOnsSchema = manageReservationSchema.extend({
   reservationNumber: z.string().trim().min(1).max(40),
-  addOns: z.array(
-    z.object({
-      courseId: z.string().min(1),
-      optionId: z.string().min(1),
-    }),
-  ).max(50),
+  addOns: z
+    .array(
+      z.object({
+        courseId: z.string().min(1).max(64),
+        optionId: z.string().min(1).max(64),
+      }),
+    )
+    // One per group, and a catalogue with more groups than this is not a
+    // promotion any more. The route also refuses two from the same group.
+    .max(24),
 });
 
 /**
@@ -150,8 +173,13 @@ const menuTranslationSchema = z.object({
   ingredients: z.string().optional(),
 });
 
-export const menuCatalogSchema = z.object({
-  menu: menuKindSchema.optional(),
+/**
+ * What the menu editor sends when it saves. Named for the body rather than the
+ * catalogue so it does not collide with `menuCatalogSchema`, which names
+ * *which* catalogue is meant.
+ */
+export const saveMenuSchema = z.object({
+  menu: menuCatalogSchema.optional(),
   courses: z
     .array(
       z.object({
@@ -161,7 +189,6 @@ export const menuCatalogSchema = z.object({
         description: z.string().default(""),
         required: z.boolean().default(true),
         active: z.boolean().default(true),
-        addOn: z.boolean().default(false),
         imageUrl: z.string().default(""),
         translations: z.record(z.string(), menuTranslationSchema).optional(),
         options: z.array(
@@ -176,8 +203,9 @@ export const menuCatalogSchema = z.object({
             // Optional so a menu saved without them keeps whatever it had.
             ingredients: z.string().max(500).optional(),
             vegan: z.boolean().optional(),
+            // Promotions only. A dish carries no price, and absent reads as free.
             price: z.number().min(0).max(1_000_000).optional(),
-            discountPercent: z.number().min(0).max(100).optional(),
+            discountPercent: z.number().int().min(0).max(100).optional(),
             translations: z.record(z.string(), menuTranslationSchema).optional(),
           }),
         ),
@@ -372,4 +400,19 @@ export const updatePassKeySchema = z.object({
 export const cancelReservationSchema = z.object({
   /** What reception was told, kept with the cancellation. */
   reason: z.string().trim().max(300).optional(),
+});
+
+/* ------------------------------------------------------------------ *
+ * Settings
+ * ------------------------------------------------------------------ */
+
+/**
+ * What promotion prices are quoted in. A closed list rather than free text:
+ * the value is rendered by `Intl.NumberFormat`, which throws on an ISO code it
+ * does not know.
+ */
+export const currencySchema = z.enum(CURRENCIES);
+
+export const updateSettingsSchema = z.object({
+  currency: currencySchema,
 });

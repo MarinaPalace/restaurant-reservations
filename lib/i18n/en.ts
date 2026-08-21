@@ -298,6 +298,37 @@ export const en = {
     startAgain: "Start a new reservation",
   },
 
+  /**
+   * Promotions, offered once, on the confirmation screen.
+   *
+   * The wording carries the one thing the guest has to understand: this screen
+   * is the only place these are offered. Say it plainly rather than dressing it
+   * up — a guest who assumes they can add the wine later, and cannot, has been
+   * misled by the copy rather than by the rule.
+   */
+  promo: {
+    eyebrow: "Offered with your booking",
+    title: "Something for the table",
+    description:
+      "Chosen now, prepared for the evening. These are offered here and nowhere else, so they are yours only if you take them on this screen.",
+    onlyNow: "Available only on this screen",
+    none: "No, thank you",
+    noneHint: "Nothing from this group",
+    free: "With our compliments",
+    was: "Usually {price}",
+    discount: "−{percent}%",
+    chosenTitle: "Reserved for your table",
+    total: "To settle at the table",
+    youSave: "You save {amount}",
+    saving: "Saving…",
+    saved: "Saved to your booking",
+    retry: "Try again",
+    error: "We could not save that. Your choice is still on the screen — try again.",
+    gone: "That is no longer available. Reload the page to see what is on offer.",
+    /** Read out by a screen reader as the group's choices are announced. */
+    groupOptions: "Choices in {group}",
+  },
+
   contact: {
     legend: "Contact details",
     why: "In case the restaurant needs to reach you about this reservation.",

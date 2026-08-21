@@ -282,6 +282,28 @@ export const ro: PartialDictionary = {
     startAgain: "Începeți o rezervare nouă",
   },
 
+  promo: {
+    eyebrow: "Oferit odată cu rezervarea",
+    title: "Ceva pentru masă",
+    description:
+      "Ales acum, pregătit pentru seara respectivă. Le oferim aici și nicăieri altundeva — vor fi ale dumneavoastră doar dacă le alegeți pe acest ecran.",
+    onlyNow: "Disponibil doar pe acest ecran",
+    none: "Nu, mulțumesc",
+    noneHint: "Nimic din această grupă",
+    free: "Din partea casei",
+    was: "De obicei {price}",
+    discount: "−{percent}%",
+    chosenTitle: "Rezervat pentru masa dumneavoastră",
+    total: "De achitat la masă",
+    youSave: "Economisiți {amount}",
+    saving: "Se salvează…",
+    saved: "Salvat în rezervarea dumneavoastră",
+    retry: "Încercați din nou",
+    error: "Nu am putut salva alegerea. Este încă pe ecran — vă rugăm să încercați din nou.",
+    gone: "Acest produs nu mai este disponibil. Reîncărcați pagina pentru a vedea oferta actuală.",
+    groupOptions: "Opțiuni în {group}",
+  },
+
   contact: {
     legend: "Date de contact",
     why: "În cazul în care restaurantul trebuie să vă contacteze în legătură cu această rezervare.",

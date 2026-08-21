@@ -52,6 +52,7 @@ export default async function AdminPage() {
     { href: "/admin/pass-keys", label: "Pass-keys", permission: "passkeys:issue" as const },
     { href: "/admin/menu", label: "Menu editor", permission: "menu:edit" as const },
     { href: "/admin/menu?menu=premium", label: "Premium menu", permission: "menu:edit" as const },
+    { href: "/admin/menu?menu=promo", label: "Promotions", permission: "menu:edit" as const },
     { href: "/admin/users", label: "Staff accounts", permission: "users:manage" as const },
   ].filter((link) => hasPermission(user, link.permission));
 

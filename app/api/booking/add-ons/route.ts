@@ -1,11 +1,29 @@
 import { NextResponse } from "next/server";
 import { getPassKeyByCode } from "@/lib/services/pass-keys";
 import { getReservationByNumber, updateReservationAddOns } from "@/lib/services/reservations";
-import { getMenuCatalog } from "@/lib/services/restaurant";
+import { getPromoCatalog, priceOfPromoOption } from "@/lib/services/restaurant";
 import { updateAddOnsSchema } from "@/lib/validation/booking";
 import { checkRateLimit, clientKeyFrom } from "@/lib/rate-limit";
 import type { ReservationAddOn } from "@/types/booking";
 
+/**
+ * Takes, changes or drops the promotions on a confirmed booking.
+ *
+ * Three things this route insists on, each for a reason the rest of the app
+ * already knows:
+ *
+ * - **The pass-key authorises it, not the reservation number** (rule 2.5).
+ *   Guests read their number out to other rooms to share a table; a route that
+ *   accepted it as proof would let those rooms order wine on their bill. A
+ *   wrong or missing key answers `404`, identical to "no such booking", so it
+ *   cannot be used to find out which keys exist.
+ * - **Names and prices come from the catalogue, resolved by id** (rule 2.6).
+ *   The browser sends two ids and nothing else; a request cannot invent a
+ *   product, a name or a discount.
+ * - **The whole set is replaced, never merged.** The screen sends what the
+ *   guest has chosen in full, so unticking the last product sends `[]` and
+ *   means it. A merge would make "none" unreachable.
+ */
 export async function POST(request: Request) {
   const limit = checkRateLimit(clientKeyFrom(request, "add-ons"), { limit: 12, windowMs: 60_000 });
 
@@ -19,7 +37,10 @@ export async function POST(request: Request) {
   try {
     const parsed = updateAddOnsSchema.safeParse(await request.json());
     if (!parsed.success) {
-      return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid add-on selection." }, { status: 400 });
+      return NextResponse.json(
+        { error: parsed.error.issues[0]?.message ?? "Invalid selection." },
+        { status: 400 },
+      );
     }
 
     const passKey = await getPassKeyByCode(parsed.data.passKey);
@@ -28,51 +49,65 @@ export async function POST(request: Request) {
     }
 
     const reservation = await getReservationByNumber(parsed.data.reservationNumber);
-    const belongsToPassKey =
-      reservation?.passKeyId === passKey.id ||
-      passKey.reservationNumbers.includes(reservation?.reservationNumber ?? "");
+
+    /**
+     * Either link counts. A booking records the key it was made with, and the
+     * key records the bookings it paid for — but a key issued before one of
+     * those two fields existed has only the other, and both are the same claim.
+     */
+    const belongsToPassKey = Boolean(
+      reservation &&
+        (reservation.passKeyId === passKey.id ||
+          passKey.reservationNumbers.includes(reservation.reservationNumber)),
+    );
 
     if (!reservation || !belongsToPassKey || reservation.status !== "confirmed") {
       return NextResponse.json({ error: "We could not find that reservation." }, { status: 404 });
     }
 
-    const menu = await getMenuCatalog("en", "standard", true);
-    const addOnCourses = menu.filter((course) => course.addOn);
-    const seenCourses = new Set<string>();
+    /**
+     * English, deliberately. The guest's screen shows the product in their
+     * language, but what is stored is what staff read off the service sheet —
+     * the same rule the dinner selections follow (rule 2.6).
+     */
+    const catalog = await getPromoCatalog("en");
+    const chosenGroups = new Set<string>();
     const addOns: ReservationAddOn[] = [];
 
     for (const requested of parsed.data.addOns) {
-      if (seenCourses.has(requested.courseId)) {
+      if (chosenGroups.has(requested.courseId)) {
         return NextResponse.json({ error: "Choose at most one product from each group." }, { status: 400 });
       }
 
-      const course = addOnCourses.find((entry) => entry.id === requested.courseId);
+      const course = catalog.find((entry) => entry.id === requested.courseId);
       const option = course?.options.find((entry) => entry.id === requested.optionId);
+
+      /**
+       * 409, not 400: the request was well formed and was true when the screen
+       * rendered it. The product has since been withdrawn, and the screen has
+       * to reload to find out what is on offer now.
+       */
       if (!course || !option) {
         return NextResponse.json({ error: "That product is no longer available." }, { status: 409 });
       }
 
-      const price = Math.max(0, Number(option.price ?? 0));
-      const discountPercent = Math.min(100, Math.max(0, Number(option.discountPercent ?? 0)));
-      const finalPrice = Math.round(price * (1 - discountPercent / 100) * 100) / 100;
-      seenCourses.add(requested.courseId);
+      chosenGroups.add(requested.courseId);
       addOns.push({
         courseId: course.id,
         courseName: course.name,
         optionId: option.id,
         optionName: option.name,
-        price,
-        discountPercent,
-        finalPrice,
+        ...priceOfPromoOption(option),
       });
     }
 
     const updated = await updateReservationAddOns(reservation.reservationNumber, addOns);
+
     return updated
       ? NextResponse.json({ reservation: updated })
       : NextResponse.json({ error: "We could not find that reservation." }, { status: 404 });
   } catch (error) {
-    console.error("[booking] failed to update add-ons", error);
-    return NextResponse.json({ error: "Unable to save your product choices." }, { status: 500 });
+    console.error("[booking] failed to save promotions", error);
+    return NextResponse.json({ error: "Unable to save your choices." }, { status: 500 });
   }
 }

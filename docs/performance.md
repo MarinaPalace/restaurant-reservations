@@ -345,11 +345,18 @@ the raw field back changes nothing visible on screen and makes every page slow a
 
 ### Still worth doing
 
-**Pin the function region to the database's.** `x-vercel-id: fra1::iad1` says the functions run in
-Washington while the edge that served them is Frankfurt. Nothing in this repo sets a region, so they
-landed on the default. Every query still pays that crossing — the fix above removed the megabytes,
-not the distance. Set `preferredRegion` (or a `vercel.json`) to whatever region the Atlas cluster is
-in. This needs the cluster's region, which is a dashboard fact nobody has stated yet.
+**Pinning the function region — done.** `x-vercel-id: fra1::iad1` said the functions ran in
+Washington while the edge serving them was Frankfurt, and the Atlas cluster is AWS `eu-central-1`,
+which *is* Frankfurt. So every query crossed the Atlantic twice for no reason: the fix above removed
+the megabytes, not the distance.
+
+`vercel.json` now pins `regions: ["fra1"]`, which is the same datacentre as the cluster — a round
+trip goes from roughly 90ms to roughly 1ms, and every page in the app makes several.
+
+It has to be set there rather than in the code. `preferredRegion` **is deprecated in Next.js 16**,
+and on Vercel it no longer accepts region codes at all — only `auto`, `global` and `home`, and it
+*throws* on anything else. Do not add `export const preferredRegion = "fra1"` to a route; it will
+fail the build. The region is a deployment-platform fact now, so it lives in the platform's config.
 
 **Consider moving photos out of the documents.** Storing images in the row they describe is what
 made this possible; a blob store or GridFS with the record holding only a key would make the whole

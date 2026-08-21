@@ -288,3 +288,78 @@ not a diagnosis. It can be deleted whenever.
 
 Then the remaining suspects are §3.4 and §3.5, and `mongoConfigured` in the diagnostics endpoint
 answers the second in one request. But the elimination above says it will not be.
+
+---
+
+## 9. The actual cause: dish photos in the menu documents
+
+§8 was right that the reservation reads were wasteful and wrong that they were *the* problem. A HAR
+capture of the guest booking flow settled it in one line:
+
+```
+GET /booking/menu        wait 154ms   receive 72,806ms   content 31,933 bytes
+x-vercel-id: fra1::iad1::…
+```
+
+**Thirty-one kilobytes took seventy-two seconds.** Time to first byte was fine. That shape is not
+bandwidth and not a slow query plan — it is an RSC stream held open while the server is still
+working. The response is small; the work behind it was not.
+
+### What the work was
+
+Uploaded photos are stored on the record as base64 data URLs. `getMenuCatalog` read the whole
+catalogue, ran `toPublicImageUrl` over it, **threw the bytes away** and emitted short URLs. So every
+page that showed a menu pulled every photo out of Mongo to discard it — and this deployment runs its
+functions in `iad1` against a database that is not in `iad1`, so those megabytes crossed an ocean
+first.
+
+`findMenuImage` was worse. It loaded the entire catalogue and scanned it for one id, so a menu of
+twenty photographed dishes made twenty image requests and *each* dragged all twenty pictures across
+to return one. Quadratic in the number of photos, on the guest booking flow.
+
+### Why it looked like an admin problem
+
+It never was. The split was never admin versus guest — it was **reads the menu** versus **does not**:
+
+| Reads the catalogue | Does not |
+|---|---|
+| `/admin`, `/admin/service`, `/admin/analytics`, `/booking/menu` | `/admin/pass-keys`, `/booking/date`, the pass-key screen |
+
+Every page in the left column was slow and every page in the right column was fast. `/admin/pass-keys`
+being quick looked like proof that the reservation reads were at fault, because pass-keys does not
+read reservations either. Both columns were consistent with two different theories, and the
+reservation one was picked because §3.1 had already made it plausible. The guest flow is what broke
+the tie: `/booking/menu` reads no reservations at all and was just as slow.
+
+### The fix
+
+The public URL is built **inside the database** now, from `_id` and `updatedAt`, so the bytes never
+move. `findMenuImage` reads the single record and selects only `imageUrl`. The menu editor still
+receives real data URLs — it hands the current picture back to the uploader — via
+`getFullMenuCatalog(menu, { withImageData: true })`, and it is the only caller that asks.
+
+`lib/services/menu-images.mongo.test.ts` pins it, because this is easy to undo by accident: putting
+the raw field back changes nothing visible on screen and makes every page slow again.
+
+### Still worth doing
+
+**Pin the function region to the database's.** `x-vercel-id: fra1::iad1` says the functions run in
+Washington while the edge that served them is Frankfurt. Nothing in this repo sets a region, so they
+landed on the default. Every query still pays that crossing — the fix above removed the megabytes,
+not the distance. Set `preferredRegion` (or a `vercel.json`) to whatever region the Atlas cluster is
+in. This needs the cluster's region, which is a dashboard fact nobody has stated yet.
+
+**Consider moving photos out of the documents.** Storing images in the row they describe is what
+made this possible; a blob store or GridFS with the record holding only a key would make the whole
+class of bug unavailable. That is a migration, so it is out of scope here — but it is the real
+answer if the menu grows.
+
+### What this note should have done differently
+
+Three theories were argued confidently and two were wrong: the paused cluster (§1.1), then a region
+mismatch, then the reservation reads (§3.1). Each was reasoned from the code and each fitted the
+evidence available at the time. What actually resolved it was one HAR capture, which took a minute
+to read and pointed at the answer immediately — the `wait`/`receive` split ruled out three of the
+four candidate explanations on its own.
+
+**Ask for a HAR before theorising.** It is cheaper than being wrong twice.

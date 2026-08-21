@@ -1,0 +1,218 @@
+# The floor plan — restaurant designer, and guests choosing a table
+
+**Status: not built.** This is the shape the feature would take, written down while the codebase is
+fresh so the next session can start from a decision rather than a blank page. Nothing in the app
+does any of it yet.
+
+Read `HANDOVER.md` §2 first. **§2.7 (seat accounting) is the one that decides this feature** — more
+than any other rule in the app — and §2.2 (additive schema), §2.5 (authorisation in the route) and
+§2.14 (nothing moves under a finger) each decide something below.
+
+---
+
+## 1. What was asked for
+
+Three things:
+
+1. **A restaurant designer.** Staff lay out the room: tables, where they are, how many each seats.
+2. **Guests choose a table** while making a reservation, from a view of that room.
+3. **An on/off switch in the admin panel**, because a restaurant that does not want this must be
+   able to carry on exactly as it does today.
+
+---
+
+## 2. The thing to get right, before anything else
+
+**This changes the unit of availability**, and that unit is the most delicate thing in the app.
+
+Today an evening has a `capacity` in **seats**, and a booking claims seats with a single
+conditional update — `$expr` comparing capacity to `reservedSeats`, no transaction, so a standalone
+`mongod` works. Rule 2.7 exists because that code has been wrong before, and every one of its
+properties was paid for: growing a party claims only the *extra* seats, cancelling is idempotent,
+the new date is claimed before the old is released, and a failed write hands the seats back.
+
+Letting a guest pick **table 7** adds a second thing that can be exhausted. Two guests picking
+table 7 at the same moment must not both get it, and "seats remaining" cannot answer that — the
+room can have twenty free seats and no free table that fits four.
+
+**Do not solve this with a read-then-write.** "Check the table is free, then save the booking" is
+exactly the race the seat claim was written to avoid, and it will be wrong perhaps once a month —
+often enough to matter, rarely enough to be blamed on the guest.
+
+### The recommended shape: claim the table the way seats are claimed
+
+A per-evening, per-table claim record, updated conditionally:
+
+```ts
+type TableClaim = {
+  date: string;            // local calendar key, never UTC (rule 2.1)
+  tableId: string;
+  /** Guests already seated at it. */
+  guests: number;
+  /** The bookings sharing it — normally one. */
+  reservationNumbers: string[];
+};
+```
+
+Claiming is one conditional update, the same shape as the seat claim:
+
+```ts
+// Succeeds only if this party still fits.
+{ $expr: { $lte: [{ $add: [{ $ifNull: ["$guests", 0] }, partySize] }, tableSeats] } }
+```
+
+That gives, for free, the two behaviours the app already has: **a shared table is just a claim with
+two reservation numbers on it** (which is what `tableGroupId` already means), and **growing a party
+only needs room for the extra guests**.
+
+The seat claim stays exactly as it is. A booking with the floor plan on makes **two** claims —
+seats on the date, and a place at the table — and the second failing hands the first back, which is
+the same unwinding `createReservation` already does when a write fails.
+
+**Why not a unique index on `(date, tableId)`?** It looks tidy and it is wrong here: it makes
+sharing a table impossible, and sharing is an existing feature (rooms dining together, README).
+
+---
+
+## 3. What the room is
+
+The floor plan belongs to the **restaurant**, not to a date. Tables do not move nightly; what
+changes per evening is which of them are in use.
+
+```ts
+type FloorTable = {
+  id: string;
+  /** What staff and guests call it. Maps onto the existing free-text `tableNumber`. */
+  label: string;
+  seats: number;
+  /** Position on the plan, in a unitless grid the designer owns. */
+  x: number;
+  y: number;
+  shape: "round" | "square" | "rectangle";
+  /** Degrees. Rectangles need it; rounds ignore it. */
+  rotation?: number;
+  /** Out of service — a broken leg, a draught nobody will sit in. */
+  active: boolean;
+};
+```
+
+**`label` maps onto the existing `tableNumber`.** That is the continuity point that makes this
+feature cheap: the service sheet, the service board, the printed sheet and `groupRoomRowsByTable`
+all key on `tableNumber` today and would need **no changes at all**. A booking that claims the table
+labelled "7" sets `tableNumber: "7"`, and everything downstream carries on.
+
+Store it in the settings store (`lib/services/settings.ts`) as one document, or in its own small
+collection if it grows past a few dozen tables. It is read on every booking page, so it wants to be
+one cheap read.
+
+---
+
+## 4. The switch
+
+`floorPlan.enabled`, in the settings store beside `promo.currency` and `restaurant.timeZone`.
+
+**Off is the default and off must be indistinguishable from today.** That is the acceptance
+criterion for the whole feature: with the flag off, the booking flow, the sheet, the board and the
+seat accounting behave exactly as they do now, and no code path reads a table claim.
+
+**Checked in the route, never only in the UI** (rule 2.5). A hidden picker is not a rule: with the
+flag off, `/api/reservations` must ignore a `tableId` in the payload rather than honour it, or the
+first person to read the network tab gets to reserve the window table forever.
+
+Worth considering a third state rather than a boolean — `off | optional | required` — because
+"guests may pick, or may leave it to us" is a real restaurant policy and retrofitting it later means
+touching every call site. Cheap now, expensive later.
+
+---
+
+## 5. The designer, for staff
+
+`/admin/floor-plan`, behind a new `floorplan:edit` permission (additive; `admin` holds it
+implicitly).
+
+- A grid. Drag a table to move it, handles to rotate, a field for seats and label.
+- **Snap to a grid.** Free positioning produces a plan that looks drunk and no two people ever agree
+  is finished.
+- A palette of shapes; add and remove tables.
+- Read the seat total back: "12 tables · 48 seats", and offer *"set this evening's capacity from
+  the plan"* rather than deriving capacity silently. Silent derivation would change every existing
+  date the moment somebody drew a room.
+
+**Do not reuse `MonthCalendar`'s drag conventions or the print CSS.** This screen is not printed and
+should not pretend to be; the printed sheet stays the printed sheet (rules 2.8–2.10).
+
+The delicate part is deleting a table that a future booking has claimed. Refuse it, and say which
+evening — the same courtesy `saveMenuCatalog` shows historical bookings by upserting ids rather than
+recreating them (rule 2.4).
+
+---
+
+## 6. The picker, for guests
+
+A step in the booking flow, after the date and party size are known — because both are needed to
+say which tables can be offered.
+
+- The plan, rendered at a size a phone can use. Tables that fit the party and are free are
+  tappable; the rest are visibly not.
+- **Never say who has a table.** "Taken" is all a guest may see. A floor plan that leaks "table 7,
+  room 402, 4 guests" is a guest list, and the pass-key rules (2.5) exist precisely because
+  reservation details are not public.
+- **Nothing moves under a finger** (rule 2.14). The plan must not re-layout when availability
+  refreshes.
+- Offer **"any table"** unless the flag is `required`. Most guests do not care, and forcing a choice
+  adds a step to a flow that is currently four.
+- The claim can still fail between rendering and submitting — somebody else was faster. That is a
+  `409` with the plan re-rendered and the taken table now visibly taken, in the same shape as
+  `DATE_FULL` today.
+
+---
+
+## 7. What it touches, and what it must not
+
+| Existing thing | What happens |
+|---|---|
+| `tableNumber` | Set from the claimed table's label. The sheet, board and print need **no change**. |
+| `tableGroupId` / shared tables | A claim with several reservation numbers. Already the same idea. |
+| Seat accounting (2.7) | **Untouched.** Table claims are a second, separate constraint. |
+| `assignTableNumber` | Still there for staff overrides; must also move the claim, or the two disagree. |
+| The service board | "No table yet" becomes rare, since bookings arrive with a table. |
+| Premium evenings | The plan is the same room; premium evenings just have their own bookings. |
+| Booking cutoff (2.21) | Unchanged — it decides *when*, not *where*. |
+| Cancelling | Releases the table claim as well as the seats, and idempotently (2.7). |
+| Restoring (2.12) | A **fresh claim** on both. The table may have gone in the meantime, and the restore must fail cleanly rather than double-book. |
+
+---
+
+## 8. Open questions — settle these before any code
+
+1. **`off | optional | required`, or just a boolean?** §4. Recommend the three-state.
+2. **What happens to bookings made before the plan existed?** They have a `tableNumber` string that
+   may match no table. Recommend: they keep it, the board shows it as it does today, and nothing
+   tries to reconcile them.
+3. **Can a guest change their table later?** The manage screen allows changing dishes. A table
+   change is a release-and-claim, which can fail — and failing while giving up the table they had
+   would be the worst outcome. Recommend: claim the new one first, release the old after, like the
+   date move already does.
+4. **Do tables have attributes guests care about?** Window, quiet, near the door. Cheap to add now
+   as a `tags: string[]`, awkward later.
+5. **How does the room differ by evening?** A table out of service tonight only. Recommend a
+   per-date exclusion list rather than a per-date copy of the plan.
+6. **Does the designer need multiple rooms?** Terrace, main room, private. If yes, the plan is a
+   list of rooms, and it is much cheaper to decide that before the first one is drawn.
+
+---
+
+## 9. Order of work
+
+1. **The plan and the designer**, staff-only, with no booking integration at all. A drawn room that
+   does nothing is still useful — it can print, and it proves the model.
+2. **The flag**, defaulting off, and the route honouring it.
+3. **Table claims**, with the concurrency test *first*: two parties claiming one table at the same
+   moment, one wins, and the loser's seat claim is handed back.
+4. **The guest picker**, with "any table" as the default.
+5. **Cancel, restore and move**, each releasing and re-claiming correctly. This is where the bugs
+   will be.
+6. Only then: tags, multiple rooms, per-evening exclusions.
+
+Steps 1–3 are where the risk is. Step 3 is the one to write tests for before writing the feature —
+it is the only part of this that can corrupt data rather than merely annoy somebody.

@@ -71,6 +71,15 @@ export function ServiceBoard({
    * makes you ask about one table, not all of them.
    */
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  /**
+   * Hides tables that are done — served, or not coming.
+   *
+   * The most valuable thing on a phone is fewer rows. By the middle of service
+   * half the room is finished and none of it needs touching again, so scrolling
+   * past it to reach the two tables that do is the actual cost of the small
+   * screen. Off by default: the board's first job is to show the whole evening.
+   */
+  const [hideDone, setHideDone] = useState(false);
   const [notice, setNotice] = useState("");
 
   /** Rows with a mark still in flight. A poll must leave these alone. */
@@ -351,9 +360,25 @@ export function ServiceBoard({
   const summary = useMemo(() => boardSummary(tables), [tables]);
   const outstanding = useMemo(() => outstandingPlates(tables), [tables]);
 
+  /**
+   * Filtering hides rows; it never reorders them (rule 2.14). A row that moves
+   * because a neighbour was finished is a row somebody mis-taps.
+   */
+  const visible = useMemo(
+    () =>
+      hideDone
+        ? tables.filter(
+            (table) =>
+              table.attendance !== "no-show" &&
+              !(table.attendance === "seated" && table.courses.every((course) => course.outstanding === 0)),
+          )
+        : tables,
+    [hideDone, tables],
+  );
+
   return (
     <div className="space-y-4">
-      <Card className="p-5">
+      <Card className="p-3 sm:p-5">
         <CardHeader
           as="h1"
           eyebrow={isToday ? "Tonight" : "Service board"}
@@ -371,16 +396,26 @@ export function ServiceBoard({
           }
         />
 
-        {/* What is still to go out. The number the pass actually asks for. */}
+        {/*
+          What is still to go out. The number the pass actually asks for.
+
+          One scrolling line on a phone rather than a wrapped block: six courses
+          wrapping to four rows push the tables off the screen entirely, and the
+          strip is glanced at, not read.
+        */}
         {outstanding.length > 0 ? (
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="-mx-3 mt-3 flex gap-2 overflow-x-auto px-3 pb-1 sm:mx-0 sm:mt-4 sm:flex-wrap sm:px-0">
             {outstanding.map((course) => (
               <span
                 key={course.courseId}
-                className="inline-flex items-baseline gap-2 rounded-control border border-gold/40 bg-accent-soft px-3 py-2"
+                className="inline-flex shrink-0 items-baseline gap-1.5 rounded-control border border-gold/40 bg-accent-soft px-2.5 py-1.5 sm:gap-2 sm:px-3 sm:py-2"
               >
-                <span className="text-xl font-semibold tabular-nums text-accent-ink">{course.plates}</span>
-                <span className="text-sm text-ink-muted">{course.courseName} to go</span>
+                <span className="text-lg font-semibold tabular-nums text-accent-ink sm:text-xl">
+                  {course.plates}
+                </span>
+                <span className="whitespace-nowrap text-xs text-ink-muted sm:text-sm">
+                  {course.courseName}
+                </span>
               </span>
             ))}
           </div>
@@ -388,6 +423,23 @@ export function ServiceBoard({
           <p className="mt-4 rounded-control border border-success/30 bg-success-soft p-3 text-sm font-medium text-success">
             ✓ Everything seated has been served.
           </p>
+        ) : null}
+
+        {summary.tables > 0 ? (
+          <label className="mt-3 flex min-h-11 items-center gap-2 text-sm font-medium text-ink">
+            <input
+              type="checkbox"
+              className="size-5 accent-[var(--primary)]"
+              checked={hideDone}
+              onChange={(event) => setHideDone(event.target.checked)}
+            />
+            Hide finished and no-shows
+            {hideDone ? (
+              <span className="text-ink-subtle">
+                ({summary.tables - visible.length} hidden)
+              </span>
+            ) : null}
+          </label>
         ) : null}
 
         {notice ? (
@@ -412,8 +464,8 @@ export function ServiceBoard({
           />
         </Card>
       ) : (
-        <div className="space-y-3">
-          {tables.map((table) => {
+        <div className="space-y-2 sm:space-y-3">
+          {visible.map((table) => {
             const row = rows[table.key];
             const seated = table.attendance === "seated";
 
@@ -422,7 +474,7 @@ export function ServiceBoard({
                 key={table.key}
                 as="section"
                 className={cx(
-                  "p-4 transition-colors",
+                  "p-3 transition-colors sm:p-4",
                   table.attendance === "no-show" && "opacity-60",
                   seated && "border-gold/40",
                 )}
@@ -430,10 +482,10 @@ export function ServiceBoard({
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="flex flex-wrap items-baseline gap-2">
-                      <span className="text-xl font-semibold text-ink">
+                      <span className="text-lg font-semibold text-ink sm:text-xl">
                         {table.table ? `Table ${table.table}` : "No table yet"}
                       </span>
-                      <span className="text-sm text-ink-muted">
+                      <span className="text-xs text-ink-muted sm:text-sm">
                         {table.rooms.join(" + ")} · {table.guests} {table.guests === 1 ? "guest" : "guests"}
                       </span>
                     </p>
@@ -459,14 +511,14 @@ export function ServiceBoard({
                           <button
                             type="button"
                             onClick={() => seat(table)}
-                            className="min-h-14 rounded-control bg-primary px-6 text-base font-semibold text-primary-fg transition-colors hover:bg-primary-hover"
+                            className="min-h-12 rounded-control bg-primary px-5 text-base font-semibold text-primary-fg transition-colors hover:bg-primary-hover sm:min-h-14 sm:px-6"
                           >
                             Seated
                           </button>
                           <button
                             type="button"
                             onClick={() => noShow(table)}
-                            className="min-h-14 rounded-control border border-line-strong px-4 text-sm font-medium text-ink-muted hover:border-danger hover:text-danger"
+                            className="min-h-12 rounded-control border border-line-strong px-3 text-sm font-medium text-ink-muted hover:border-danger hover:text-danger sm:min-h-14 sm:px-4"
                           >
                             No-show
                           </button>
@@ -476,7 +528,7 @@ export function ServiceBoard({
                           type="button"
                           onClick={() => clearAttendance(table)}
                           className={cx(
-                            "min-h-14 rounded-control border px-5 text-sm font-semibold transition-colors",
+                            "min-h-12 rounded-control border px-4 text-sm font-semibold transition-colors sm:min-h-14 sm:px-5",
                             seated
                               ? "border-gold bg-accent-soft text-accent-ink"
                               : "border-line-strong text-ink-muted",
@@ -501,7 +553,12 @@ export function ServiceBoard({
                 */}
                 {seated ? (
                   <div className="mt-3 border-t border-line pt-3">
-                    <div className="flex flex-wrap items-center gap-2">
+                    {/*
+                      A grid on a phone, where a 160px-wide cell means one per
+                      row and six courses fill the screen; flowing chips from
+                      `sm` up, where there is room for their natural width.
+                    */}
+                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
                       {table.courses.map((course) => {
                         const done = course.outstanding === 0;
 
@@ -513,7 +570,7 @@ export function ServiceBoard({
                             onClick={() => toggleCourse(table, course.courseId, !done)}
                             aria-pressed={done}
                             className={cx(
-                              "min-h-16 min-w-40 rounded-control border px-4 py-2 text-left transition-colors",
+                              "min-h-14 rounded-control border px-3 py-2 text-left transition-colors sm:min-h-16 sm:min-w-40 sm:px-4",
                               done
                                 ? "border-success/40 bg-success-soft"
                                 : course.served > 0
@@ -522,7 +579,12 @@ export function ServiceBoard({
                               !canRecord && "cursor-default",
                             )}
                           >
-                            <span className={cx("block text-sm font-semibold", done ? "text-success" : "text-ink")}>
+                            <span
+                              className={cx(
+                                "block truncate text-sm font-semibold",
+                                done ? "text-success" : "text-ink",
+                              )}
+                            >
                               {done ? "✓ " : ""}
                               {course.courseName}
                               {!done && course.served > 0 ? (
@@ -537,7 +599,7 @@ export function ServiceBoard({
                               does not tell a waiter what to carry; "2 x Salmon,
                               1 x Veloute" does.
                             */}
-                            <span className="mt-0.5 block text-xs text-ink-muted">
+                            <span className="mt-0.5 block truncate text-xs text-ink-muted">
                               {done && course.servedAt
                                 ? new Intl.DateTimeFormat("en-GB", {
                                     hour: "2-digit",
@@ -577,7 +639,7 @@ export function ServiceBoard({
                             <p className="text-xs font-semibold uppercase tracking-wide text-ink-subtle">
                               {course.courseName}
                             </p>
-                            <div className="mt-1 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+                            <div className="mt-1 grid grid-cols-2 gap-1.5 lg:grid-cols-3">
                               {course.plates.map((plate) => {
                                 const out = Boolean(plate.servedAt);
 

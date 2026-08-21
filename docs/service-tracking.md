@@ -285,7 +285,8 @@ the two diverging is itself the interesting number.
    does — one tap, several records written, which `assignTableNumber` already models.
 3. **What happens to a table with no table number?** The board is ordered by table, and staff do not
    always assign one before guests arrive. *Recommended:* an "unassigned" group at the top rather
-   than hiding them, and let the number be set from the board.
+   than hiding them, and let the number be set from the board. **This mostly goes away** if
+   `docs/floor-plan.md` is built — bookings then arrive with a table already claimed.
 4. **Should a no-show release the seats?** It would make late walk-ins bookable and would make
    occupancy honest — but it also rewrites seat accounting, which is the most delicate code in the
    app (rule 2.7). *Recommended:* **no**, at least at first. Record the fact; leave the seats. A

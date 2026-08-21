@@ -47,6 +47,22 @@
   --warning: #8a5a12;
   --warning-soft: #fbf0dc;
 
+  /*
+   * The ordinal chart ramp — the funnel's three stages.
+   *
+   * Three steps of the accent hue, validated rather than eyeballed: monotone
+   * lightness, adjacent ΔL >= 0.06, single hue (4° spread), and a light end at
+   * 2.25:1 against the surface. The first candidate (#d9b98a) failed the
+   * light-end contrast floor at 1.87:1 and was stepped down.
+   *
+   * Categorical chart colours are deliberately absent. The app's accent and
+   * success were checked as a two-series pair and failed: ΔE 3.1 under
+   * protanopia and 13.1 with full colour vision. Every chart is single-hue.
+   */
+  --chart-step-1: #cba775;
+  --chart-step-2: #a87c45;
+  --chart-step-3: #6f4f22;
+
   --focus-ring: #8a6431;
   --card-shadow: 0 24px 60px -28px rgba(52, 33, 13, 0.28);
 
@@ -85,6 +101,12 @@
     --warning: #e0b165;
     --warning-soft: #2a2113;
 
+    /* Its own steps from the same hue, validated against the dark surface —
+       not an automatic inversion of the light ramp. */
+    --chart-step-1: #f0d9b3;
+    --chart-step-2: #d9b47d;
+    --chart-step-3: #a8834a;
+
     --focus-ring: #d9b47d;
     --card-shadow: 0 24px 60px -28px rgba(0, 0, 0, 0.75);
 
@@ -122,6 +144,12 @@
   --danger-soft: #2c1714;
   --warning: #e0b165;
   --warning-soft: #2a2113;
+
+  /* The explicit-dark twin of the media-query block above; the tokens are
+     declared twice on purpose (see the file header). */
+  --chart-step-1: #f0d9b3;
+  --chart-step-2: #d9b47d;
+  --chart-step-3: #a8834a;
 
   --focus-ring: #d9b47d;
   --card-shadow: 0 24px 60px -28px rgba(0, 0, 0, 0.75);

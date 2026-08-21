@@ -342,3 +342,118 @@ describe("what a guest is offered", () => {
     expect((await restaurant.getPromoCatalog("en"))[0].options[0].name).toBe("Chardonnay");
   });
 });
+
+/**
+ * The service board's fields, against a real mongod.
+ *
+ * Rule 2.2: a document written before either existed must read correctly and
+ * survive a round trip. And the writes must be **per key** — two waiters
+ * marking different courses on one table at the same moment must both land,
+ * which a read-modify-write would not guarantee.
+ */
+describe("attendance and service progress", () => {
+  async function seedBooking(number = "VDM-SVC001") {
+    const reservations = await import("@/lib/services/reservations");
+    await reservations.updateRestaurantDate({ date: "2026-08-25", isOpen: true, capacity: 40 });
+
+    const { ReservationModel } = await import("@/lib/models/reservation");
+    await ReservationModel.collection.insertOne({
+      reservationNumber: number,
+      roomNumber: "402",
+      guestCount: 2,
+      date: "2026-08-25",
+      status: "confirmed",
+      selections: [{ guestIndex: 0, courseId: "c1", courseName: "Starter", optionId: "o1", optionName: "Salmon" }],
+    });
+
+    return { number, reservations };
+  }
+
+  it("reads a document written before these fields existed", async () => {
+    const { number, reservations } = await seedBooking();
+    const saved = await reservations.getReservationByNumber(number);
+
+    expect(saved).toBeTruthy();
+    expect(saved?.attendance).toBeUndefined();
+    expect(saved?.service).toBeUndefined();
+    // And nothing else was disturbed by the new schema.
+    expect(saved?.selections).toHaveLength(1);
+  });
+
+  it("stores and reads an attendance mark", async () => {
+    const { number, reservations } = await seedBooking();
+
+    await reservations.setReservationAttendance(number, {
+      status: "seated",
+      at: "2026-08-25T17:00:00.000Z",
+      byName: "Ivan",
+      guests: 2,
+    });
+
+    expect((await reservations.getReservationByNumber(number))?.attendance).toMatchObject({
+      status: "seated",
+      byName: "Ivan",
+      guests: 2,
+    });
+  });
+
+  /** Undo returns it to unknown, never to the opposite claim. */
+  it("clears an attendance mark back to absent", async () => {
+    const { number, reservations } = await seedBooking();
+
+    await reservations.setReservationAttendance(number, {
+      status: "no-show",
+      at: "2026-08-25T19:30:00.000Z",
+      byName: "Ivan",
+    });
+    await reservations.setReservationAttendance(number, null);
+
+    expect((await reservations.getReservationByNumber(number))?.attendance).toBeUndefined();
+  });
+
+  it("marks a course served without touching its neighbours", async () => {
+    const { number, reservations } = await seedBooking();
+
+    await reservations.setReservationCourseServed(number, "c1", "2026-08-25T18:04:00.000Z");
+    await reservations.setReservationCourseServed(number, "c2", "2026-08-25T19:00:00.000Z");
+    await reservations.setReservationCourseServed(number, "c1", null);
+
+    expect((await reservations.getReservationByNumber(number))?.service?.servedAt).toEqual({
+      c2: "2026-08-25T19:00:00.000Z",
+    });
+  });
+
+  /**
+   * The reason the write is a dotted `$set` rather than replacing the map:
+   * three marks landing together must all survive.
+   */
+  it("does not lose a mark when several land at once", async () => {
+    const { number, reservations } = await seedBooking();
+
+    await Promise.all([
+      reservations.setReservationCourseServed(number, "c1", "2026-08-25T18:04:00.000Z"),
+      reservations.setReservationCourseServed(number, "c2", "2026-08-25T18:05:00.000Z"),
+      reservations.setReservationCourseServed(number, "c3", "2026-08-25T18:06:00.000Z"),
+    ]);
+
+    const saved = await reservations.getReservationByNumber(number);
+    expect(Object.keys(saved?.service?.servedAt ?? {})).toHaveLength(3);
+  });
+
+  it("survives a save round-trip field for field", async () => {
+    const { number, reservations } = await seedBooking();
+
+    await reservations.setReservationAttendance(number, {
+      status: "seated",
+      at: "2026-08-25T17:00:00.000Z",
+      byName: "Ivan",
+    });
+    await reservations.setReservationCourseServed(number, "c1", "2026-08-25T18:04:00.000Z");
+
+    const saved = await reservations.getReservationByNumber(number);
+    expect(saved?.attendance?.status).toBe("seated");
+    expect(saved?.service?.servedAt?.c1).toBe("2026-08-25T18:04:00.000Z");
+    expect(saved?.roomNumber).toBe("402");
+    expect(saved?.guestCount).toBe(2);
+  });
+});

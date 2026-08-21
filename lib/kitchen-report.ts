@@ -1,5 +1,6 @@
 import { isNoneSelection, NONE_OPTION_ID } from "@/lib/menu-selection";
 import { compareRoomNumbers, formatRoomList } from "@/lib/room";
+import { sortReservationsBy, type ReservationOrder } from "@/lib/reservation-order";
 import type { MenuCourse, ReservationRecord } from "@/types/booking";
 
 /**
@@ -34,6 +35,8 @@ export type GuestRow = {
    * because nothing here is a plate: it must never reach the kitchen's totals.
    */
   extras: string[];
+  /** When the booking was taken. Absent on records predating the field. */
+  bookedAt?: string;
   cancelled: boolean;
   tableGroupId?: string;
 };
@@ -49,6 +52,8 @@ export type RoomRow = {
   comment: string;
   /** Promotions to bring to the table. Never plates, never counted as such. */
   extras: string[];
+  /** When the booking was taken. Absent on records predating the field. */
+  bookedAt?: string;
   cancelled: boolean;
   tableGroupId?: string;
 };
@@ -71,7 +76,19 @@ export function reservationLabel(
   );
 }
 
-function sortReservations(reservations: ReservationRecord[]) {
+/**
+ * The order rows appear in.
+ *
+ * `service` is the sheet's own: table, then group, then room — the order a
+ * waiter walks the room in, and the only one that makes a shared table read as
+ * one thing. Anything else is "when did this come in?", which is a different
+ * question with a different answer, and lives in `lib/reservation-order.ts`.
+ */
+function sortReservations(reservations: ReservationRecord[], order: ReservationOrder = "service") {
+  if (order !== "service") {
+    return sortReservationsBy(reservations, order);
+  }
+
   return reservations.slice().sort((a, b) => {
     // Rooms sharing a table sit next to each other on the sheet.
     const tableA = a.tableNumber ?? "";
@@ -183,10 +200,14 @@ export function extrasOf(reservation: ReservationRecord): string[] {
   return (reservation.addOns ?? []).map((addOn) => addOn.optionName);
 }
 
-export function buildGuestRows(reservations: ReservationRecord[], columns: CourseColumn[]): GuestRow[] {
+export function buildGuestRows(
+  reservations: ReservationRecord[],
+  columns: CourseColumn[],
+  order: ReservationOrder = "service",
+): GuestRow[] {
   const rows: GuestRow[] = [];
 
-  for (const reservation of sortReservations(reservations)) {
+  for (const reservation of sortReservations(reservations, order)) {
     for (let guestIndex = 0; guestIndex < Math.max(reservation.guestCount, 1); guestIndex += 1) {
       const choices: Record<string, string> = {};
 
@@ -209,6 +230,7 @@ export function buildGuestRows(reservations: ReservationRecord[], columns: Cours
         comment: guestIndex === 0 ? (reservation.notes ?? "") : "",
         // Like the note: it belongs to the booking, not to each guest on it.
         extras: guestIndex === 0 ? extrasOf(reservation) : [],
+        bookedAt: guestIndex === 0 ? reservation.createdAt : undefined,
         cancelled: reservation.status === "cancelled",
         tableGroupId: reservation.tableGroupId,
       });
@@ -218,8 +240,12 @@ export function buildGuestRows(reservations: ReservationRecord[], columns: Cours
   return rows;
 }
 
-export function buildRoomRows(reservations: ReservationRecord[], columns: OptionColumn[]): RoomRow[] {
-  return sortReservations(reservations).map((reservation) => {
+export function buildRoomRows(
+  reservations: ReservationRecord[],
+  columns: OptionColumn[],
+  order: ReservationOrder = "service",
+): RoomRow[] {
+  return sortReservations(reservations, order).map((reservation) => {
     const counts: Record<string, number> = {};
     for (const column of columns) {
       counts[column.id] = 0;
@@ -240,6 +266,7 @@ export function buildRoomRows(reservations: ReservationRecord[], columns: Option
       counts,
       comment: reservation.notes ?? "",
       extras: extrasOf(reservation),
+      bookedAt: reservation.createdAt,
       cancelled: reservation.status === "cancelled",
       tableGroupId: reservation.tableGroupId,
     };
@@ -333,6 +360,14 @@ export type CombinedTableRow = {
    * has to know which is whose.
    */
   extras: { room: string; items: string[] }[];
+  /**
+   * When the table was first booked — the earliest of its rooms.
+   *
+   * The earliest rather than the latest because a shared table exists from the
+   * moment the first room took it; the rooms that joined afterwards are why it
+   * is shared, not when it began.
+   */
+  bookedAt?: string;
   /** The bookings behind the row, for the per-reservation actions. */
   members: { reservationNumber: string; room: string; cancelled: boolean }[];
   isShared: boolean;
@@ -365,6 +400,10 @@ export function buildCombinedTableRows(groups: TableGroup[], columns: OptionColu
       extras: group.rows
         .filter((row) => !row.cancelled && row.extras.length > 0)
         .map((row) => ({ room: row.room, items: row.extras })),
+      bookedAt: group.rows
+        .map((row) => row.bookedAt)
+        .filter((at): at is string => Boolean(at))
+        .sort()[0],
       members: group.rows.map((row) => ({
         reservationNumber: row.reservationNumber,
         room: row.room,

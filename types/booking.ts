@@ -206,6 +206,64 @@ export type ReservationAddOn = {
   finalPrice: number;
 };
 
+/**
+ * Did they come?
+ *
+ * A **permanent record**, unlike `ReservationServiceProgress` below. Nobody
+ * asks in March whether the soup went out at 20:14; everybody asks in March how
+ * many people did not turn up.
+ *
+ * **Absent is unknown** — neither seated nor no-show — and nothing may read it
+ * as either. On a busy night nobody taps anything, and a rule that treated
+ * silence as "did not turn up" would record the whole room as no-shows and
+ * poison every number built on it. See `docs/service-tracking.md` §7.
+ */
+export type ReservationAttendance = {
+  status: "seated" | "no-show";
+  at: string;
+  /** Who marked it. A no-show is disputable, so it names somebody. */
+  byName: string;
+  /** How many actually sat down. Absent reads as the whole party. */
+  guests?: number;
+};
+
+/**
+ * How far through the evening this table is.
+ *
+ * **Operational, not a record.** Worthless the next morning, never audited, and
+ * never shown for a past date.
+ *
+ * A map rather than a list of booleans: it answers "what is still to go out" by
+ * subtraction from the menu, it cannot drift out of order, and the timestamps
+ * are what make a "waiting forty minutes" flag possible later without another
+ * schema change.
+ */
+export type ReservationServiceProgress = {
+  /**
+   * Course id → when that course went out to this table.
+   *
+   * **Legacy, and read-only from now on.** The first version of the board
+   * tracked whole courses. `servedGuests` below replaced it because a table of
+   * four rarely gets its four plates at once, and because an allergy note says
+   * "guest 2", not "the starter". Records written by that version still read
+   * correctly: a course with a timestamp here counts as fully served.
+   */
+  servedAt?: Record<string, string>;
+  /**
+   * Course id → guest index → when *that guest's* plate went out.
+   *
+   * Nested maps rather than an array of indices, and deliberately: each guest
+   * is its own key, so `$set`/`$unset` touches one plate and two waiters
+   * marking different guests on the same course cannot lose each other. An
+   * array would be a read-modify-write, which is exactly what rule 2.7 says
+   * not to do.
+   *
+   * The guest index is per **booking**, so a shared table is unambiguous —
+   * both bookings have a guest 0, and they live under different reservations.
+   */
+  servedGuests?: Record<string, Record<string, string>>;
+};
+
 export type ReservationStatus = "confirmed" | "cancelled";
 
 /** Which app the guest prefers to be messaged on, when they leave a phone number. */
@@ -249,6 +307,10 @@ export type ReservationRecord = {
    * before promotions existed, and on every booking that declined them.
    */
   addOns?: ReservationAddOn[];
+  /** Did they come? Permanent; absent is unknown, never "seated". */
+  attendance?: ReservationAttendance;
+  /** How far through their courses. Operational; absent is "nothing served". */
+  service?: ReservationServiceProgress;
   /** How to reach the guest. Optional so bookings made before this existed still load. */
   contact?: ReservationContact;
   /** Arrival time copied from the date when the booking was made. */
@@ -335,6 +397,22 @@ export const STAFF_PERMISSIONS = [
   "menu:edit",
   "dates:manage",
   "passkeys:issue",
+  /**
+   * Read the analytics page. Additive, and `admin` holds every permission
+   * implicitly — including ones added later — so no existing account needs
+   * touching. Separate from `dates:manage` because reading the numbers and
+   * changing the calendar are different jobs.
+   */
+  "analytics:view",
+  /**
+   * Run the service board: mark tables arrived and courses served.
+   *
+   * Its own permission so a waiter's account can hold this and nothing else —
+   * no cancellations, no menu, no pass-keys. That is the account left signed
+   * in on a tablet on the floor, and it should be able to do as little as
+   * possible.
+   */
+  "service:record",
   "users:manage",
 ] as const;
 
@@ -537,6 +615,7 @@ export type AuditAction =
   | "user:delete"
   | "menu:save"
   | "settings:save"
+  | "reservation:attendance"
   | "date:update";
 
 export type AuditEntry = {

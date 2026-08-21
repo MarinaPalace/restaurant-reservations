@@ -3,11 +3,12 @@
  *
  * ## Why this is a label and not a conversion
  *
- * Rule 2.1: every date in this app is a **local calendar string**, and every
- * time is read against the machine's own clock. That is deliberate and it
- * works, because the server and the restaurant are in the same place. Nothing
- * here changes that — it does not re-base any arithmetic, and it must not
- * start to.
+ * Rule 2.1: every date in this app is a **local calendar string**, and a time
+ * is stored as one too — `"19:00"` means the restaurant's wall clock, and is
+ * rendered back exactly as typed. Where an *instant* is needed, it is built
+ * against the machine's own clock. That is deliberate and it works, because
+ * the server and the restaurant are in the same place. Nothing here changes
+ * it — this module re-bases no arithmetic, and must not start to.
  *
  * What it fixes is that "19:00" on a confirmation read by a guest who booked
  * from another country says nothing about *which* 19:00. Naming the zone, and
@@ -118,12 +119,26 @@ export function systemTimeZone(): string {
  * Whether the configured zone and the machine's own zone disagree, and by how
  * much.
  *
- * This matters more than it looks. Every time in this app is computed against
- * the machine's clock (rule 2.1), so the configured zone is only a *name* for
- * that clock. If a deployment sits in UTC while the label says Sofia, the
- * confirmation will read "19:00 Sofia time (UTC+3)" for a sitting the server
- * believes starts at 19:00 UTC — two hours out, stated confidently. Returns
- * `null` when they agree, which is the normal case.
+ * ## What is, and is not, affected
+ *
+ * An earlier version of this message said "every time shown to a guest is
+ * worked out from the server's clock". That is **wrong**, and being wrong made
+ * a safe change look dangerous.
+ *
+ * A reservation's `date` and `time` are **stored strings**, typed by staff
+ * meaning the restaurant's wall clock and rendered back verbatim. No
+ * conversion happens in either direction, so no booking moves when `TZ`
+ * changes, and labelling `19:00` as Sofia time is correct even on a UTC
+ * server.
+ *
+ * What genuinely depends on the process clock is the four things that build a
+ * real `Date` out of those strings — calendar reminders (`toCalendarStamp`
+ * emits a UTC instant), the self-service change deadline, the guest booking
+ * cutoff, and `todayKey`/`isPastDateKey`. Those are wrong by the offset
+ * between the two zones, which is what this warning is for.
+ *
+ * See `docs/timezones.md`. Returns `null` when the zones agree, which is the
+ * normal case, and also when they merely share an offset.
  */
 export function describeClockMismatch(configured: string, at: Date = new Date()): string | null {
   const system = systemTimeZone();
@@ -143,8 +158,11 @@ export function describeClockMismatch(configured: string, at: Date = new Date())
 
   return (
     `This server's clock is set to ${system} (${utcOffsetLabel(system, at)}), but times are being ` +
-    `labelled ${configured} (${utcOffsetLabel(configured, at)}). Every time shown to a guest is ` +
-    `worked out from the server's clock, so they are being labelled with the wrong zone. Either set ` +
-    `TZ=${configured} on the deployment, or change the setting to match the server.`
+    `labelled ${configured} (${utcOffsetLabel(configured, at)}). ` +
+    `Bookings themselves are unaffected — an arrival time is stored and shown exactly as it was ` +
+    `typed, so no reservation has moved. What is worked out from the server's clock is calendar ` +
+    `reminders, the change deadline, the booking cutoff, and which evenings count as past; those ` +
+    `four are out by ${utcOffsetLabel(configured, at)} against ${utcOffsetLabel(system, at)}. ` +
+    `Set TZ=${configured} on the deployment, or change this setting to match the server.`
   );
 }

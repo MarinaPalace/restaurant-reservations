@@ -29,6 +29,12 @@ import { canonicalizeReservations } from "@/lib/menu-selection";
 import { shortenDishName } from "@/lib/dish-name";
 import { formatLongDate } from "@/lib/date";
 import { cx } from "@/components/ui/utils";
+import {
+  RESERVATION_ORDERS,
+  RESERVATION_ORDER_LABELS,
+  formatBookedAt,
+  type ReservationOrder,
+} from "@/lib/reservation-order";
 import type { MenuCourse, ReservationRecord, StaffPermission } from "@/types/booking";
 
 export function KitchenReport({
@@ -59,6 +65,13 @@ export function KitchenReport({
   permissions: StaffPermission[];
 }) {
   const [layout, setLayout] = useState<KitchenLayout>("room");
+  /**
+   * Row order. Defaults to the sheet's own — table, then room — because that
+   * is what the paper is for. The other two answer "what came in, and when?",
+   * which is a screen question; the printed sheet always goes out in service
+   * order regardless (see the Booked column below).
+   */
+  const [order, setOrder] = useState<ReservationOrder>("service");
   const [editing, setEditing] = useState<{ reservationNumber: string; value: string } | null>(null);
 
   /**
@@ -75,8 +88,14 @@ export function KitchenReport({
   const optionColumns = useMemo(() => buildOptionColumns(reservations, menu), [reservations, menu]);
   const optionGroups = useMemo(() => groupOptionColumns(optionColumns), [optionColumns]);
 
-  const guestRows = useMemo(() => buildGuestRows(reservations, courseColumns), [reservations, courseColumns]);
-  const roomRows = useMemo(() => buildRoomRows(reservations, optionColumns), [reservations, optionColumns]);
+  const guestRows = useMemo(
+    () => buildGuestRows(reservations, courseColumns, order),
+    [reservations, courseColumns, order],
+  );
+  const roomRows = useMemo(
+    () => buildRoomRows(reservations, optionColumns, order),
+    [reservations, optionColumns, order],
+  );
   const tableGroups = useMemo(() => groupRoomRowsByTable(roomRows, optionColumns), [roomRows, optionColumns]);
   const tableRows = useMemo(
     () => buildCombinedTableRows(tableGroups, optionColumns),
@@ -291,6 +310,28 @@ export function KitchenReport({
                 </button>
               ))}
             </div>
+            {/*
+              Screen only, like the Booked column it drives. The printed sheet
+              always goes out in service order — a waiter walks the room, not
+              the booking log — so this control never reaches paper and never
+              changes what does.
+            */}
+            <label className="sr-only" htmlFor="sheet-order">
+              Order rows by
+            </label>
+            <select
+              id="sheet-order"
+              value={order}
+              onChange={(event) => setOrder(event.target.value as ReservationOrder)}
+              className="min-h-11 rounded-control border border-line-strong bg-surface px-3 text-sm font-medium text-ink"
+            >
+              {RESERVATION_ORDERS.map((option) => (
+                <option key={option} value={option}>
+                  {RESERVATION_ORDER_LABELS[option]}
+                </option>
+              ))}
+            </select>
+
             <Button variant="secondary" onClick={downloadCsv} disabled={!hasRows}>
               Export CSV
             </Button>
@@ -325,6 +366,10 @@ export function KitchenReport({
                     </th>
                   ))}
                   <th scope="col" data-print="note" className="px-3 py-2 font-semibold">Comment</th>
+                  {/* Screen only: a new printed column would change the sheet's
+                      percentage widths, which is the arithmetic rule 2.8 is
+                      about. `data-print="hide"` keeps paper untouched. */}
+                  <th scope="col" className="px-3 py-2 font-semibold" data-print="hide">Booked</th>
                   <th scope="col" className="px-3 py-2 font-semibold" data-print="hide">Contact</th>
                   <th scope="col" className="px-3 py-2 font-semibold" data-print="hide">
                     <span className="sr-only">Actions</span>
@@ -365,6 +410,14 @@ export function KitchenReport({
                         <span className="text-ink-subtle">—</span>
                       ) : null}
                     </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-ink-muted" data-print="hide">
+                      {firstRowOfBooking.has(row.key) ? (
+                        // A dash, not a blank: "we never recorded it" is a
+                        // fact, and a booking predating the field must not
+                        // read as an empty cell somebody assumes is a bug.
+                        (formatBookedAt(row.bookedAt) ?? "—")
+                      ) : null}
+                    </td>
                     <td className="px-3 py-2" data-print="hide">
                       {firstRowOfBooking.has(row.key) ? (
                         <ContactLink contact={reservationByNumber.get(row.reservationNumber)?.contact} />
@@ -403,6 +456,9 @@ export function KitchenReport({
                     </th>
                   ))}
                   <th scope="col" className="px-3 py-1" />
+                  {/* One spacer per screen-only column, or the grouped header
+                      row runs short and every course label shifts left. */}
+                  <th scope="col" className="px-3 py-1" data-print="hide" />
                   <th scope="col" className="px-3 py-1" data-print="hide" />
                 </tr>
                 <tr>
@@ -433,6 +489,10 @@ export function KitchenReport({
                   ))}
                   <th scope="col" data-print="note" className="px-3 py-2 align-bottom font-semibold">
                     Comment
+                  </th>
+                  {/* Screen only — see the per-guest sheet above. */}
+                  <th scope="col" className="px-3 py-2 align-bottom font-semibold" data-print="hide">
+                    Booked
                   </th>
                   <th scope="col" className="px-3 py-2 align-bottom font-semibold" data-print="hide">
                     <span className="sr-only">Actions</span>
@@ -499,6 +559,9 @@ export function KitchenReport({
                         </span>
                       ))}
                     </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-ink-muted" data-print="hide">
+                      {formatBookedAt(row.bookedAt) ?? "—"}
+                    </td>
                     <td className="whitespace-nowrap px-3 py-2" data-print="hide">
                       <div className="flex flex-col gap-1">
                         {row.members.map((member) => (
@@ -537,6 +600,7 @@ export function KitchenReport({
                     </td>
                   ))}
                   <td className="px-3 py-3" />
+                  <td className="px-3 py-3" data-print="hide" />
                   <td className="px-3 py-3" data-print="hide" />
                 </tr>
               </tfoot>

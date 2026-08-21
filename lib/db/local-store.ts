@@ -399,6 +399,161 @@ export async function updateLocalReservationAddOns(
   });
 }
 
+export async function updateLocalReservationAttendance(
+  reservationNumber: string,
+  attendance: ReservationRecord["attendance"] | null,
+) {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    const index = reservations.findIndex((entry) => entry.reservationNumber === reservationNumber);
+    if (index === -1) {
+      return null;
+    }
+
+    const next = { ...reservations[index], updatedAt: new Date().toISOString() };
+    if (attendance) {
+      next.attendance = attendance;
+    } else {
+      // Cleared, not set to a different claim: undoing a mis-tap returns the
+      // booking to "unknown".
+      delete next.attendance;
+    }
+
+    reservations[index] = next;
+    await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    return next;
+  });
+}
+
+/**
+ * Marks one course served, or not.
+ *
+ * The whole read-modify-write happens inside the store lock, which is what
+ * gives the local backend the same guarantee Mongo gets from a dotted `$set`:
+ * two marks on the same table cannot lose each other.
+ */
+export async function updateLocalReservationCourseServed(
+  reservationNumber: string,
+  courseId: string,
+  servedAt: string | null,
+) {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    const index = reservations.findIndex((entry) => entry.reservationNumber === reservationNumber);
+    if (index === -1) {
+      return null;
+    }
+
+    const current = reservations[index];
+    const servedMap = { ...(current.service?.servedAt ?? {}) };
+
+    if (servedAt) {
+      servedMap[courseId] = servedAt;
+    } else {
+      delete servedMap[courseId];
+    }
+
+    const next: ReservationRecord = {
+      ...current,
+      service: { ...current.service, servedAt: servedMap },
+      updatedAt: new Date().toISOString(),
+    };
+
+    reservations[index] = next;
+    await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    return next;
+  });
+}
+
+/**
+ * Marks one guest's plate served, or not.
+ *
+ * The read-modify-write is inside the store lock, which is what gives the local
+ * backend the same guarantee Mongo gets from a keyed `$set`: two marks on the
+ * same course cannot lose each other.
+ */
+export async function updateLocalReservationGuestServed(
+  reservationNumber: string,
+  courseId: string,
+  guestIndex: number,
+  servedAt: string | null,
+) {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    const index = reservations.findIndex((entry) => entry.reservationNumber === reservationNumber);
+    if (index === -1) {
+      return null;
+    }
+
+    const current = reservations[index];
+    const byCourse = { ...(current.service?.servedGuests ?? {}) };
+    const plates = { ...(byCourse[courseId] ?? {}) };
+
+    if (servedAt) {
+      plates[String(guestIndex)] = servedAt;
+    } else {
+      delete plates[String(guestIndex)];
+    }
+
+    byCourse[courseId] = plates;
+
+    const next: ReservationRecord = {
+      ...current,
+      service: { ...current.service, servedGuests: byCourse },
+      updatedAt: new Date().toISOString(),
+    };
+
+    reservations[index] = next;
+    await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    return next;
+  });
+}
+
+/** Every guest's plate of one course at once — the fast path. */
+export async function updateLocalReservationCourseGuests(
+  reservationNumber: string,
+  courseId: string,
+  guestIndexes: readonly number[],
+  servedAt: string | null,
+) {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    const index = reservations.findIndex((entry) => entry.reservationNumber === reservationNumber);
+    if (index === -1) {
+      return null;
+    }
+
+    const current = reservations[index];
+    const byCourse = { ...(current.service?.servedGuests ?? {}) };
+    const plates = { ...(byCourse[courseId] ?? {}) };
+
+    for (const guestIndex of guestIndexes) {
+      if (servedAt) {
+        plates[String(guestIndex)] = servedAt;
+      } else {
+        delete plates[String(guestIndex)];
+      }
+    }
+
+    byCourse[courseId] = plates;
+
+    // The legacy whole-course mark is cleared either way, so a record from the
+    // first version of the board cannot linger and contradict the detail.
+    const legacy = { ...(current.service?.servedAt ?? {}) };
+    delete legacy[courseId];
+
+    const next: ReservationRecord = {
+      ...current,
+      service: { servedAt: legacy, servedGuests: byCourse },
+      updatedAt: new Date().toISOString(),
+    };
+
+    reservations[index] = next;
+    await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    return next;
+  });
+}
+
 /**
  * Removes a booking outright, releasing its seats if it was still live. A
  * cancelled booking already gave its seats back, so they are not released

@@ -12,7 +12,9 @@ import { getAuditEntries } from "@/lib/services/audit-log";
 import { getPassKeyById } from "@/lib/services/pass-keys";
 import { formatPassKey } from "@/lib/pass-key";
 import { StaffPromotions } from "@/app/admin/reservation/[reservationNumber]/staff-promotions";
-import { getCurrency } from "@/lib/services/settings";
+import { getCurrency, getTimeZone } from "@/lib/services/settings";
+import { timeZoneLabel } from "@/lib/timezone";
+import { formatBookedAtLong } from "@/lib/reservation-order";
 import { formatPrice, sumFinalPrices } from "@/lib/money";
 import { getPromoCatalog, getMenuCatalog } from "@/lib/services/restaurant";
 import { canonicalizeSelections } from "@/lib/menu-selection";
@@ -32,7 +34,7 @@ export default async function ReservationDetailPage({
   }
 
   const { reservationNumber } = await params;
-  const [stored, menu, history, currency, promoGroups] = await Promise.all([
+  const [stored, menu, history, currency, promoGroups, timeZone] = await Promise.all([
     getReservationByNumber(reservationNumber),
     getMenuCatalog(),
     // Everything that has happened to this booking, newest first.
@@ -41,6 +43,8 @@ export default async function ReservationDetailPage({
     getCurrency(),
     // In English: staff screens stay English, and so do the stored names.
     getPromoCatalog("en"),
+    // Which clock the "Booked" timestamp is quoted on.
+    getTimeZone(),
   ]);
 
   if (!stored) {
@@ -117,6 +121,21 @@ export default async function ReservationDetailPage({
             <dt className="text-sm text-ink-subtle">Arrival</dt>
             <dd className="mt-1 text-lg font-semibold text-ink">
               {reservation.time ? `${reservation.time}${reservation.endTime ? `–${reservation.endTime}` : ""}` : "—"}
+            </dd>
+          </div>
+          <div>
+            {/*
+              When the booking came in — stored since `createdAt` existed and,
+              until now, displayed nowhere, so the answer was the audit log or
+              a guess. Long form here because the page is a permanent record
+              and has room; the sheet uses the short one.
+            */}
+            <dt className="text-sm text-ink-subtle">Booked</dt>
+            <dd className="mt-1 text-lg font-semibold text-ink">
+              {formatBookedAtLong(reservation.createdAt) ?? "—"}
+              {reservation.createdAt ? (
+                <span className="mt-0.5 block text-sm font-normal text-ink-muted">{timeZoneLabel(timeZone)}</span>
+              ) : null}
             </dd>
           </div>
           <div>

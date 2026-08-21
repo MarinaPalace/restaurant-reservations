@@ -68,6 +68,38 @@ const reservationSchema = new Schema(
     date: { type: String, required: true, index: true },
     selections: [selectionSchema],
     addOns: [addOnSchema],
+    /**
+     * Did they come? A permanent record. Absent is unknown — never "seated",
+     * never "no-show". See `docs/service-tracking.md` §2.
+     */
+    attendance: {
+      type: new Schema(
+        {
+          status: { type: String, enum: ["seated", "no-show"], required: true },
+          at: { type: String, required: true },
+          byName: { type: String, required: true },
+          guests: { type: Number, min: 0 },
+        },
+        { _id: false },
+      ),
+      required: false,
+    },
+    /**
+     * Course id -> when it went out. Operational, not a record; `Mixed` because
+     * the keys are menu ids, which Mongoose cannot type ahead of time.
+     */
+    service: {
+      type: new Schema(
+        {
+          /** Legacy whole-course marks; still read. */
+          servedAt: { type: Schema.Types.Mixed, default: {} },
+          /** Course id -> guest index -> when that plate went out. */
+          servedGuests: { type: Schema.Types.Mixed, default: {} },
+        },
+        { _id: false },
+      ),
+      required: false,
+    },
     // Optional so reservations taken before contact details existed still load.
     contact: { type: contactSchema, required: false },
     time: { type: String },

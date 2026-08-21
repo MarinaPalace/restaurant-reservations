@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isDenied, requireStaff } from "@/lib/auth/guard";
 import {
   BookingError,
+  TableJoinError,
   deleteReservation,
   getReservationByNumber,
   updateReservationDetails,
@@ -94,6 +95,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ re
       notes: parsed.data.notes,
       contact: parsed.data.contact ? normalizeContact(parsed.data.contact) : undefined,
       tableNumber: parsed.data.tableNumber,
+      joinReservationNumber: parsed.data.joinReservationNumber,
     });
 
     if (!updated) {
@@ -116,6 +118,15 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ re
     if (parsed.data.notes !== undefined) changes.push("comment");
     if (parsed.data.contact !== undefined) changes.push("contact details");
     if (parsed.data.tableNumber !== undefined) changes.push(`table ${updated.tableNumber || "—"}`);
+    if (updated.tableGroupId !== existing.tableGroupId) {
+      // Named rather than logged as "shared table", because who they were put
+      // with is the part anybody re-reading this will want to know.
+      changes.push(
+        updated.tableGroupId
+          ? `seated with ${updated.tableGroupId}`
+          : `taken off table ${existing.tableGroupId}`,
+      );
+    }
 
     await recordAuditEntry({
       action: "reservation:update",
@@ -136,6 +147,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ re
         },
         { status: 409 },
       );
+    }
+
+    // Its message names what is wrong with the number they typed, so it is
+    // the thing worth showing rather than a generic failure.
+    if (error instanceof TableJoinError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
     }
 
     console.error("[admin] failed to update reservation", error);

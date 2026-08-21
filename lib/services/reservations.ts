@@ -473,6 +473,19 @@ export type StaffReservationPatch = {
   notes?: string;
   contact?: ReservationContact;
   tableNumber?: string;
+  /**
+   * Seat this booking with another one, named by its reservation number.
+   *
+   * A different thing from `additionalRooms`, and the difference is the whole
+   * point. Extra rooms are more rooms on *this* booking — one ticket, one line
+   * of dish counts, no separate order to show. A join links two bookings that
+   * each ordered for themselves, so the sheet columns both parties under one
+   * table and the kitchen sees what each of them asked for.
+   *
+   * An empty string leaves whatever table this booking is on. Undefined
+   * changes nothing.
+   */
+  joinReservationNumber?: string;
 };
 
 /**
@@ -488,8 +501,41 @@ export async function updateReservationDetails(
   reservationNumber: string,
   patch: StaffReservationPatch,
 ): Promise<ReservationRecord | null> {
+  /**
+   * The table group is settled before anything is written, and before either
+   * store is touched.
+   *
+   * Two reasons for doing it out here rather than inside each path. It must
+   * happen before the seats are claimed, so a mistyped reservation number
+   * fails without leaving a seat claim to unwind. And on the local store the
+   * write below runs inside `withStoreLock`, which `setLocalReservationGroup`
+   * also takes — resolving in there would wait on a lock it already holds.
+   *
+   * `undefined` leaves the booking's table alone; `null` takes it off one.
+   */
+  let tableGroupId: string | null | undefined;
+
+  if (patch.joinReservationNumber !== undefined) {
+    const current = await getReservationByNumber(reservationNumber);
+
+    if (!current) {
+      return null;
+    }
+
+    const wanted = patch.joinReservationNumber.trim().toUpperCase();
+
+    if (!wanted) {
+      tableGroupId = null;
+    } else if (wanted === current.reservationNumber.toUpperCase()) {
+      throw new TableJoinError("A booking cannot be seated with itself.");
+    } else {
+      // Judged against the evening it is moving to, not the one it is leaving.
+      tableGroupId = (await resolveTableGroup(wanted, patch.date ?? current.date)) ?? null;
+    }
+  }
+
   if (!isMongoConfigured()) {
-    const result = await updateLocalReservationDetails(reservationNumber, patch);
+    const result = await updateLocalReservationDetails(reservationNumber, { ...patch, tableGroupId });
 
     if (!result.ok) {
       if (result.reason === "NOT_FOUND") {
@@ -561,6 +607,9 @@ export async function updateReservationDetails(
   if (patch.notes !== undefined) update.notes = patch.notes;
   if (patch.contact !== undefined) update.contact = patch.contact;
   if (patch.tableNumber !== undefined) update.tableNumber = patch.tableNumber;
+  // null is stored as such and read back as "no table group", so leaving a
+  // table needs no separate unset.
+  if (tableGroupId !== undefined) update.tableGroupId = tableGroupId;
 
   if (dateChanged) {
     // Moving evenings adopts that evening's sitting times.

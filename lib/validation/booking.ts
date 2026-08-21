@@ -224,6 +224,15 @@ export const staffReservationSchema = z.object({
   contact: reservationContactSchema.optional(),
   notes: z.string().trim().max(500).optional(),
   tableNumber: z.string().trim().max(20).optional(),
+  /**
+   * Another booking to be seated with, by reservation number. Not the same as
+   * `additionalRooms`: those are more rooms on this one ticket, whereas this
+   * links a booking that ordered separately, so both orders reach the kitchen.
+   *
+   * Empty means "off whatever table it is on". Guests regularly fail to pair
+   * themselves at booking time, so reception has to be able to fix it after.
+   */
+  joinReservationNumber: z.string().trim().max(40).optional(),
 });
 
 /** Every field is optional: staff may change only what they need to. */

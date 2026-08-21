@@ -48,6 +48,12 @@ export function KitchenReport({
   onDelete,
   busyReservationNumber,
   permissions,
+  /**
+   * Set while this evening's bookings are still on their way. An evening that
+   * has not arrived yet is not an evening with nothing booked, and saying so
+   * would be a lie the person at the desk might act on.
+   */
+  loading = false,
 }: {
   date: string;
   serviceTime?: string;
@@ -63,6 +69,7 @@ export function KitchenReport({
    * every request — this only avoids showing buttons that would be refused.
    */
   permissions: StaffPermission[];
+  loading?: boolean;
 }) {
   const [layout, setLayout] = useState<KitchenLayout>("room");
   /**
@@ -349,7 +356,9 @@ export function KitchenReport({
       ) : null}
 
       <div className="mt-5">
-        {!hasRows ? (
+        {loading && !hasRows ? (
+          <EmptyState title="Loading this evening…" description="Fetching the bookings for this date." />
+        ) : !hasRows ? (
           <EmptyState title="No reservations yet" description="Nothing has been booked for this evening." />
         ) : layout === "guest" ? (
           <div data-print-scroll="" className="overflow-x-auto">

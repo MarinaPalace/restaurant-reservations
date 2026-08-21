@@ -9,6 +9,8 @@ import {
   findLocalReservationsByPassKey,
   getLocalReservation,
   listLocalReservations,
+  listLocalReservationsByDate,
+  listLocalReservationsBetween,
   reservationNumberExists,
   deleteLocalReservation,
   restoreLocalReservation,
@@ -790,6 +792,86 @@ export async function getReservationsList(): Promise<ReservationRecord[]> {
   await connectToDatabase();
   const reservations = await ReservationModel.find().sort({ createdAt: -1 }).lean();
   return reservations.map((reservation) => toReservationRecord(reservation as MongoReservationDocument));
+}
+
+/**
+ * Every reservation for a single evening, newest-first.
+ *
+ * `date` is indexed, so this is a range walk rather than the full-collection
+ * scan `getReservationsList` does. The service board needs exactly one evening
+ * and is re-read on a poll — see docs/performance.md §3.1.
+ */
+export async function getReservationsByDate(date: string): Promise<ReservationRecord[]> {
+  if (!isMongoConfigured()) {
+    return listLocalReservationsByDate(date);
+  }
+
+  await connectToDatabase();
+  const reservations = await ReservationModel.find({ date }).sort({ createdAt: -1 }).lean();
+  return reservations.map((reservation) => toReservationRecord(reservation as MongoReservationDocument));
+}
+
+/**
+ * Reservations whose evening falls in `[fromKey, toKey]` inclusive, newest-first.
+ *
+ * `date` keys are `YYYY-MM-DD`, so a string range is a chronological range and
+ * the `date` index carries it. Analytics folds a window on read; it should fold
+ * this month, not everything since the restaurant opened — docs/performance.md
+ * §3.1 and docs/analytics.md §5.4.
+ */
+export async function getReservationsBetween(fromKey: string, toKey: string): Promise<ReservationRecord[]> {
+  if (!isMongoConfigured()) {
+    return listLocalReservationsBetween(fromKey, toKey);
+  }
+
+  await connectToDatabase();
+  const reservations = await ReservationModel.find({ date: { $gte: fromKey, $lte: toKey } })
+    .sort({ createdAt: -1 })
+    .lean();
+  return reservations.map((reservation) => toReservationRecord(reservation as MongoReservationDocument));
+}
+
+/**
+ * The two figures on the dashboard, counted in the database.
+ *
+ * These were folded in JavaScript from every reservation ever taken, which is
+ * why the dashboard had to load the lot. Both are answered off the `date`
+ * index instead — see docs/performance.md §3.1.
+ *
+ * `status` is matched as *not cancelled* rather than equal to `confirmed`,
+ * because it is one of the optional fields of HANDOVER §2.2: bookings taken
+ * before it existed have no `status` at all, and `toReservationRecord` reads
+ * their absence as confirmed. Asking for `confirmed` would quietly drop them.
+ */
+export async function getDashboardCounts(today: string): Promise<{
+  guestsTonight: number;
+  upcomingReservations: number;
+}> {
+  if (!isMongoConfigured()) {
+    const live = (await listLocalReservations()).filter((entry) => entry.status !== "cancelled");
+
+    return {
+      guestsTonight: live
+        .filter((entry) => entry.date === today)
+        .reduce((total, entry) => total + entry.guestCount, 0),
+      upcomingReservations: live.filter((entry) => entry.date >= today).length,
+    };
+  }
+
+  await connectToDatabase();
+
+  const [tonight, upcoming] = await Promise.all([
+    ReservationModel.aggregate<{ guests: number }>([
+      { $match: { date: today, status: { $ne: "cancelled" } } },
+      { $group: { _id: null, guests: { $sum: "$guestCount" } } },
+    ]),
+    ReservationModel.countDocuments({ date: { $gte: today }, status: { $ne: "cancelled" } }),
+  ]);
+
+  return {
+    guestsTonight: tonight[0]?.guests ?? 0,
+    upcomingReservations: upcoming,
+  };
 }
 
 export async function updateRestaurantDate(input: {

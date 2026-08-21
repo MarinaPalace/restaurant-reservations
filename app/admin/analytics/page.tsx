@@ -4,7 +4,7 @@ import { PageShell } from "@/components/page-shell";
 import { AnalyticsView } from "@/app/admin/analytics/analytics-view";
 import { getCurrentStaffUser } from "@/lib/auth/guard";
 import { hasPermission } from "@/lib/auth/permissions";
-import { getReservationsList } from "@/lib/services/reservations";
+import { getReservationsBetween } from "@/lib/services/reservations";
 import { getFullMenuCatalog, getRestaurantDates } from "@/lib/services/restaurant";
 import { listPassKeys } from "@/lib/services/pass-keys";
 import { getCurrency, getTimeZone } from "@/lib/services/settings";
@@ -74,8 +74,19 @@ export default async function AnalyticsPage({ searchParams }: PageProps<"/admin/
   const range = custom && isValidRange(custom) ? custom : resolvePreset(preset);
   const comparison = previousRange(range);
 
+  /**
+   * Everything on this page is folded from reservations inside the range or its
+   * comparison period — anything outside is discarded by `reservationsIn`. So
+   * load only that window (the `date` index carries it) rather than the whole
+   * collection. `comparison` always precedes `range`, but the union is taken
+   * explicitly so a future range shape cannot quietly drop rows.
+   * See docs/performance.md §3.1.
+   */
+  const windowFrom = comparison.from < range.from ? comparison.from : range.from;
+  const windowTo = comparison.to > range.to ? comparison.to : range.to;
+
   const [reservations, dates, menu, passKeys, currency, timeZone] = await Promise.all([
-    getReservationsList(),
+    getReservationsBetween(windowFrom, windowTo),
     getRestaurantDates(),
     getFullMenuCatalog("standard"),
     listPassKeys(),

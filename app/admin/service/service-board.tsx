@@ -42,7 +42,12 @@ import { formatLongDate } from "@/lib/date";
  * overwrites a row whose own mark is still in flight.
  */
 
-const POLL_MS = 5000;
+// A course going out is not a fact anybody needs within five seconds — the
+// person who marked it already sees it optimistically. Each poll re-runs the
+// server component, so this interval is a direct multiplier on the board's DB
+// load; 20s cuts it fourfold with no change to what the board can do.
+// See docs/performance.md §3.2.
+const POLL_MS = 20000;
 
 type RowState = { pending: number; error: string | null };
 

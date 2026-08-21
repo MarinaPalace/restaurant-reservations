@@ -117,14 +117,32 @@ export async function getStaffUserById(id: string): Promise<StaffUserRecord | nu
 }
 
 /**
+ * A throwaway hash to compare against when no account matches, so a wrong
+ * username costs the same bcrypt work as a wrong password.
+ *
+ * Computed on first use rather than at import. `bcryptjs` is the pure-JS
+ * implementation and a cost-10 hash is tens to hundreds of milliseconds on a
+ * small serverless CPU — and this module is pulled in by the auth guard, so
+ * *every* admin page and route was paying that at cold start for a value only
+ * failed sign-ins ever read. Memoised, so the comparison stays constant-time
+ * across the requests an attacker could actually measure.
+ * See docs/performance.md §3.3.
+ */
+let dummyHash: string | null = null;
+function getDummyHash(): string {
+  if (dummyHash === null) {
+    dummyHash = bcrypt.hashSync("password-that-is-never-correct", BCRYPT_ROUNDS);
+  }
+  return dummyHash;
+}
+
+/**
  * Checks a username and password against the database accounts.
  *
  * Always runs a bcrypt comparison, even when there is no such account, so a
  * wrong username and a wrong password take the same time and cannot be told
  * apart by an attacker enumerating names.
  */
-const DUMMY_HASH = bcrypt.hashSync("password-that-is-never-correct", BCRYPT_ROUNDS);
-
 export async function verifyStaffCredentials(
   username: string,
   password: string,
@@ -156,7 +174,7 @@ export async function verifyStaffCredentials(
     }
   }
 
-  const matches = await bcrypt.compare(password ?? "", stored?.passwordHash ?? DUMMY_HASH);
+  const matches = await bcrypt.compare(password ?? "", stored?.passwordHash ?? getDummyHash());
 
   if (!stored || !matches || !stored.active) {
     return null;

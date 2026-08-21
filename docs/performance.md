@@ -1,15 +1,17 @@
 # Performance — why it got slow, and how to find out
 
-**Status: found, and fixed — pending confirmation on the deployment.** It was §3.1: the pages that
-read the whole reservation collection. §7 lists what changed, and **§8 is the part worth reading**,
-because it records how the cause was actually identified and which of the theories below were wrong.
+**Status: found, and fixed — pending confirmation on the deployment.** It was the **dish photos**,
+stored as base64 inside the menu documents and read out in full by every page that shows a menu.
+**§9 is the one to read**; it has the evidence and the fix.
 
-**Sections 1 to 6 are the original note, left as written.** They are a plan for an investigation
-that had not happened yet, and their ranking of suspects is *not* what turned out to be true — §1.1
-in particular is confidently argued and wrong. They are kept because the reasoning is worth having
-next to the outcome, not because they should be followed again as they stand.
+**Everything before §9 is superseded.** Three theories were argued confidently along the way and two
+of them were wrong: the paused cluster (§1.1) and the reservation reads (§8). The reservation work in
+§7 was worth doing on its own merits and is kept, but it was not the cause, and §8's conclusion that
+it was is left standing only so the mistake is legible. §1.1 is wrong. Do not work from the ranking
+in §3.
 
-Read §8 first.
+The whole thing was settled by one HAR capture, described in §9. If this ever happens again, take
+the capture first.
 
 ---
 

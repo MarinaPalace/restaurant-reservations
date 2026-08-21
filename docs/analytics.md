@@ -1,8 +1,11 @@
 # Analytics — design note
 
-**Status: not built.** This is the shape the feature would take, written down while the codebase is
-fresh so the next session can start from a decision rather than a blank page. Nothing in the app
-does any of it yet.
+**Status: built, phases 0–3.** `/admin/analytics`, behind the `analytics:view` permission.
+`lib/analytics/` holds the pure functions; `components/charts.tsx` the marks. What is **not** built
+is §4 — the fields that do not exist yet, no-shows chief among them. Read §4 before anybody
+publishes a "served" number.
+
+The reasoning below is kept because the traps still apply to everything added next.
 
 Read `HANDOVER.md` §2 first. Several of the rules there decide things in here — §2.1 (local dates)
 decides how every bucket is computed, §2.2 (additive schema) decides how the missing fields get
@@ -287,10 +290,17 @@ answer is "only covers", that is a **second** permission, not a hidden `<div>`.
 
 `/admin/analytics`, English (staff screens are not translated — see `lib/i18n/index.ts`).
 
-### 7.1 Charts without adding a dependency
+### 7.1 Charts without adding a dependency — and what the validator said
 
-Nothing in `package.json` draws charts, and adding a charting library brings a bundle, a theming
-problem and a print problem all at once.
+**Built as hand-rolled inline SVG**, and one finding is worth keeping: the app's accent gold and
+success green were run through the palette validator as a two-series categorical pair and **failed**
+— ΔE 3.1 under protanopia, and 13.1 even with full colour vision. They are the same colour to a lot
+of people. So there is **no categorical palette on this page at all**: every chart is single-hue
+magnitude, which is the honest encoding for "how many" anyway. The one ordered ramp — the pass-key
+funnel — is three validated steps of the accent hue, in `globals.css` as `--chart-step-1..3`, with
+its own steps for dark rather than an inverted copy.
+
+The original reasoning:
 
 **Recommendation: hand-rolled inline SVG.** Bars, a line, and sparklines are perhaps 150 lines
 total. It buys three things this codebase specifically needs:
@@ -367,13 +377,13 @@ phase 1 is on screen and somebody has looked at it.
 0. ~~**Show and sort by when a booking came in** (§4A).~~ **Done.** It also settled the `createdAt`
    formatting and null-handling that phases 1–3 depend on — reuse `formatBookedAt`,
    `sortReservationsBy` and `leadTimeHours` rather than writing them again.
-1. **The plumbing and the easy half.** `lib/analytics/range.ts` + `covers.ts`, the permission, the
+1. ~~**The plumbing and the easy half.**~~ **Done.** `lib/analytics/range.ts` + `covers.ts`, the permission, the
    page, the range picker, four headline tiles, one bar chart. Answers the owner's monthly
    questions from data that already exists.
-2. **Dishes and cancellations.** Reuses `lib/kitchen-report.ts`. Answers the kitchen and reception.
-3. **Promotions and pass-keys.** The conversion funnel is the most *actionable* number here and the
-   least obvious — worth its own pass.
-4. **CSV export.**
+2. ~~**Dishes and cancellations.**~~ **Done.**
+3. ~~**Promotions and pass-keys.**~~ **Done** — the funnel counts one cohort, keys *issued* in the
+   range, so the three stages describe the same guests.
+4. ~~**CSV export.**~~ **Done**, with the UTF-8 BOM so Excel reads it.
 5. **The new fields** — `language`, `source`, and attendance. Attendance only alongside, or after,
    `docs/service-tracking.md`; the two must not invent separate check-in mechanisms.
 

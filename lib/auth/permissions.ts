@@ -50,6 +50,11 @@ export const PERMISSION_DETAILS: Record<
     label: "Issue pass-keys",
     description: "Give arriving guests the key that lets them book, and withdraw one.",
   },
+  "analytics:view": {
+    group: "Administration",
+    label: "See the analytics",
+    description: "Covers, occupancy, cancellations and what promotions earn. Read-only.",
+  },
   "users:manage": {
     group: "Administration",
     label: "Manage staff accounts",

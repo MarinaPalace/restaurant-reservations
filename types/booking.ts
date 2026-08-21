@@ -335,6 +335,13 @@ export const STAFF_PERMISSIONS = [
   "menu:edit",
   "dates:manage",
   "passkeys:issue",
+  /**
+   * Read the analytics page. Additive, and `admin` holds every permission
+   * implicitly — including ones added later — so no existing account needs
+   * touching. Separate from `dates:manage` because reading the numbers and
+   * changing the calendar are different jobs.
+   */
+  "analytics:view",
   "users:manage",
 ] as const;
 

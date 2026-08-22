@@ -413,6 +413,16 @@ export const STAFF_PERMISSIONS = [
    * possible.
    */
   "service:record",
+  /**
+   * Draw the room: add, move and label tables in the floor-plan designer.
+   *
+   * Additive, and `admin` holds every permission implicitly — including ones
+   * added later — so no existing account needs touching. Its own permission
+   * rather than folding into `dates:manage`, because laying out the room is a
+   * thing done once by whoever runs the floor, not part of keeping the
+   * calendar.
+   */
+  "floorplan:edit",
   "users:manage",
 ] as const;
 

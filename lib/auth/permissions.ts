@@ -60,6 +60,11 @@ export const PERMISSION_DETAILS: Record<
     label: "See the analytics",
     description: "Covers, occupancy, cancellations and what promotions earn. Read-only.",
   },
+  "floorplan:edit": {
+    group: "Administration",
+    label: "Design the floor plan",
+    description: "Lay out the room: add, move and label tables, and say how many each seats.",
+  },
   "users:manage": {
     group: "Administration",
     label: "Manage staff accounts",

@@ -5,6 +5,12 @@ import { TIME_ZONES } from "@/lib/timezone";
 import { PASS_KEY_LENGTH, normalizePassKey } from "@/lib/pass-key";
 import { isValidRoomNumber, normalizeRoomNumber } from "@/lib/room";
 import { MAX_USES_CAP, MENU_CATALOGS, STAFF_PERMISSIONS } from "@/types/booking";
+import {
+  MAX_ROOMS,
+  MAX_SEATS_PER_TABLE,
+  MAX_TABLES_PER_ROOM,
+  TABLE_SHAPES,
+} from "@/lib/floor-plan";
 
 export const MAX_GUESTS_PER_RESERVATION = 6;
 
@@ -500,3 +506,33 @@ export const updateSettingsSchema = z
   .refine((row) => row.currency !== undefined || row.timeZone !== undefined, {
     message: "Nothing to save.",
   });
+
+/**
+ * The floor plan as the designer sends it.
+ *
+ * Deliberately permissive about *values* — positions, seat counts and rotations
+ * are snapped, clamped and capped by `toFloorPlan` on the way into the store —
+ * and strict about *shape*, so a payload that is not a plan at all is refused
+ * here rather than silently becoming an empty room.
+ */
+export const floorTableSchema = z.object({
+  id: z.string().trim().min(1).max(64),
+  label: z.string().trim().max(12),
+  seats: z.number().int().min(0).max(MAX_SEATS_PER_TABLE),
+  x: z.number().finite(),
+  y: z.number().finite(),
+  shape: z.enum(TABLE_SHAPES),
+  rotation: z.number().finite().optional(),
+  active: z.boolean(),
+  tags: z.array(z.string().trim().max(24)).max(8).optional(),
+});
+
+export const floorRoomSchema = z.object({
+  id: z.string().trim().min(1).max(64),
+  name: z.string().trim().min(1).max(60),
+  tables: z.array(floorTableSchema).max(MAX_TABLES_PER_ROOM),
+});
+
+export const floorPlanSchema = z.object({
+  rooms: z.array(floorRoomSchema).max(MAX_ROOMS),
+});

@@ -70,6 +70,7 @@ export default async function AdminPage() {
     { href: "/admin/menu", label: "Menu editor", permission: "menu:edit" as const },
     { href: "/admin/menu?menu=premium", label: "Premium menu", permission: "menu:edit" as const },
     { href: "/admin/menu?menu=promo", label: "Promotions", permission: "menu:edit" as const },
+    { href: "/admin/floor-plan", label: "Floor plan", permission: "floorplan:edit" as const },
     { href: "/admin/analytics", label: "Analytics", permission: "analytics:view" as const },
     { href: "/admin/users", label: "Staff accounts", permission: "users:manage" as const },
   ].filter((link) => hasPermission(user, link.permission));

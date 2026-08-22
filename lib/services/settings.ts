@@ -3,6 +3,7 @@ import { getLocalSetting, setLocalSetting } from "@/lib/db/local-admin-store";
 import { AppSettingModel } from "@/lib/models/app-setting";
 import { DEFAULT_CURRENCY, toCurrency, type Currency } from "@/lib/money";
 import { DEFAULT_TIME_ZONE, toTimeZone, type TimeZone } from "@/lib/timezone";
+import { EMPTY_PLAN, toFloorPlan, type FloorPlan } from "@/lib/floor-plan";
 
 /**
  * Settings the restaurant can change without a deploy.
@@ -19,6 +20,7 @@ import { DEFAULT_TIME_ZONE, toTimeZone, type TimeZone } from "@/lib/timezone";
 
 const CURRENCY_KEY = "promo.currency";
 const TIME_ZONE_KEY = "restaurant.timeZone";
+const FLOOR_PLAN_KEY = "restaurant.floorPlan";
 
 async function readSetting(key: string): Promise<unknown> {
   if (!isMongoConfigured()) {
@@ -75,5 +77,29 @@ export async function getTimeZone(): Promise<TimeZone> {
 export async function setTimeZone(timeZone: TimeZone): Promise<TimeZone> {
   const safe = toTimeZone(timeZone);
   await writeSetting(TIME_ZONE_KEY, safe);
+  return safe;
+}
+
+/**
+ * The room as staff drew it.
+ *
+ * One document, because it is small and is read whole. Anything unreadable —
+ * absent, half-written, or shaped like something else entirely — reads as an
+ * empty plan rather than throwing, which is what makes "no plan yet" and "a
+ * plan of no rooms" the same thing to every caller.
+ */
+export async function getFloorPlan(): Promise<FloorPlan> {
+  try {
+    return toFloorPlan(await readSetting(FLOOR_PLAN_KEY));
+  } catch (error) {
+    // A page that merely mentions the plan must not fail because of it.
+    console.error("[settings] failed to read the floor plan", error);
+    return EMPTY_PLAN;
+  }
+}
+
+export async function setFloorPlan(plan: FloorPlan): Promise<FloorPlan> {
+  const safe = toFloorPlan(plan);
+  await writeSetting(FLOOR_PLAN_KEY, safe);
   return safe;
 }

@@ -1,8 +1,12 @@
 # The floor plan — restaurant designer, and guests choosing a table
 
-**Status: not built.** This is the shape the feature would take, written down while the codebase is
-fresh so the next session can start from a decision rather than a blank page. Nothing in the app
-does any of it yet.
+**Status: step 1 of §9 is built — the designer, staff-only, wired to nothing.** Staff can draw the
+room at `/admin/floor-plan`; no booking reads the plan, no seat accounting has changed, and the
+guest picker and the on/off flag do not exist yet. §10 records what was built and which of the §8
+questions are now settled.
+
+The rest of this note is unchanged and still describes work not done. **§2 is the part to read
+before continuing** — it is about the step that can corrupt data, and none of it has been attempted.
 
 Read `HANDOVER.md` §2 first. **§2.7 (seat accounting) is the one that decides this feature** — more
 than any other rule in the app — and §2.2 (additive schema), §2.5 (authorisation in the route) and
@@ -216,3 +220,61 @@ say which tables can be offered.
 
 Steps 1–3 are where the risk is. Step 3 is the one to write tests for before writing the feature —
 it is the only part of this that can corrupt data rather than merely annoy somebody.
+
+---
+
+## 10. What is built
+
+**§9 step 1, and only step 1.** The room can be drawn and saved. Nothing reads it.
+
+| Piece | Where |
+|---|---|
+| The model, its rules, and the coercion that reads a stored plan | `lib/floor-plan.ts` |
+| Stored as one settings document under `restaurant.floorPlan` | `lib/services/settings.ts` |
+| `floorplan:edit`, additive — `admin` holds it implicitly | `types/booking.ts`, `lib/auth/permissions.ts` |
+| `GET`/`PUT`, permission checked in the route | `app/api/admin/floor-plan/route.ts` |
+| The designer | `app/admin/floor-plan/` |
+
+Positions snap to a 10-unit grid and are clamped inside the room, seats and rotations are capped,
+and rotation is rounded to a quarter turn — all of it in `toFloorPlan`, which runs both on the way
+out of the store and on the way in from the designer. A plan that cannot be read comes back empty
+rather than throwing: a plan that breaks its own screen cannot be fixed from that screen.
+
+**Duplicate labels are the one thing a save refuses.** An unlabelled table is a room somebody is
+still drawing and is only warned about; two tables answering to "7" is a service problem, because
+the label is what becomes a booking's `tableNumber` (§3). Compared across rooms, since the sheet
+does not care which room a table is in.
+
+The seat total is read back but **never applied**. Capacity is still set on the calendar, per §5 —
+deriving it silently would rewrite every existing date the moment somebody drew a room.
+
+### Settled from §8
+
+1. **Three-state flag** — still open. Not needed until step 2, and nothing built here presumes a
+   boolean.
+2. **Bookings made before the plan** — untouched, as recommended. Nothing reconciles `tableNumber`
+   against the plan, and nothing should until there is a reason.
+4. **Tags — yes, with editing.** Stored on the table and editable in the designer. Nothing reads
+   them; they are there because retrofitting an attribute guests filter on is awkward later.
+6. **Several rooms — yes, from the start.** The plan is a list of rooms, decided before the first
+   one was drawn precisely because §8.6 says so.
+
+Questions 3 and 5 are untouched: both are about bookings, and no booking touches the plan yet.
+
+### What was verified
+
+The designer was driven against a running dev server: signing in, drawing a plan, saving it, and
+reading it back. The clamping was confirmed by sending a table at `x: 99999, y: -500` and getting
+back `940, 0`; the grid by sending `37, 63` and getting `40, 60`. A duplicate label across two rooms
+came back `409`, an unauthenticated read and write both came back `401`, and a plan whose `rooms`
+was a string came back `400`. An out-of-service table stays on the drawing and out of the totals.
+
+Drag-and-drop itself was **not** driven in a real browser — there is no browser driver installed
+here. The geometry it depends on is unit-tested, and the pointer handling is not.
+
+### The next step is the dangerous one
+
+§9 step 3 — table claims — is where this can corrupt data rather than merely annoy somebody, and
+§2 says why: it adds a second thing that can be exhausted, and the read-then-write that looks
+obvious is exactly the race the seat claim was written to avoid. **Write the concurrency test
+first.** Nothing built here has gone near seat accounting, and the next change will.

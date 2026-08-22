@@ -17,8 +17,14 @@ import {
   formatLength,
   countPlan,
   countZone,
+  DEFAULT_FLOOR_PLAN_MODE,
+  FLOOR_PLAN_MODES,
+  bookableTables,
   describePlanProblems,
   duplicateLabels,
+  isFloorPlanMode,
+  resolveFloorPlanMode,
+  toFloorPlanMode,
   newFeature,
   newTable,
   newZone,
@@ -535,5 +541,88 @@ describe("how many chairs", () => {
       zones: [{ id: "z1", name: "Main", tables: [{ id: "t1", label: "1", seats: 4 }], features: [] }],
     });
     expect(unset.zones[0].tables[0].chairCount).toBeUndefined();
+  });
+});
+
+/**
+ * The switch — §4, §9 step 2.
+ *
+ * Three states rather than a boolean, and the one that matters is `off`: it is
+ * the default, it is what every existing deployment reads without a migration
+ * (rule 2.2), and **off must be indistinguishable from the app as it was
+ * before the plan existed**. That is the acceptance criterion for the feature.
+ */
+describe("who chooses the table", () => {
+  const withTable = (table: Partial<FloorTable>): FloorPlan =>
+    toFloorPlan({
+      zones: [
+        {
+          id: "z1",
+          name: "Main",
+          tables: [{ id: "t1", label: "7", seats: 4, active: true, ...table }],
+          features: [],
+        },
+      ],
+    });
+
+  it("is off when nothing has ever been chosen", () => {
+    expect(DEFAULT_FLOOR_PLAN_MODE).toBe("off");
+    expect(toFloorPlanMode(undefined)).toBe("off");
+    expect(toFloorPlanMode(null)).toBe("off");
+  });
+
+  it("reads back every mode it knows", () => {
+    for (const mode of FLOOR_PLAN_MODES) {
+      expect(toFloorPlanMode(mode)).toBe(mode);
+      expect(isFloorPlanMode(mode)).toBe(true);
+    }
+  });
+
+  /**
+   * The lenient direction matters more here than anywhere else in the module:
+   * an unreadable stored value must not leave guests picking tables against a
+   * plan the app does not understand.
+   */
+  it("reads anything it does not recognise as off", () => {
+    expect(toFloorPlanMode("enabled")).toBe("off");
+    expect(toFloorPlanMode(true)).toBe("off");
+    expect(toFloorPlanMode({ mode: "required" })).toBe("off");
+    expect(isFloorPlanMode("ON")).toBe(false);
+  });
+
+  it("counts only tables a guest could actually be given", () => {
+    // In service and labelled.
+    expect(bookableTables(withTable({}))).toHaveLength(1);
+    // Out of service: it is drawn, and it is not offered.
+    expect(bookableTables(withTable({ active: false }))).toHaveLength(0);
+    // Unlabelled: a room somebody is still drawing. The label is what becomes
+    // a booking's tableNumber, so an unlabelled table could be picked and then
+    // not be nameable on the sheet.
+    expect(bookableTables(withTable({ label: "  " }))).toHaveLength(0);
+  });
+
+  it("says which zone a bookable table stands in", () => {
+    expect(bookableTables(withTable({}))[0]).toMatchObject({ zoneId: "z1", zoneName: "Main", label: "7" });
+  });
+
+  /**
+   * A policy against an empty room is not a policy. `required` would ask every
+   * guest to pick and then have nothing to offer, so it degrades rather than
+   * refusing them — and it degrades at every read, because the plan can be
+   * emptied after the mode was stored.
+   */
+  it("applies as off while there is nothing bookable in the plan", () => {
+    expect(resolveFloorPlanMode("required", EMPTY_PLAN)).toBe("off");
+    expect(resolveFloorPlanMode("optional", EMPTY_PLAN)).toBe("off");
+    expect(resolveFloorPlanMode("optional", withTable({ active: false }))).toBe("off");
+  });
+
+  it("applies as chosen once one table is in service and labelled", () => {
+    expect(resolveFloorPlanMode("optional", withTable({}))).toBe("optional");
+    expect(resolveFloorPlanMode("required", withTable({}))).toBe("required");
+  });
+
+  it("stays off however full the room is", () => {
+    expect(resolveFloorPlanMode("off", withTable({}))).toBe("off");
   });
 });

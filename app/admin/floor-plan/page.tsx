@@ -4,7 +4,7 @@ import { PageShell } from "@/components/page-shell";
 import { FloorPlanDesigner } from "@/app/admin/floor-plan/floor-plan-designer";
 import { getCurrentStaffUser } from "@/lib/auth/guard";
 import { hasPermission } from "@/lib/auth/permissions";
-import { getFloorPlan } from "@/lib/services/settings";
+import { getFloorPlan, getFloorPlanMode } from "@/lib/services/settings";
 
 export const metadata: Metadata = { title: "Floor plan" };
 
@@ -32,9 +32,11 @@ export default async function FloorPlanPage() {
    */
   const canEdit = hasPermission(user, "floorplan:edit");
 
+  const [plan, mode] = await Promise.all([getFloorPlan(), getFloorPlanMode()]);
+
   return (
     <PageShell width="xl" headerHref="/admin" showLanguage={false}>
-      <FloorPlanDesigner initialPlan={await getFloorPlan()} canEdit={canEdit} />
+      <FloorPlanDesigner initialPlan={plan} initialMode={mode} canEdit={canEdit} />
     </PageShell>
   );
 }

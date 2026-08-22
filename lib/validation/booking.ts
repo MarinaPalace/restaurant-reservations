@@ -7,6 +7,7 @@ import { isValidRoomNumber, normalizeRoomNumber } from "@/lib/room";
 import { MAX_USES_CAP, MENU_CATALOGS, STAFF_PERMISSIONS } from "@/types/booking";
 import {
   FEATURE_KINDS,
+  FLOOR_PLAN_MODES,
   MAX_FEATURES_PER_ZONE,
   MAX_SEATS_PER_TABLE,
   MAX_TABLES_PER_ZONE,
@@ -557,3 +558,14 @@ export const floorZoneSchema = z.object({
 export const floorPlanSchema = z.object({
   zones: z.array(floorZoneSchema).max(MAX_ZONES),
 });
+
+/**
+ * Whether guests choose their own table (§4).
+ *
+ * Strict, unlike the reader in `lib/floor-plan.ts`: a mode this app does not
+ * know is a bug in whatever sent it, and accepting it silently as `off` would
+ * hide a screen that thinks it saved a policy it did not.
+ */
+export const floorPlanModeSchema = z.enum(FLOOR_PLAN_MODES);
+
+export const updateFloorPlanModeSchema = z.object({ mode: floorPlanModeSchema });

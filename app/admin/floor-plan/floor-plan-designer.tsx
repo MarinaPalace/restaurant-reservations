@@ -10,6 +10,9 @@ import {
   DEFAULT_TABLE_SIZE,
   FEATURE_KINDS,
   FEATURE_LABELS,
+  FLOOR_PLAN_MODES,
+  FLOOR_PLAN_MODE_DESCRIPTIONS,
+  FLOOR_PLAN_MODE_LABELS,
   GRID,
   MAX_FEATURES_PER_ZONE,
   MAX_SEATS_PER_TABLE,
@@ -24,6 +27,7 @@ import {
   TABLE_SHAPES,
   CHAIR_SIZE,
   CM_PER_M,
+  bookableTables,
   chairPositions,
   clampPosition,
   clampSize,
@@ -41,6 +45,7 @@ import {
   type FeatureKind,
   type FloorFeature,
   type FloorPlan,
+  type FloorPlanMode,
   type FloorTable,
   type FloorZone,
   type Placed,
@@ -82,8 +87,18 @@ const SUGGESTED_TAGS = ["window", "quiet", "corner", "by the music", "near the d
 type Selection = { kind: "table" | "feature"; id: string } | null;
 type DragMode = "move" | "resize";
 
-export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: FloorPlan; canEdit: boolean }) {
+export function FloorPlanDesigner({
+  initialPlan,
+  initialMode,
+  canEdit,
+}: {
+  initialPlan: FloorPlan;
+  initialMode: FloorPlanMode;
+  canEdit: boolean;
+}) {
   const [plan, setPlan] = useState(initialPlan);
+  const [mode, setMode] = useState(initialMode);
+  const [savingMode, setSavingMode] = useState(false);
   const [activeZoneId, setActiveZoneId] = useState(initialPlan.zones[0]?.id ?? "");
   const [selection, setSelection] = useState<Selection>(null);
   const [saving, setSaving] = useState(false);
@@ -107,6 +122,8 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
   }, [zone, selection]);
 
   const totals = useMemo(() => countPlan(plan), [plan]);
+  /** Tables a guest could actually be given: in service, and labelled. */
+  const bookable = useMemo(() => bookableTables(plan).length, [plan]);
   const zoneTotals = useMemo(() => (zone ? countZone(zone) : { tables: 0, seats: 0 }), [zone]);
   const problems = useMemo(() => describePlanProblems(plan), [plan]);
   const clashes = useMemo(() => new Set(duplicateLabels(plan)), [plan]);
@@ -354,6 +371,51 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
     setSelection({ kind: selection.kind, id: copy.id });
   };
 
+  /**
+   * The switch — §4, §9 step 2. Saved on its own, the moment it is changed.
+   *
+   * Deliberately not part of "Save floor plan": the policy and the drawing are
+   * different decisions, and a half-moved table should not have to be saved to
+   * change who picks where a party sits. The route is the gate (rule 2.5); the
+   * control below only avoids offering what would be refused.
+   */
+  const saveMode = async (next: FloorPlanMode) => {
+    if (savingMode || next === mode) return;
+
+    const previous = mode;
+    setMode(next);
+    setSavingMode(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const response = await fetch("/api/admin/floor-plan", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: next }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to save the setting.");
+      }
+
+      setMode(data.mode as FloorPlanMode);
+      setNotice(
+        next === "off"
+          ? "Guests no longer choose a table. Booking works exactly as it did before the plan existed."
+          : `Saved: ${FLOOR_PLAN_MODE_LABELS[next].toLowerCase()}. Nothing reads this yet — the booking flow is unchanged until the guest picker is built.`,
+      );
+    } catch (saveError) {
+      // Put it back, so the control never shows a policy that was not stored.
+      setMode(previous);
+      setError(saveError instanceof Error ? saveError.message : "Unable to save the setting.");
+    } finally {
+      setSavingMode(false);
+    }
+  };
+
   const save = async () => {
     if (saving) return;
 
@@ -430,6 +492,56 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
           Seats count only tables that are in service. An evening&rsquo;s capacity is still set on the calendar and is
           not changed by anything on this page.
         </p>
+
+        {/*
+          The switch (§4). Off is the default and off must be indistinguishable
+          from the app as it was before the plan existed — which is why the
+          third state exists rather than a checkbox: "guests may choose" and
+          "guests must choose" are different restaurant policies, and telling
+          them apart later would mean revisiting every call site.
+        */}
+        <div className="mt-5 rounded-control border border-line bg-surface-muted p-4">
+          <h2 className="text-sm font-semibold text-ink">Who chooses the table</h2>
+
+          <div className="mt-3 flex flex-wrap gap-2" role="radiogroup" aria-label="Who chooses the table">
+            {FLOOR_PLAN_MODES.map((option) => {
+              const isCurrent = option === mode;
+
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  role="radio"
+                  aria-checked={isCurrent}
+                  disabled={!canEdit || savingMode}
+                  onClick={() => void saveMode(option)}
+                  className={cx(
+                    "min-h-11 rounded-control border px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-60",
+                    isCurrent
+                      ? "border-accent bg-accent-soft text-ink"
+                      : "border-line-strong bg-surface text-ink-muted hover:border-accent",
+                  )}
+                >
+                  {FLOOR_PLAN_MODE_LABELS[option]}
+                </button>
+              );
+            })}
+          </div>
+
+          <p className="mt-3 text-sm text-ink-muted">{FLOOR_PLAN_MODE_DESCRIPTIONS[mode]}</p>
+
+          {mode !== "off" && bookable === 0 ? (
+            <Alert tone="warning" className="mt-3">
+              No table in the plan is both in service and labelled, so no guest could be given one. Until that changes
+              this setting does not apply and booking behaves as if it were off.
+            </Alert>
+          ) : null}
+
+          <p className="mt-3 text-sm text-ink-subtle">
+            Nothing reads this yet. The guest picker and the table claim are still to be built, so every booking today
+            behaves the same whichever of the three is chosen.
+          </p>
+        </div>
 
         {error ? (
           <Alert tone="danger" className="mt-4">

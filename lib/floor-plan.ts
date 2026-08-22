@@ -735,3 +735,78 @@ export function newZone(plan: FloorPlan): FloorZone {
 
   return { id: asId(undefined), name, ...DEFAULT_ZONE, tables: [], features: [] };
 }
+
+/**
+ * Whether guests choose their own table — `docs/floor-plan.md` §4, §9 step 2.
+ *
+ * Three states rather than a boolean, because "guests may pick, or may leave
+ * it to us" is a real restaurant policy and not a half-configured one. §4 says
+ * to decide this now: every call site added later would otherwise have to be
+ * revisited to tell "may pick" from "must pick".
+ *
+ * - `off` — the plan is a drawing staff keep for themselves. **Off must be
+ *   indistinguishable from the app as it was before the plan existed**, which
+ *   is the acceptance criterion for the whole feature.
+ * - `optional` — a guest may pick a table, and "any table" stays the default.
+ * - `required` — a guest must pick one before the booking can be made.
+ *
+ * Nothing books against this yet. The claim it will gate is §9 step 3, and §2
+ * is the section to read before writing it.
+ */
+export const FLOOR_PLAN_MODES = ["off", "optional", "required"] as const;
+export type FloorPlanMode = (typeof FLOOR_PLAN_MODES)[number];
+
+/** Off, and off is what a restaurant that never touches this setting gets. */
+export const DEFAULT_FLOOR_PLAN_MODE: FloorPlanMode = "off";
+
+export const FLOOR_PLAN_MODE_LABELS: Record<FloorPlanMode, string> = {
+  off: "Staff only",
+  optional: "Guests may choose",
+  required: "Guests must choose",
+};
+
+export const FLOOR_PLAN_MODE_DESCRIPTIONS: Record<FloorPlanMode, string> = {
+  off: "The plan is yours. Booking works exactly as it does today and no guest sees the room.",
+  optional: "Guests are shown the room and may pick a table. “Any table” stays the default.",
+  required: "Guests must pick a table before the booking can be made.",
+};
+
+export function isFloorPlanMode(value: unknown): value is FloorPlanMode {
+  return typeof value === "string" && (FLOOR_PLAN_MODES as readonly string[]).includes(value);
+}
+
+/**
+ * Anything unrecognised reads as `off`.
+ *
+ * The lenient direction matters more here than anywhere else in this module: a
+ * stored value nobody can parse must not leave guests picking tables against a
+ * plan the app does not understand, and it must not break a screen either.
+ */
+export function toFloorPlanMode(value: unknown): FloorPlanMode {
+  return isFloorPlanMode(value) ? value : DEFAULT_FLOOR_PLAN_MODE;
+}
+
+/**
+ * The tables a guest could actually be given.
+ *
+ * In service, and labelled — the label is what becomes a booking's
+ * `tableNumber` (§3), so an unlabelled table could be picked and then not be
+ * nameable on the sheet. An unlabelled table is a room somebody is still
+ * drawing (§10), which is precisely why saving allows it and booking must not.
+ */
+export function bookableTables(plan: FloorPlan): Array<FloorTable & { zoneId: string; zoneName: string }> {
+  return allTables(plan).filter((table) => table.active && table.label.trim().length > 0);
+}
+
+/**
+ * The mode as it actually applies tonight, given the plan.
+ *
+ * A mode of `optional` or `required` against a plan with nothing bookable in
+ * it is not a policy, it is a broken booking flow — `required` in particular
+ * would ask every guest to pick from an empty room and then refuse them.
+ * Saving the mode refuses that case, but the plan can be emptied afterwards,
+ * so every reader resolves through here rather than trusting the stored value.
+ */
+export function resolveFloorPlanMode(mode: FloorPlanMode, plan: FloorPlan): FloorPlanMode {
+  return bookableTables(plan).length === 0 ? "off" : mode;
+}

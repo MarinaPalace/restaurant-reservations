@@ -1,9 +1,9 @@
 # The floor plan — restaurant designer, and guests choosing a table
 
-**Status: step 1 of §9 is built — the designer, staff-only, wired to nothing.** Staff can draw the
-room at `/admin/floor-plan`; no booking reads the plan, no seat accounting has changed, and the
-guest picker and the on/off flag do not exist yet. §10 records what was built and which of the §8
-questions are now settled.
+**Status: steps 1 and 2 of §9 are built — the designer and the flag, both wired to nothing.**
+Staff can draw the room at `/admin/floor-plan` and say who chooses the table; no booking reads
+either, and no seat accounting has changed. The guest picker and the table claim do not exist yet.
+§10 records step 1 and §15 records step 2, along with which of the §8 questions are now settled.
 
 The rest of this note is unchanged and still describes work not done. **§2 is the part to read
 before continuing** — it is about the step that can corrupt data, and none of it has been attempted.
@@ -444,3 +444,73 @@ A **metre scale bar** on the drawing, because a plan in real dimensions should s
 rather than only in a side panel. A dashed **selection ring**, since a changed outline colour alone
 is easy to lose on a busy floor. Tables out of service are **struck through** rather than merely
 greyed. The hall is drawn on its own floor colour inside its walls.
+
+---
+
+## 15. §9 step 2: the flag
+
+**Three states, not a boolean** — §8 question 1 is settled, and settled the way §4 asked. `off`,
+`optional`, `required`. "Guests may pick a table, or may leave it to us" is a real restaurant
+policy rather than a half-configured one, and telling "may" from "must" later would mean revisiting
+every call site that had already been written against a boolean.
+
+| Piece | Where |
+|---|---|
+| The three states, their labels, and the lenient reader | `lib/floor-plan.ts` |
+| Stored apart from the plan, under `restaurant.floorPlanMode` | `lib/services/settings.ts` |
+| `PATCH`, `floorplan:edit`, checked in the route | `app/api/admin/floor-plan/route.ts` |
+| The control, above the drawing | `app/admin/floor-plan/floor-plan-designer.tsx` |
+
+**Off is the default, and off is the acceptance criterion.** A restaurant that never touches this
+setting must not be able to tell the plan exists — off has to be indistinguishable from the app as
+it was before any of this was built. That is also why an unreadable stored value reads as off: the
+lenient direction matters more here than anywhere else in the module, because the alternative is
+guests picking tables against a plan the app does not understand.
+
+### Stored apart from the plan
+
+The mode is its own settings document, not a field on the plan. They are changed by different acts
+— the plan is redrawn whenever furniture moves, the policy is decided once — and one document would
+mean every save of a half-drawn room carried the policy along with it.
+
+### The mode is resolved, never read raw
+
+`optional` or `required` against a plan with nothing bookable in it is not a policy, it is a broken
+booking flow: `required` would ask every guest to pick and then have nothing to offer. So there are
+two answers, and callers get the resolved one. `bookableTables` counts only tables that are **in
+service and labelled** — the label is what becomes a booking's `tableNumber` (§3), so an unlabelled
+table could be picked and then not be nameable on the sheet. An unlabelled table is a room somebody
+is still drawing (§10), which is exactly why saving allows it and booking must not.
+
+`PATCH` refuses `409` when turning it on against an empty room, rather than storing a setting that
+silently would not apply. But the plan can be emptied *after* the mode is stored, which is why every
+reader still resolves through `resolveFloorPlanMode` instead of trusting what is in the store —
+`getTableSelection` reads both halves together and hands back one answer plus the plan, so no caller
+can have the two disagree.
+
+### Strict in, lenient out — again
+
+Same split as §11, for the same reason. `floorPlanModeSchema` refuses an unknown mode with a `400`:
+a payload the designer would never send is a bug, and accepting it silently as off would leave a
+screen believing it saved a policy it did not. `toFloorPlanMode` drops the same value to off,
+because stored data may have been written by a version that no longer exists.
+
+### The control
+
+Three buttons, saved the moment one is pressed — not part of "Save floor plan". A half-moved table
+should not have to be saved to change who picks where a party sits. A failed save puts the previous
+choice back, so the control never shows a policy that was not stored. The route is the gate
+(rule 2.5); the buttons only avoid offering what would be refused, and the screen says plainly that
+nothing reads the setting yet.
+
+### What was verified
+
+Unit tests over the reader, `bookableTables` and the resolution, and over the settings round trip
+including an unrecognised stored value and the mode not disturbing the plan. `tsc`, `eslint` and the
+suite are clean. **This one was not driven against a running server** — unlike §10 and §11, the
+`409`, the `401` and the audit entry are unexercised outside the tests.
+
+### Still the dangerous step
+
+Nothing here goes near seat accounting. §9 step 3 — the table claim — still does, and §2 still says
+write the concurrency test first.

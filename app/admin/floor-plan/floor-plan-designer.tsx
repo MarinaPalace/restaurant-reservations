@@ -15,12 +15,15 @@ import {
   MAX_SEATS_PER_TABLE,
   MAX_SIZE,
   MAX_TABLES_PER_ZONE,
+  MAX_CHAIRS_PER_TABLE,
   MAX_ZONES,
   MAX_ZONE_SIDE,
   MIN_SIZE,
   MIN_ZONE_SIDE,
+  ROTATION_STEP,
   TABLE_SHAPES,
   CHAIR_SIZE,
+  CM_PER_M,
   chairPositions,
   clampPosition,
   clampSize,
@@ -500,34 +503,26 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
                     </Field>
                   </div>
                   <div className="w-28">
-                    <Field label="Width (cm)" hint={formatLength(zone.width)}>
-                      {(fieldProps) => (
-                        <Input
-                          {...fieldProps}
-                          type="number"
-                          min={MIN_ZONE_SIDE}
-                          max={MAX_ZONE_SIDE}
-                          step={GRID}
-                          value={zone.width}
-                          onChange={(event) => resizeZone(Number(event.target.value), zone.height)}
-                        />
-                      )}
-                    </Field>
+                    <NumberField
+                      label="Width (cm)"
+                      hint={formatLength(zone.width)}
+                      value={zone.width}
+                      min={MIN_ZONE_SIDE}
+                      max={MAX_ZONE_SIDE}
+                      step={GRID}
+                      onCommit={(width) => resizeZone(width, zone.height)}
+                    />
                   </div>
                   <div className="w-28">
-                    <Field label="Depth (cm)" hint={formatLength(zone.height)}>
-                      {(fieldProps) => (
-                        <Input
-                          {...fieldProps}
-                          type="number"
-                          min={MIN_ZONE_SIDE}
-                          max={MAX_ZONE_SIDE}
-                          step={GRID}
-                          value={zone.height}
-                          onChange={(event) => resizeZone(zone.width, Number(event.target.value))}
-                        />
-                      )}
-                    </Field>
+                    <NumberField
+                      label="Depth (cm)"
+                      hint={formatLength(zone.height)}
+                      value={zone.height}
+                      min={MIN_ZONE_SIDE}
+                      max={MAX_ZONE_SIDE}
+                      step={GRID}
+                      onCommit={(height) => resizeZone(zone.width, height)}
+                    />
                   </div>
                   <Button variant="secondary" onClick={removeZone}>
                     Delete zone
@@ -588,6 +583,7 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
                     </pattern>
                   </defs>
                   {/* The hall itself: its walls are the edge of the drawing. */}
+                  <rect width={zone.width} height={zone.height} className="fill-surface" />
                   <rect width={zone.width} height={zone.height} fill="url(#floor-grid)" />
                   <rect
                     width={zone.width}
@@ -595,6 +591,18 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
                     className="fill-none stroke-line-strong"
                     strokeWidth={4}
                   />
+
+                  {/* A metre, drawn to scale. A plan in real dimensions should
+                      say so on its face rather than only in a side panel. */}
+                  <g transform={`translate(20 ${zone.height - 34})`} className="pointer-events-none">
+                    <rect x={-8} y={-16} width={CM_PER_M + 46} height={30} rx={4} className="fill-surface opacity-80" />
+                    <line x1={0} y1={0} x2={CM_PER_M} y2={0} className="stroke-ink-muted" strokeWidth={3} />
+                    <line x1={0} y1={-6} x2={0} y2={6} className="stroke-ink-muted" strokeWidth={3} />
+                    <line x1={CM_PER_M} y1={-6} x2={CM_PER_M} y2={6} className="stroke-ink-muted" strokeWidth={3} />
+                    <text x={CM_PER_M + 10} y={5} className="fill-ink-muted text-[16px] font-medium">
+                      1 m
+                    </text>
+                  </g>
 
                   {/* Features first, so a table is never hidden under the bar. */}
                   {zone.features.map((feature) => (
@@ -665,6 +673,91 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
   );
 }
 
+
+/**
+ * A number field that lets you finish typing.
+ *
+ * The obvious version — value from state, clamp on every keystroke — is
+ * unusable, and this is why: with a minimum of 20, typing "100" begins with
+ * "1", which clamps to 20 on the first keypress. The caret jumps, the next
+ * digit lands somewhere unexpected, and the number can never be reached at all.
+ * The field fights the person using it.
+ *
+ * So while the field is being edited it holds **exactly what was typed**, as a
+ * string, and nothing is clamped. The value is parsed, clamped and committed on
+ * blur or on Enter — the two moments a person has finished saying what they
+ * mean. Escape abandons the edit. Empty or nonsense reverts rather than
+ * committing a zero.
+ *
+ * `draft === null` means nobody is typing, so the field shows the real value
+ * and follows it as the shape is dragged or resized. No effect is needed to
+ * keep the two in step, which is the other thing the obvious version gets
+ * wrong.
+ */
+function NumberField({
+  label,
+  hint,
+  value,
+  min,
+  max,
+  step = 1,
+  disabled,
+  onCommit,
+}: {
+  label: string;
+  hint?: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  disabled?: boolean;
+  onCommit: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+
+  const commit = (raw: string) => {
+    setDraft(null);
+    const parsed = Number(raw);
+
+    if (raw.trim() === "" || !Number.isFinite(parsed)) {
+      return;
+    }
+
+    const next = Math.min(Math.max(Math.round(parsed), min), max);
+    if (next !== value) {
+      onCommit(next);
+    }
+  };
+
+  return (
+    <Field label={label} hint={hint}>
+      {(fieldProps) => (
+        <Input
+          {...fieldProps}
+          type="number"
+          inputMode="numeric"
+          min={min}
+          max={max}
+          step={step}
+          disabled={disabled}
+          value={draft ?? String(value)}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={(event) => commit(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commit((event.target as HTMLInputElement).value);
+            }
+            if (event.key === "Escape") {
+              setDraft(null);
+            }
+          }}
+        />
+      )}
+    </Field>
+  );
+}
+
 /* ------------------------------------------------------------------ *
  * Drawing
  * ------------------------------------------------------------------ */
@@ -681,18 +774,33 @@ type ShapeHandlers = {
 /** The corner grip that resizes whatever is selected. */
 function ResizeHandle({ element, onPointerDown, onPointerMove, onPointerUp }: { element: Placed } & Omit<ShapeHandlers, "canEdit" | "selected" | "onKeyDown">) {
   return (
-    <rect
-      x={element.width - 7}
-      y={element.height - 7}
-      width={14}
-      height={14}
-      rx={3}
-      className="cursor-se-resize fill-surface stroke-accent stroke-2"
-      onPointerDown={(event) => onPointerDown(event, "resize")}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-    />
+    <>
+      {/* A ring around what is selected: on a busy floor a changed outline
+          colour alone is easy to lose. */}
+      <rect
+        x={-10}
+        y={-10}
+        width={element.width + 20}
+        height={element.height + 20}
+        rx={8}
+        className="pointer-events-none fill-none stroke-accent opacity-70"
+        strokeWidth={2}
+        strokeDasharray="8 6"
+      />
+      <rect
+        x={element.width - 9}
+        y={element.height - 9}
+        width={18}
+        height={18}
+        rx={4}
+        className="cursor-se-resize fill-accent-soft stroke-accent"
+        strokeWidth={2.5}
+        onPointerDown={(event) => onPointerDown(event, "resize")}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+      />
+    </>
   );
 }
 
@@ -775,12 +883,25 @@ function TableShape({
       </text>
       <text
         x={table.width / 2}
-        y={table.height / 2 + 14}
+        y={table.height / 2 + 16}
         textAnchor="middle"
-        className="pointer-events-none select-none fill-ink-subtle text-[11px]"
+        className="pointer-events-none select-none fill-ink-subtle text-[13px] tabular-nums"
       >
         {table.seats}
       </text>
+
+      {/* Struck through rather than merely greyed: a table nobody may sit at
+          should not be something you have to look twice at. */}
+      {!table.active ? (
+        <line
+          x1={table.width * 0.15}
+          y1={table.height * 0.15}
+          x2={table.width * 0.85}
+          y2={table.height * 0.85}
+          className="pointer-events-none stroke-ink-subtle"
+          strokeWidth={3}
+        />
+      ) : null}
 
       {selected && canEdit ? (
         <ResizeHandle
@@ -983,24 +1104,15 @@ function ElementProperties({
             )}
           </Field>
 
-          <Field label="Seats">
-            {(fieldProps) => (
-              <Input
-                {...fieldProps}
-                type="number"
-                min={0}
-                max={MAX_SEATS_PER_TABLE}
-                disabled={!canEdit}
-                value={table.seats}
-                onChange={(event) =>
-                  onChange((current) => ({
-                    ...current,
-                    seats: Math.min(Math.max(Math.round(Number(event.target.value) || 0), 0), MAX_SEATS_PER_TABLE),
-                  }))
-                }
-              />
-            )}
-          </Field>
+          <NumberField
+            label="Seats"
+            hint="How many this table seats. This is what a booking is measured against."
+            value={table.seats}
+            min={0}
+            max={MAX_SEATS_PER_TABLE}
+            disabled={!canEdit}
+            onCommit={(seats) => onChange((current) => ({ ...current, seats }))}
+          />
 
           <Field label="Shape">
             {(fieldProps) => (
@@ -1048,53 +1160,81 @@ function ElementProperties({
       {/* Size, typed as well as dragged: a bar is easier to make exactly 300
           wide here than by aiming at a corner handle. */}
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Width (cm)" hint={formatLength(element.width)}>
-          {(fieldProps) => (
-            <Input
-              {...fieldProps}
-              type="number"
-              min={MIN_SIZE}
-              max={MAX_SIZE}
-              step={GRID}
-              disabled={!canEdit}
-              value={element.width}
-              onChange={(event) =>
-                onChange((current) => {
-                  const size = clampSize(Number(event.target.value) || MIN_SIZE, current.height, zone);
-                  return { ...current, ...size, ...clampPosition({ x: current.x, y: current.y, ...size }, zone) };
-                })
-              }
-            />
-          )}
-        </Field>
-        <Field label="Depth (cm)" hint={formatLength(element.height)}>
-          {(fieldProps) => (
-            <Input
-              {...fieldProps}
-              type="number"
-              min={MIN_SIZE}
-              max={MAX_SIZE}
-              step={GRID}
-              disabled={!canEdit}
-              value={element.height}
-              onChange={(event) =>
-                onChange((current) => {
-                  const size = clampSize(current.width, Number(event.target.value) || MIN_SIZE, zone);
-                  return { ...current, ...size, ...clampPosition({ x: current.x, y: current.y, ...size }, zone) };
-                })
-              }
-            />
-          )}
-        </Field>
+        <NumberField
+          label="Width (cm)"
+          hint={formatLength(element.width)}
+          value={element.width}
+          min={MIN_SIZE}
+          max={Math.min(MAX_SIZE, zone.width)}
+          step={GRID}
+          disabled={!canEdit}
+          onCommit={(width) =>
+            onChange((current) => {
+              const size = clampSize(width, current.height, zone);
+              return { ...current, ...size, ...clampPosition({ x: current.x, y: current.y, ...size }, zone) };
+            })
+          }
+        />
+        <NumberField
+          label="Depth (cm)"
+          hint={formatLength(element.height)}
+          value={element.height}
+          min={MIN_SIZE}
+          max={Math.min(MAX_SIZE, zone.height)}
+          step={GRID}
+          disabled={!canEdit}
+          onCommit={(height) =>
+            onChange((current) => {
+              const size = clampSize(current.width, height, zone);
+              return { ...current, ...size, ...clampPosition({ x: current.x, y: current.y, ...size }, zone) };
+            })
+          }
+        />
       </div>
 
-      <Button
-        variant="secondary"
-        disabled={!canEdit}
-        onClick={() => onChange((current) => ({ ...current, rotation: (current.rotation + 90) % 360 }))}
-      >
-        Rotate a quarter turn ({element.rotation}°)
-      </Button>
+      {/* Any angle, not only quarter turns: a table set on the diagonal and a
+          bar following a slanted wall are ordinary things in a real room. */}
+      <div className="flex flex-col gap-2">
+        <NumberField
+          label="Rotation"
+          hint="Any angle. Drag the slider, type one, or take a preset."
+          value={element.rotation}
+          min={0}
+          max={359}
+          step={ROTATION_STEP}
+          disabled={!canEdit}
+          onCommit={(rotation) => onChange((current) => ({ ...current, rotation: ((rotation % 360) + 360) % 360 }))}
+        />
+        <input
+          type="range"
+          min={0}
+          max={355}
+          step={5}
+          disabled={!canEdit}
+          value={element.rotation}
+          onChange={(event) => onChange((current) => ({ ...current, rotation: Number(event.target.value) }))}
+          className="w-full accent-accent"
+          aria-label="Rotation in degrees"
+        />
+        <div className="flex flex-wrap gap-1.5">
+          {[0, 45, 90, 135, 180, 225, 270, 315].map((angle) => (
+            <button
+              key={angle}
+              type="button"
+              disabled={!canEdit}
+              onClick={() => onChange((current) => ({ ...current, rotation: angle }))}
+              className={cx(
+                "min-h-8 rounded-control border px-2 py-1 text-xs font-semibold tabular-nums transition-colors disabled:opacity-60",
+                element.rotation === angle
+                  ? "border-accent bg-accent-soft text-ink"
+                  : "border-line-strong bg-surface text-ink-muted hover:border-accent",
+              )}
+            >
+              {angle}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {table ? (
         <>
@@ -1109,9 +1249,37 @@ function ElementProperties({
             Draw chairs
           </label>
           <p className="-mt-2 text-sm text-ink-subtle">
-            One chair per seat, placed around the table and turned with it. Change the seat count and the chairs
-            follow — there is nothing to place by hand and nothing to leave behind when the table moves.
+            Arranged around the table and turned with it. Nothing to place by hand, and nothing left behind when the
+            table moves.
           </p>
+
+          {table.chairs !== false ? (
+            <>
+              <NumberField
+                label="Chairs"
+                hint={
+                  table.chairCount === undefined
+                    ? "As many as it seats (" + table.seats + ")."
+                    : table.chairCount + " drawn, seats " + table.seats + "."
+                }
+                value={table.chairCount ?? table.seats}
+                min={0}
+                max={MAX_CHAIRS_PER_TABLE}
+                disabled={!canEdit}
+                onCommit={(chairCount) => onChange((current) => ({ ...current, chairCount }))}
+              />
+              {table.chairCount !== undefined ? (
+                <button
+                  type="button"
+                  disabled={!canEdit}
+                  onClick={() => onChange((current) => ({ ...current, chairCount: undefined }))}
+                  className="-mt-2 self-start text-sm font-medium text-accent underline underline-offset-2 disabled:opacity-60"
+                >
+                  Match the seat count again
+                </button>
+              ) : null}
+            </>
+          ) : null}
 
           <label className="flex items-center gap-3 text-sm text-ink">
             <input

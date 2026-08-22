@@ -90,9 +90,13 @@ export const DEFAULT_ZONE_HEIGHT = 900;
 export const MIN_ZONE_SIDE = 200;
 export const MAX_ZONE_SIDE = 6000;
 
-/** A chair, drawn around a table from its seat count rather than placed by hand. */
+/** A chair, drawn around a table rather than placed by hand. */
 export const CHAIR_SIZE = 42;
 export const CHAIR_GAP = 8;
+export const MAX_CHAIRS_PER_TABLE = 24;
+
+/** What the rotation control steps by. Free entry is allowed in between. */
+export const ROTATION_STEP = 15;
 
 export const MAX_SEATS_PER_TABLE = 20;
 export const MAX_TABLES_PER_ZONE = 200;
@@ -105,7 +109,14 @@ export type Placed = {
   y: number;
   width: number;
   height: number;
-  /** Degrees, quarter turns only. */
+  /**
+   * Degrees clockwise, 0–359.
+   *
+   * Any angle, not only quarter turns: tables set on the diagonal, a bar
+   * following a slanted wall and a stage in a corner are all ordinary things in
+   * a real room, and a plan that can only draw right angles cannot describe
+   * them. The designer offers 15° steps and free entry.
+   */
   rotation: number;
 };
 
@@ -125,15 +136,23 @@ export type FloorTable = Placed & {
   /**
    * Draw chairs around this table.
    *
-   * The chairs are **derived from the seat count**, not placed by hand and not
-   * stored. Six seats means six chairs, they sit where the shape says they sit,
-   * and they move, rotate, resize and duplicate with the table because they are
-   * not separate things that could be left behind. Setting the seats to five
-   * removes a chair; there is no way for the drawing and the count to disagree.
+   * Chairs are **arranged**, never placed by hand: they sit where the shape
+   * says, and they move, rotate, resize and duplicate with the table because
+   * they are not separate objects that could be left behind.
    *
    * Absent reads as on, so a table drawn before chairs existed grows them.
    */
   chairs?: boolean;
+  /**
+   * How many chairs to draw, when that is not simply the seat count.
+   *
+   * Absent means "as many as it seats", which is the normal case and the one
+   * nobody should have to think about. It is set when the room disagrees with
+   * the arithmetic: a four-top laid with two chairs against a wall, or a table
+   * that seats six with an extra chair pulled up for a child. The seat count
+   * stays the truth for booking; this is only what is drawn.
+   */
+  chairCount?: number;
   /** Window, quiet, by the music. Nothing reads these yet (§8.4). */
   tags?: string[];
 };
@@ -285,12 +304,13 @@ export function zoneArea(zone: ZoneSize): number {
  * so the caller draws them inside the same transform as the table and they turn
  * with it.
  */
-export function chairPositions(table: Pick<FloorTable, "seats" | "shape" | "width" | "height">): Array<{
-  x: number;
-  y: number;
-  rotation: number;
-}> {
-  const seats = Math.max(0, Math.min(Math.round(table.seats), MAX_SEATS_PER_TABLE));
+export function chairPositions(
+  table: Pick<FloorTable, "seats" | "shape" | "width" | "height"> & { chairCount?: number },
+): Array<{ x: number; y: number; rotation: number }> {
+  // Absent means "as many as it seats", which is the normal case.
+  const wanted = table.chairCount === undefined ? table.seats : table.chairCount;
+  const seats = Math.max(0, Math.min(Math.round(wanted), MAX_CHAIRS_PER_TABLE));
+
   if (seats === 0) {
     return [];
   }
@@ -556,8 +576,8 @@ function toPlaced(
   return {
     ...position,
     ...size,
-    // Quarter turns: something at 37° is a drawing nobody meant.
-    rotation: (((Math.round(asNumber(value.rotation) / 90) * 90) % 360) + 360) % 360,
+    // Whole degrees, wrapped into a single turn. -90 is 270, 370 is 10.
+    rotation: ((Math.round(asNumber(value.rotation)) % 360) + 360) % 360,
   };
 }
 
@@ -580,6 +600,10 @@ function toFloorTable(value: unknown, zone: ZoneSize): FloorTable | null {
     active: table.active !== false,
     // Absent reads as on, so a table drawn before chairs existed grows them.
     chairs: table.chairs !== false,
+    chairCount:
+      table.chairCount === undefined || table.chairCount === null
+        ? undefined
+        : Math.min(Math.max(Math.round(asNumber(table.chairCount)), 0), MAX_CHAIRS_PER_TABLE),
     tags: Array.isArray(table.tags)
       ? [...new Set(table.tags.map((tag) => asText(tag, 24)).filter(Boolean))].slice(0, 8)
       : undefined,

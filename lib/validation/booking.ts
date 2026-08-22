@@ -533,6 +533,7 @@ export const floorTableSchema = z.object({
   shape: z.enum(TABLE_SHAPES),
   active: z.boolean(),
   chairs: z.boolean().optional(),
+  chairCount: z.number().int().min(0).max(24).optional(),
   tags: z.array(z.string().trim().max(24)).max(8).optional(),
 });
 

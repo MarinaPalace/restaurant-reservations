@@ -161,7 +161,7 @@ describe("reading a stored plan", () => {
     expect(odd.height % GRID).toBe(0);
   });
 
-  it("rounds a rotation to a quarter turn, and keeps it inside one turn", () => {
+  it("keeps any angle, wrapped into a single turn", () => {
     const plan = toFloorPlan({
       zones: [
         {
@@ -175,7 +175,9 @@ describe("reading a stored plan", () => {
       ],
     });
 
-    expect(plan.zones[0].tables[0].rotation).toBe(0);
+    // Any angle: a table on the diagonal is an ordinary thing in a real room,
+    // and 37 degrees is now a drawing somebody may well have meant.
+    expect(plan.zones[0].tables[0].rotation).toBe(37);
     expect(plan.zones[0].tables[1].rotation).toBe(270);
   });
 
@@ -499,5 +501,39 @@ describe("chairs", () => {
         chair.x + 42 <= 0 || chair.x >= 70 || chair.y + 42 <= 0 || chair.y >= 70;
       expect(clear).toBe(true);
     }
+  });
+});
+
+describe("how many chairs", () => {
+  it("draws as many as the table seats when nothing says otherwise", () => {
+    expect(chairPositions({ seats: 5, shape: "round", width: 70, height: 70 })).toHaveLength(5);
+  });
+
+  /**
+   * The room does not always agree with the arithmetic — a four-top laid with
+   * two chairs against a wall, or a spare chair pulled up for a child. The seat
+   * count stays the truth for booking; this is only what is drawn.
+   */
+  it("draws the number asked for when one is given", () => {
+    expect(chairPositions({ seats: 4, chairCount: 2, shape: "square", width: 70, height: 70 })).toHaveLength(2);
+    expect(chairPositions({ seats: 4, chairCount: 7, shape: "square", width: 70, height: 70 })).toHaveLength(7);
+  });
+
+  it("treats a chair count of zero as none, not as unset", () => {
+    expect(chairPositions({ seats: 6, chairCount: 0, shape: "round", width: 70, height: 70 })).toEqual([]);
+  });
+
+  it("keeps a chair count through a save and a read", () => {
+    const plan = toFloorPlan({
+      zones: [{ id: "z1", name: "Main", tables: [{ id: "t1", label: "1", seats: 4, chairCount: 2 }], features: [] }],
+    });
+
+    expect(plan.zones[0].tables[0].chairCount).toBe(2);
+    // Unset stays unset rather than becoming the seat count, so "as many as it
+    // seats" keeps following the seats.
+    const unset = toFloorPlan({
+      zones: [{ id: "z1", name: "Main", tables: [{ id: "t1", label: "1", seats: 4 }], features: [] }],
+    });
+    expect(unset.zones[0].tables[0].chairCount).toBeUndefined();
   });
 });

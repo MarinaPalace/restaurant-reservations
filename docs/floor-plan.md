@@ -404,3 +404,43 @@ A walkway is drawn as an outline because nothing stands in it, and an outline is
 the line* — which made it nearly impossible to move. Its fill is now `transparent` rather than
 absent: pointer events land across the whole shape while it still reads as empty floor. Same for the
 free-text label.
+
+---
+
+## 14. The editor, made usable
+
+### Typing a number no longer fights back
+
+The dimension fields could not be typed into. With a minimum of 20, typing
+`100` begins with `1`, which clamped to `20` on the first keypress: the caret jumped, the next digit
+landed somewhere unexpected, and the number could never be reached at all.
+
+`NumberField` holds **exactly what was typed** while the field is being edited and clamps nothing.
+The value is parsed, clamped and committed on blur or on Enter — the two moments a person has
+finished saying what they mean. Escape abandons the edit; empty or nonsense reverts rather than
+committing a zero. Every numeric control on the screen goes through it.
+
+It needs no effect to stay in step with a shape being dragged: `draft === null` means nobody is
+typing, and the field simply shows the live value. That also keeps it clear of the lint rule against
+setting state in an effect, which the first version of the day-loading code fell foul of.
+
+### Any angle
+
+Rotation was quarter turns, which cannot describe a real room — a table set on the diagonal, a bar
+following a slanted wall, a stage across a corner. It is whole degrees now, 0–359, with a slider,
+free entry and eight presets. Existing plans are unaffected: a quarter turn is still a quarter turn.
+
+### Chairs need not equal seats
+
+`chairCount` is drawn when set, and the seat count is used when it is not — which stays the normal
+case, and the one nobody should have to think about. It exists because the room does not always
+agree with the arithmetic: a four-top laid with two chairs against a wall, a spare chair pulled up
+for a child. **The seat count remains the truth for booking**; this is only what is drawn. Zero is a
+real answer and is kept as one, distinct from unset.
+
+### Smaller things
+
+A **metre scale bar** on the drawing, because a plan in real dimensions should say so on its face
+rather than only in a side panel. A dashed **selection ring**, since a changed outline colour alone
+is easy to lose on a busy floor. Tables out of service are **struck through** rather than merely
+greyed. The hall is drawn on its own floor colour inside its walls.

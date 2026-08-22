@@ -80,6 +80,12 @@ sharing a table impossible, and sharing is an existing feature (rooms dining tog
 
 ## 3. What the room is
 
+> **Superseded in part by §10.** A "room" here is a **zone** — a hall of the restaurant, never a
+> hotel room; this app already uses that word for where a guest is staying, and one word meaning two
+> things is how a wrong number reaches a booking. Tables also carry their own width and height, and a
+> zone holds **features** (walls, windows, the door, the bar, the musician's stage) as well as tables.
+
+
 The floor plan belongs to the **restaurant**, not to a date. Tables do not move nightly; what
 changes per evening is which of them are in use.
 
@@ -278,3 +284,64 @@ here. The geometry it depends on is unit-tested, and the pointer handling is not
 §2 says why: it adds a second thing that can be exhausted, and the read-then-write that looks
 obvious is exactly the race the seat claim was written to avoid. **Write the concurrency test
 first.** Nothing built here has gone near seat accounting, and the next change will.
+
+---
+
+## 11. Zones, tables and features
+
+Three corrections to §10, from watching somebody try to draw their own restaurant with it.
+
+### They are zones, not rooms
+
+A zone is a **hall of the restaurant** — the main hall, the terrace, a private dining room. Calling
+them rooms was a mistake: this codebase already uses "room" for where the guest is *staying*
+(`roomNumber`, `additionalRooms`, "several rooms on one booking"), and one word meaning two things
+in one app is how a hotel room number ends up written on a table.
+
+`toFloorPlan` still reads a plan stored under the old `rooms` key and writes it back as `zones`, so
+nothing drawn before this is lost (rule 2.2). There is a test for it, and it was checked against a
+plan actually saved by the previous version.
+
+### Tables have their own size
+
+Sizes were fixed per shape, which is wrong the moment a restaurant has a two-top and a banquet
+table. Every table now carries `width` and `height`, resizable by dragging a corner handle or by
+typing exact numbers — a bar is easier to make exactly 420 wide by typing it than by aiming at a
+grip. `oval` joins the shapes. Sizes snap to the grid and are held between `MIN_SIZE` and
+`MAX_SIZE`, and growing something against the far wall moves it back inside rather than letting it
+overhang.
+
+### A restaurant is not only tables
+
+A zone now holds **features** as well: `wall`, `window`, `door`, `stage`, `bar`, `plant`, `path`,
+`screen`, `text`. They are a separate list from tables because they mean something different —
+tables seat guests, carry the label that becomes `tableNumber`, and are the only things a guest will
+ever be able to pick. Nobody books a wall.
+
+**The stage is the one worth calling out.** The musician plays from it, and *which tables are near
+the music* is exactly what a guest asks when they ring up — so it is drawn, it is named "Musician"
+by default, and `by the music` is one of the suggested table tags. That is the whole reason features
+exist rather than being decoration: the guest picker in §6 is useless if the plan does not show why
+one table differs from another.
+
+Each kind draws as the thing it is — a wall is solid, a window is open, a walkway is an outline
+because nothing stands in it — so staff recognise their own restaurant instead of decoding a legend.
+
+### Strict in, lenient out
+
+Worth stating plainly, because the two look inconsistent and are not:
+
+- **The schema refuses** a payload containing an unrecognised feature kind, with a `400`. A payload
+  the designer would never send is a bug, and hiding it helps nobody.
+- **`toFloorPlan` drops** an unrecognised feature and keeps the zone. Stored data may have been
+  written by a version that no longer exists, and a plan that cannot be read is a screen that cannot
+  be opened to fix it.
+
+Confirmed against a running server: a plan with a `helipad` came back `400`; a plant sent 9999 wide
+came back 800 and moved so it still fits; a table at `37,63` came back at `40,60`; a rotation of 45°
+came back 90°.
+
+## 12. Still not started: the guests' picker
+
+§6 is untouched and stays untouched until the designer is right, which is the order asked for. When
+it starts, §2 is the section that matters — the table claim, and its concurrency test written first.

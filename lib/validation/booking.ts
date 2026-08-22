@@ -6,9 +6,11 @@ import { PASS_KEY_LENGTH, normalizePassKey } from "@/lib/pass-key";
 import { isValidRoomNumber, normalizeRoomNumber } from "@/lib/room";
 import { MAX_USES_CAP, MENU_CATALOGS, STAFF_PERMISSIONS } from "@/types/booking";
 import {
-  MAX_ROOMS,
+  FEATURE_KINDS,
+  MAX_FEATURES_PER_ZONE,
   MAX_SEATS_PER_TABLE,
-  MAX_TABLES_PER_ROOM,
+  MAX_TABLES_PER_ZONE,
+  MAX_ZONES,
   TABLE_SHAPES,
 } from "@/lib/floor-plan";
 
@@ -510,29 +512,43 @@ export const updateSettingsSchema = z
 /**
  * The floor plan as the designer sends it.
  *
- * Deliberately permissive about *values* — positions, seat counts and rotations
- * are snapped, clamped and capped by `toFloorPlan` on the way into the store —
- * and strict about *shape*, so a payload that is not a plan at all is refused
- * here rather than silently becoming an empty room.
+ * Deliberately permissive about *values* — positions, sizes, seat counts and
+ * rotations are snapped, clamped and capped by `toFloorPlan` on the way into
+ * the store — and strict about *shape*, so a payload that is not a plan at all
+ * is refused here rather than silently becoming an empty floor.
  */
+const placedSchema = {
+  x: z.number().finite(),
+  y: z.number().finite(),
+  width: z.number().finite().optional(),
+  height: z.number().finite().optional(),
+  rotation: z.number().finite().optional(),
+};
+
 export const floorTableSchema = z.object({
+  ...placedSchema,
   id: z.string().trim().min(1).max(64),
   label: z.string().trim().max(12),
   seats: z.number().int().min(0).max(MAX_SEATS_PER_TABLE),
-  x: z.number().finite(),
-  y: z.number().finite(),
   shape: z.enum(TABLE_SHAPES),
-  rotation: z.number().finite().optional(),
   active: z.boolean(),
   tags: z.array(z.string().trim().max(24)).max(8).optional(),
 });
 
-export const floorRoomSchema = z.object({
+export const floorFeatureSchema = z.object({
+  ...placedSchema,
+  id: z.string().trim().min(1).max(64),
+  kind: z.enum(FEATURE_KINDS),
+  label: z.string().trim().max(40).optional(),
+});
+
+export const floorZoneSchema = z.object({
   id: z.string().trim().min(1).max(64),
   name: z.string().trim().min(1).max(60),
-  tables: z.array(floorTableSchema).max(MAX_TABLES_PER_ROOM),
+  tables: z.array(floorTableSchema).max(MAX_TABLES_PER_ZONE),
+  features: z.array(floorFeatureSchema).max(MAX_FEATURES_PER_ZONE).optional(),
 });
 
 export const floorPlanSchema = z.object({
-  rooms: z.array(floorRoomSchema).max(MAX_ROOMS),
+  zones: z.array(floorZoneSchema).max(MAX_ZONES),
 });

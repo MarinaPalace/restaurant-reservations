@@ -73,7 +73,7 @@ export async function PUT(request: Request) {
       action: "settings:save",
       actor: auth.actor,
       summary:
-        `Saved the floor plan: ${counted.rooms} room(s), ${counted.tables} table(s), ` +
+        `Saved the floor plan: ${counted.zones} zone(s), ${counted.tables} table(s), ` +
         `${counted.seats} seat(s) in service.`,
     });
 

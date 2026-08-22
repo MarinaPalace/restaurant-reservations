@@ -7,77 +7,95 @@ import { Alert, Badge } from "@/components/ui/feedback";
 import { Field, Input, Select } from "@/components/ui/field";
 import { cx } from "@/components/ui/utils";
 import {
+  DEFAULT_TABLE_SIZE,
+  FEATURE_KINDS,
+  FEATURE_LABELS,
   GRID,
-  MAX_ROOMS,
+  MAX_FEATURES_PER_ZONE,
   MAX_SEATS_PER_TABLE,
-  MAX_TABLES_PER_ROOM,
+  MAX_SIZE,
+  MAX_TABLES_PER_ZONE,
+  MAX_ZONES,
+  MIN_SIZE,
   PLAN_HEIGHT,
   PLAN_WIDTH,
   TABLE_SHAPES,
-  TABLE_SIZE,
-  clampToPlan,
+  clampPosition,
+  clampSize,
   countPlan,
-  countRoom,
+  countZone,
   describePlanProblems,
   duplicateLabels,
-  newRoom,
+  newFeature,
   newTable,
+  newZone,
+  type FeatureKind,
+  type FloorFeature,
   type FloorPlan,
   type FloorTable,
+  type FloorZone,
+  type Placed,
   type TableShape,
 } from "@/lib/floor-plan";
 
 /**
  * The restaurant designer — `docs/floor-plan.md` §5.
  *
- * Staff lay out the room here and nothing else happens yet: no booking reads
- * the plan, no seat accounting changes, and the flag that will one day let
- * guests pick a table does not exist. That is deliberate (§9 step 1). A drawn
- * room is useful before it is wired to anything, and it proves the model
- * without touching the most delicate code in the app.
+ * Staff draw the floor here and nothing else happens yet: no booking reads the
+ * plan and no seat accounting has changed (§9 step 1).
  *
- * Two rules from HANDOVER shape what is below. Nothing moves under a finger
- * (2.14): dragging a table moves that table and re-lays out nothing else, and
- * the plan does not reflow while it is being edited. And the label is not
- * decoration (§3) — it becomes a booking's `tableNumber`, which is why a
- * duplicate is refused rather than merely noted.
+ * A **zone** is a hall of the restaurant — the main hall, the terrace, a
+ * private dining room. Never a hotel room; this app already uses that word for
+ * where the guest is staying.
  *
- * This screen is not printed and does not pretend to be, so none of the sheet's
- * print CSS applies to it (rules 2.8–2.10).
+ * Two things stand in a zone. **Tables** seat guests, carry the label that
+ * becomes a booking's `tableNumber`, and are the only things a guest will ever
+ * pick. **Features** are the rest of the restaurant — the walls, the windows,
+ * the door, the bar, the stage the musician plays from — which nobody books
+ * but which are what make the drawing recognisable as this restaurant rather
+ * than a grid of circles.
+ *
+ * Nothing moves under a finger (rule 2.14): dragging one thing moves that
+ * thing, and the plan never re-lays itself out.
  */
 
 const SHAPE_LABELS: Record<TableShape, string> = {
   round: "Round",
   square: "Square",
   rectangle: "Rectangle",
+  oval: "Oval",
 };
 
-/** Suggested tags, so a room does not end up with six spellings of "window". */
-const SUGGESTED_TAGS = ["window", "quiet", "corner", "near the door", "terrace", "step-free"];
+/** Suggested tags, so a floor does not end up with six spellings of "window". */
+const SUGGESTED_TAGS = ["window", "quiet", "corner", "by the music", "near the door", "terrace", "step-free"];
+
+type Selection = { kind: "table" | "feature"; id: string } | null;
+type DragMode = "move" | "resize";
 
 export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: FloorPlan; canEdit: boolean }) {
   const [plan, setPlan] = useState(initialPlan);
-  const [activeRoomId, setActiveRoomId] = useState(initialPlan.rooms[0]?.id ?? "");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [activeZoneId, setActiveZoneId] = useState(initialPlan.zones[0]?.id ?? "");
+  const [selection, setSelection] = useState<Selection>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  /**
-   * Whether anything has changed since the last save. Tracked rather than
-   * compared, because a deep comparison of the plan on every drag frame is
-   * both slow and beside the point.
-   */
   const [dirty, setDirty] = useState(false);
 
   const svgRef = useRef<SVGSVGElement | null>(null);
-  /** Where in the table the pointer went down, so it does not jump on grab. */
-  const grabOffset = useRef<{ x: number; y: number } | null>(null);
+  /** What the pointer is doing, and where in the shape it grabbed. */
+  const drag = useRef<{ mode: DragMode; offsetX: number; offsetY: number } | null>(null);
 
-  const room = plan.rooms.find((entry) => entry.id === activeRoomId) ?? plan.rooms[0] ?? null;
-  const selected = room?.tables.find((table) => table.id === selectedId) ?? null;
+  const zone = plan.zones.find((entry) => entry.id === activeZoneId) ?? plan.zones[0] ?? null;
+
+  const selected: FloorTable | FloorFeature | null = useMemo(() => {
+    if (!zone || !selection) return null;
+    return selection.kind === "table"
+      ? (zone.tables.find((table) => table.id === selection.id) ?? null)
+      : (zone.features.find((feature) => feature.id === selection.id) ?? null);
+  }, [zone, selection]);
 
   const totals = useMemo(() => countPlan(plan), [plan]);
-  const roomTotals = useMemo(() => (room ? countRoom(room) : { tables: 0, seats: 0 }), [room]);
+  const zoneTotals = useMemo(() => (zone ? countZone(zone) : { tables: 0, seats: 0 }), [zone]);
   const problems = useMemo(() => describePlanProblems(plan), [plan]);
   const clashes = useMemo(() => new Set(duplicateLabels(plan)), [plan]);
 
@@ -88,20 +106,27 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
     setError("");
   };
 
-  const editRoom = (roomId: string, edit: (tables: FloorTable[]) => FloorTable[]) => {
-    change({
-      ...plan,
-      rooms: plan.rooms.map((entry) => (entry.id === roomId ? { ...entry, tables: edit(entry.tables) } : entry)),
-    });
+  const editZone = (edit: (zone: FloorZone) => FloorZone) => {
+    if (!zone) return;
+    change({ ...plan, zones: plan.zones.map((entry) => (entry.id === zone.id ? edit(entry) : entry)) });
   };
 
-  const editTable = (tableId: string, edit: (table: FloorTable) => FloorTable) => {
-    if (!room) return;
-    editRoom(room.id, (tables) => tables.map((table) => (table.id === tableId ? edit(table) : table)));
+  /** Applies an edit to whichever element is selected, table or feature. */
+  const editSelected = (edit: <T extends Placed>(element: T) => T) => {
+    if (!selection) return;
+
+    editZone((current) =>
+      selection.kind === "table"
+        ? { ...current, tables: current.tables.map((table) => (table.id === selection.id ? edit(table) : table)) }
+        : {
+            ...current,
+            features: current.features.map((feature) => (feature.id === selection.id ? edit(feature) : feature)),
+          },
+    );
   };
 
   /* ---------------------------------------------------------------- *
-   * Dragging
+   * Dragging and resizing
    * ---------------------------------------------------------------- */
 
   /** Pointer position in plan units, whatever size the SVG is on screen. */
@@ -118,78 +143,169 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
     };
   };
 
-  const startDrag = (event: React.PointerEvent<SVGGElement>, table: FloorTable) => {
-    setSelectedId(table.id);
+  const startDrag = (
+    event: React.PointerEvent<SVGElement>,
+    element: Placed & { id: string },
+    kind: "table" | "feature",
+    mode: DragMode,
+  ) => {
+    setSelection({ kind, id: element.id });
     if (!canEdit) return;
 
     const point = toPlanUnits(event);
     if (!point) return;
 
-    grabOffset.current = { x: point.x - table.x, y: point.y - table.y };
-    // Keeps the pointer bound to this table even when it outruns the shape.
+    drag.current =
+      mode === "move"
+        ? { mode, offsetX: point.x - element.x, offsetY: point.y - element.y }
+        : { mode, offsetX: point.x - (element.x + element.width), offsetY: point.y - (element.y + element.height) };
+
     event.currentTarget.setPointerCapture(event.pointerId);
+    event.stopPropagation();
     event.preventDefault();
   };
 
-  const onDrag = (event: React.PointerEvent<SVGGElement>, table: FloorTable) => {
-    const offset = grabOffset.current;
-    if (!offset || !canEdit) return;
+  const onDrag = (event: React.PointerEvent<SVGElement>, element: Placed) => {
+    const active = drag.current;
+    if (!active || !canEdit) return;
 
     const point = toPlanUnits(event);
     if (!point) return;
 
-    // Snapped and clamped here rather than on drop, so what is on screen while
-    // dragging is exactly what will be saved.
-    const position = clampToPlan({ x: point.x - offset.x, y: point.y - offset.y, shape: table.shape });
+    if (active.mode === "move") {
+      // Snapped and clamped as it moves, so what is on screen is what saves.
+      const position = clampPosition({
+        x: point.x - active.offsetX,
+        y: point.y - active.offsetY,
+        width: element.width,
+        height: element.height,
+      });
 
-    if (position.x !== table.x || position.y !== table.y) {
-      editTable(table.id, (current) => ({ ...current, ...position }));
+      if (position.x !== element.x || position.y !== element.y) {
+        editSelected((current) => ({ ...current, ...position }));
+      }
+      return;
+    }
+
+    const size = clampSize(point.x - active.offsetX - element.x, point.y - active.offsetY - element.y);
+
+    if (size.width !== element.width || size.height !== element.height) {
+      // Re-clamped, since growing something at the far wall would push it out.
+      editSelected((current) => ({
+        ...current,
+        ...size,
+        ...clampPosition({ x: current.x, y: current.y, ...size }),
+      }));
     }
   };
 
-  const endDrag = (event: React.PointerEvent<SVGGElement>) => {
-    grabOffset.current = null;
+  const endDrag = (event: React.PointerEvent<SVGElement>) => {
+    drag.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
   };
 
-  /* ---------------------------------------------------------------- *
-   * Rooms and tables
-   * ---------------------------------------------------------------- */
+  const nudge = (event: React.KeyboardEvent, element: Placed) => {
+    if (!canEdit) return;
 
-  const addRoom = () => {
-    const created = newRoom(plan);
-    change({ ...plan, rooms: [...plan.rooms, created] });
-    setActiveRoomId(created.id);
-    setSelectedId(null);
+    const step = event.shiftKey ? GRID * 5 : GRID;
+    const moves: Record<string, [number, number]> = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, -step],
+      ArrowDown: [0, step],
+    };
+    const move = moves[event.key];
+    if (!move) return;
+
+    event.preventDefault();
+    editSelected((current) => ({
+      ...current,
+      ...clampPosition({
+        x: element.x + move[0],
+        y: element.y + move[1],
+        width: element.width,
+        height: element.height,
+      }),
+    }));
   };
 
-  const removeRoom = () => {
-    if (!room) return;
+  /* ---------------------------------------------------------------- *
+   * Adding and removing
+   * ---------------------------------------------------------------- */
 
-    if (room.tables.length > 0 && !confirm(`Delete “${room.name}” and its ${room.tables.length} table(s)?`)) {
+  const addZone = () => {
+    const created = newZone(plan);
+    change({ ...plan, zones: [...plan.zones, created] });
+    setActiveZoneId(created.id);
+    setSelection(null);
+  };
+
+  const removeZone = () => {
+    if (!zone) return;
+    const contents = zone.tables.length + zone.features.length;
+
+    if (contents > 0 && !confirm(`Delete “${zone.name}” and everything in it (${contents} item(s))?`)) {
       return;
     }
 
-    const rooms = plan.rooms.filter((entry) => entry.id !== room.id);
-    change({ ...plan, rooms });
-    setActiveRoomId(rooms[0]?.id ?? "");
-    setSelectedId(null);
+    const zones = plan.zones.filter((entry) => entry.id !== zone.id);
+    change({ ...plan, zones });
+    setActiveZoneId(zones[0]?.id ?? "");
+    setSelection(null);
   };
 
   const addTable = (shape: TableShape) => {
-    if (!room || room.tables.length >= MAX_TABLES_PER_ROOM) return;
+    if (!zone || zone.tables.length >= MAX_TABLES_PER_ZONE) return;
 
-    const created = newTable(room, shape);
-    editRoom(room.id, (tables) => [...tables, created]);
-    setSelectedId(created.id);
+    const created = newTable(zone, shape);
+    editZone((current) => ({ ...current, tables: [...current.tables, created] }));
+    setSelection({ kind: "table", id: created.id });
   };
 
-  const removeTable = (tableId: string) => {
-    if (!room) return;
-    editRoom(room.id, (tables) => tables.filter((table) => table.id !== tableId));
-    setSelectedId(null);
+  const addFeature = (kind: FeatureKind) => {
+    if (!zone || zone.features.length >= MAX_FEATURES_PER_ZONE) return;
+
+    const created = newFeature(zone, kind);
+    editZone((current) => ({ ...current, features: [...current.features, created] }));
+    setSelection({ kind: "feature", id: created.id });
+  };
+
+  const removeSelected = () => {
+    if (!selection) return;
+
+    editZone((current) =>
+      selection.kind === "table"
+        ? { ...current, tables: current.tables.filter((table) => table.id !== selection.id) }
+        : { ...current, features: current.features.filter((feature) => feature.id !== selection.id) },
+    );
+    setSelection(null);
+  };
+
+  const duplicateSelected = () => {
+    if (!selection || !selected || !zone) return;
+
+    const copy = {
+      ...selected,
+      id: `f-${Math.random().toString(36).slice(2, 10)}`,
+      ...clampPosition({
+        x: selected.x + GRID * 2,
+        y: selected.y + GRID * 2,
+        width: selected.width,
+        height: selected.height,
+      }),
+    };
+
+    if (selection.kind === "table") {
+      // A copied table keeps everything but its label: two tables answering to
+      // the same number is the one thing a save refuses.
+      editZone((current) => ({ ...current, tables: [...current.tables, { ...(copy as FloorTable), label: "" }] }));
+    } else {
+      editZone((current) => ({ ...current, features: [...current.features, copy as FloorFeature] }));
+    }
+
+    setSelection({ kind: selection.kind, id: copy.id });
   };
 
   const save = async () => {
@@ -212,8 +328,8 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
         throw new Error(data.error ?? "Unable to save the floor plan.");
       }
 
-      // The stored plan is authoritative: it has been snapped and clamped, and
-      // showing anything else would be showing a plan that is not the one saved.
+      // The stored plan is authoritative — it has been snapped and clamped, and
+      // showing anything else would be showing a plan that was not saved.
       setPlan(data.plan as FloorPlan);
       setDirty(false);
       setNotice("Floor plan saved.");
@@ -230,7 +346,7 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
         <CardHeader
           as="h1"
           eyebrow="Floor plan"
-          title="Design the room"
+          title="Design the restaurant"
           actions={
             canEdit ? (
               <div className="flex flex-wrap items-center gap-3">
@@ -246,14 +362,14 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
         />
 
         <p className="mt-3 max-w-2xl text-sm text-ink-muted">
-          Lay out the tables as they stand in the room. Nothing here changes bookings yet — a table&rsquo;s{" "}
-          <strong>label</strong> is the number that will appear on the service sheet, so it has to be unique across
-          every room.
+          Lay out each hall as it really stands — tables, the bar, the windows, the door, the stage the musician plays
+          from. A table&rsquo;s <strong>label</strong> is the number that appears on the service sheet, so it has to be
+          unique across the whole restaurant. Nothing here changes bookings yet.
         </p>
 
         <dl className="mt-5 grid gap-4 sm:grid-cols-3">
           {[
-            { label: "Rooms", value: totals.rooms },
+            { label: "Zones", value: totals.zones },
             { label: "Tables in service", value: totals.tables },
             { label: "Seats in service", value: totals.seats },
           ].map((stat) => (
@@ -265,8 +381,8 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
         </dl>
 
         <p className="mt-3 text-sm text-ink-subtle">
-          Seats are counted from tables that are in service. An evening&rsquo;s capacity is still set on the calendar
-          and is not changed by anything on this page.
+          Seats count only tables that are in service. An evening&rsquo;s capacity is still set on the calendar and is
+          not changed by anything on this page.
         </p>
 
         {error ? (
@@ -287,21 +403,21 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
       </Card>
 
       <Card className="p-5 sm:p-6">
-        {/* Rooms. A list from the start, because a terrace or a private room is
-            a real thing and making the plan a list later would mean rewriting
-            every read of it (§8.6). */}
+        {/* Zones: halls of the restaurant, a list from the start because a
+            terrace is a real thing and making the plan a list later would mean
+            rewriting every read of it (§8.6). */}
         <div className="flex flex-wrap items-center gap-2">
-          {plan.rooms.map((entry) => {
-            const counted = countRoom(entry);
-            const isActive = entry.id === room?.id;
+          {plan.zones.map((entry) => {
+            const counted = countZone(entry);
+            const isActive = entry.id === zone?.id;
 
             return (
               <button
                 key={entry.id}
                 type="button"
                 onClick={() => {
-                  setActiveRoomId(entry.id);
-                  setSelectedId(null);
+                  setActiveZoneId(entry.id);
+                  setSelection(null);
                 }}
                 className={cx(
                   "min-h-11 rounded-control border px-4 py-2 text-sm font-semibold transition-colors",
@@ -316,61 +432,69 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
             );
           })}
 
-          {canEdit && plan.rooms.length < MAX_ROOMS ? (
-            <Button variant="secondary" onClick={addRoom}>
-              Add a room
+          {canEdit && plan.zones.length < MAX_ZONES ? (
+            <Button variant="secondary" onClick={addZone}>
+              Add a zone
             </Button>
           ) : null}
         </div>
 
-        {room ? (
+        {zone ? (
           <>
             {canEdit ? (
-              <div className="mt-4 flex flex-wrap items-end gap-3">
-                <div className="min-w-52">
-                  <Field label="Room name">
-                    {(fieldProps) => (
-                      <Input
-                        {...fieldProps}
-                        maxLength={60}
-                        value={room.name}
-                        onChange={(event) =>
-                          change({
-                            ...plan,
-                            rooms: plan.rooms.map((entry) =>
-                              entry.id === room.id ? { ...entry, name: event.target.value } : entry,
-                            ),
-                          })
-                        }
-                      />
-                    )}
-                  </Field>
+              <div className="mt-4 flex flex-col gap-3 rounded-control border border-line bg-surface-muted p-4">
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="min-w-52">
+                    <Field label="Zone name" hint="The hall as staff call it.">
+                      {(fieldProps) => (
+                        <Input
+                          {...fieldProps}
+                          maxLength={60}
+                          value={zone.name}
+                          onChange={(event) => editZone((current) => ({ ...current, name: event.target.value }))}
+                        />
+                      )}
+                    </Field>
+                  </div>
+                  <Button variant="secondary" onClick={removeZone}>
+                    Delete zone
+                  </Button>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  {TABLE_SHAPES.map((shape) => (
-                    <Button key={shape} variant="secondary" onClick={() => addTable(shape)}>
-                      Add {SHAPE_LABELS[shape].toLowerCase()}
-                    </Button>
-                  ))}
-                  <Button variant="secondary" onClick={removeRoom}>
-                    Delete room
-                  </Button>
+                <div>
+                  <p className="text-sm font-medium text-ink-muted">Tables</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {TABLE_SHAPES.map((shape) => (
+                      <Button key={shape} variant="secondary" onClick={() => addTable(shape)}>
+                        {SHAPE_LABELS[shape]}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium text-ink-muted">The rest of the room</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {FEATURE_KINDS.map((kind) => (
+                      <Button key={kind} variant="secondary" onClick={() => addFeature(kind)}>
+                        {FEATURE_LABELS[kind]}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
               </div>
             ) : null}
 
-            <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
+            <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_21rem]">
               <div className="overflow-x-auto">
                 <svg
                   ref={svgRef}
                   viewBox={`0 0 ${PLAN_WIDTH} ${PLAN_HEIGHT}`}
-                  className="w-full min-w-[36rem] touch-none rounded-control border border-line bg-surface-muted"
+                  className="w-full min-w-[44rem] touch-none rounded-control border border-line bg-surface-muted"
                   role="group"
-                  aria-label={`Floor plan of ${room.name}`}
+                  aria-label={`Floor plan of ${zone.name}`}
                   onPointerDown={(event) => {
-                    // A tap on the empty floor is how you deselect.
-                    if (event.target === event.currentTarget) setSelectedId(null);
+                    if (event.target === event.currentTarget) setSelection(null);
                   }}
                 >
                   <defs>
@@ -386,114 +510,65 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
                   </defs>
                   <rect width={PLAN_WIDTH} height={PLAN_HEIGHT} fill="url(#floor-grid)" />
 
-                  {room.tables.map((table) => {
-                    const size = TABLE_SIZE[table.shape];
-                    const isSelected = table.id === selectedId;
-                    const clashing = clashes.has(table.label.trim().toUpperCase());
+                  {/* Features first, so a table is never hidden under the bar. */}
+                  {zone.features.map((feature) => (
+                    <FeatureShape
+                      key={feature.id}
+                      feature={feature}
+                      selected={selection?.kind === "feature" && selection.id === feature.id}
+                      canEdit={canEdit}
+                      onPointerDown={(event, mode) => startDrag(event, feature, "feature", mode)}
+                      onPointerMove={(event) => onDrag(event, feature)}
+                      onPointerUp={endDrag}
+                      onKeyDown={(event) => nudge(event, feature)}
+                    />
+                  ))}
 
-                    return (
-                      <g
-                        key={table.id}
-                        transform={`translate(${table.x} ${table.y}) rotate(${table.rotation ?? 0} ${size.width / 2} ${size.height / 2})`}
-                        onPointerDown={(event) => startDrag(event, table)}
-                        onPointerMove={(event) => onDrag(event, table)}
-                        onPointerUp={endDrag}
-                        onPointerCancel={endDrag}
-                        className={cx(canEdit ? "cursor-grab" : "cursor-pointer")}
-                        role="button"
-                        tabIndex={0}
-                        aria-label={`Table ${table.label || "unlabelled"}, ${table.seats} seats`}
-                        onKeyDown={(event) => {
-                          if (!canEdit) return;
-                          const step = event.shiftKey ? GRID * 5 : GRID;
-                          const moves: Record<string, [number, number]> = {
-                            ArrowLeft: [-step, 0],
-                            ArrowRight: [step, 0],
-                            ArrowUp: [0, -step],
-                            ArrowDown: [0, step],
-                          };
-                          const move = moves[event.key];
-                          if (!move) return;
-
-                          event.preventDefault();
-                          editTable(table.id, (current) => ({
-                            ...current,
-                            ...clampToPlan({ x: current.x + move[0], y: current.y + move[1], shape: current.shape }),
-                          }));
-                        }}
-                      >
-                        {table.shape === "round" ? (
-                          <circle
-                            cx={size.width / 2}
-                            cy={size.height / 2}
-                            r={size.width / 2}
-                            className={cx(
-                              "stroke-2",
-                              table.active ? "fill-surface" : "fill-surface-sunken",
-                              isSelected ? "stroke-accent" : clashing ? "stroke-danger" : "stroke-line-strong",
-                            )}
-                          />
-                        ) : (
-                          <rect
-                            width={size.width}
-                            height={size.height}
-                            rx={6}
-                            className={cx(
-                              "stroke-2",
-                              table.active ? "fill-surface" : "fill-surface-sunken",
-                              isSelected ? "stroke-accent" : clashing ? "stroke-danger" : "stroke-line-strong",
-                            )}
-                          />
-                        )}
-
-                        <text
-                          x={size.width / 2}
-                          y={size.height / 2 - 2}
-                          textAnchor="middle"
-                          className={cx(
-                            "select-none text-[15px] font-semibold",
-                            table.active ? "fill-ink" : "fill-ink-subtle",
-                          )}
-                        >
-                          {table.label || "—"}
-                        </text>
-                        <text
-                          x={size.width / 2}
-                          y={size.height / 2 + 14}
-                          textAnchor="middle"
-                          className="select-none fill-ink-subtle text-[11px]"
-                        >
-                          {table.seats}
-                        </text>
-                      </g>
-                    );
-                  })}
+                  {zone.tables.map((table) => (
+                    <TableShape
+                      key={table.id}
+                      table={table}
+                      selected={selection?.kind === "table" && selection.id === table.id}
+                      clashing={clashes.has(table.label.trim().toUpperCase())}
+                      canEdit={canEdit}
+                      onPointerDown={(event, mode) => startDrag(event, table, "table", mode)}
+                      onPointerMove={(event) => onDrag(event, table)}
+                      onPointerUp={endDrag}
+                      onKeyDown={(event) => nudge(event, table)}
+                    />
+                  ))}
                 </svg>
 
                 <p className="mt-2 text-sm text-ink-subtle">
                   {canEdit
-                    ? "Drag a table to move it, or select one and use the arrow keys. Positions snap to the grid."
-                    : "Select a table to see its details."}
-                  {" "}
-                  {room.name}: {roomTotals.tables} table(s) · {roomTotals.seats} seat(s).
+                    ? "Drag to move, drag the corner handle to resize, or select something and use the arrow keys. Everything snaps to the grid."
+                    : "Select something to see its details."}{" "}
+                  {zone.name}: {zoneTotals.tables} table(s) · {zoneTotals.seats} seat(s) ·{" "}
+                  {zone.features.length} feature(s).
                 </p>
               </div>
 
-              <TableProperties
-                table={selected}
+              <ElementProperties
+                element={selected}
+                kind={selection?.kind ?? null}
                 canEdit={canEdit}
-                clashing={selected ? clashes.has(selected.label.trim().toUpperCase()) : false}
-                onChange={(edit) => selected && editTable(selected.id, edit)}
-                onRemove={() => selected && removeTable(selected.id)}
+                clashing={
+                  selection?.kind === "table" && selected
+                    ? clashes.has((selected as FloorTable).label.trim().toUpperCase())
+                    : false
+                }
+                onChange={editSelected}
+                onRemove={removeSelected}
+                onDuplicate={duplicateSelected}
               />
             </div>
           </>
         ) : (
           <div className="mt-5 rounded-control border border-dashed border-line-strong p-8 text-center">
-            <p className="text-ink-muted">No rooms yet.</p>
+            <p className="text-ink-muted">No zones yet. A zone is a hall of the restaurant — the main hall, the terrace.</p>
             {canEdit ? (
-              <Button className="mt-4" onClick={addRoom}>
-                Draw the first room
+              <Button className="mt-4" onClick={addZone}>
+                Draw the first zone
               </Button>
             ) : null}
           </div>
@@ -503,157 +578,459 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
   );
 }
 
-/** The selected table's details. Separate so the plan does not re-render per keystroke. */
-function TableProperties({
+/* ------------------------------------------------------------------ *
+ * Drawing
+ * ------------------------------------------------------------------ */
+
+type ShapeHandlers = {
+  canEdit: boolean;
+  selected: boolean;
+  onPointerDown: (event: React.PointerEvent<SVGElement>, mode: DragMode) => void;
+  onPointerMove: (event: React.PointerEvent<SVGElement>) => void;
+  onPointerUp: (event: React.PointerEvent<SVGElement>) => void;
+  onKeyDown: (event: React.KeyboardEvent) => void;
+};
+
+/** The corner grip that resizes whatever is selected. */
+function ResizeHandle({ element, onPointerDown, onPointerMove, onPointerUp }: { element: Placed } & Omit<ShapeHandlers, "canEdit" | "selected" | "onKeyDown">) {
+  return (
+    <rect
+      x={element.width - 7}
+      y={element.height - 7}
+      width={14}
+      height={14}
+      rx={3}
+      className="cursor-se-resize fill-surface stroke-accent stroke-2"
+      onPointerDown={(event) => onPointerDown(event, "resize")}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+    />
+  );
+}
+
+function TableShape({
   table,
+  clashing,
+  canEdit,
+  selected,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onKeyDown,
+}: { table: FloorTable; clashing: boolean } & ShapeHandlers) {
+  const outline = selected ? "stroke-accent" : clashing ? "stroke-danger" : "stroke-line-strong";
+  const fill = table.active ? "fill-surface" : "fill-surface-sunken";
+
+  return (
+    <g
+      transform={`translate(${table.x} ${table.y}) rotate(${table.rotation} ${table.width / 2} ${table.height / 2})`}
+      className={cx(canEdit ? "cursor-grab" : "cursor-pointer")}
+      role="button"
+      tabIndex={0}
+      aria-label={`Table ${table.label || "unlabelled"}, ${table.seats} seats`}
+      onKeyDown={onKeyDown}
+    >
+      {table.shape === "round" || table.shape === "oval" ? (
+        <ellipse
+          cx={table.width / 2}
+          cy={table.height / 2}
+          rx={table.width / 2}
+          ry={table.height / 2}
+          className={cx("stroke-2", fill, outline)}
+          onPointerDown={(event) => onPointerDown(event, "move")}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+        />
+      ) : (
+        <rect
+          width={table.width}
+          height={table.height}
+          rx={table.shape === "square" ? 6 : 8}
+          className={cx("stroke-2", fill, outline)}
+          onPointerDown={(event) => onPointerDown(event, "move")}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+        />
+      )}
+
+      <text
+        x={table.width / 2}
+        y={table.height / 2 - 2}
+        textAnchor="middle"
+        className={cx("pointer-events-none select-none text-[15px] font-semibold", table.active ? "fill-ink" : "fill-ink-subtle")}
+      >
+        {table.label || "—"}
+      </text>
+      <text
+        x={table.width / 2}
+        y={table.height / 2 + 14}
+        textAnchor="middle"
+        className="pointer-events-none select-none fill-ink-subtle text-[11px]"
+      >
+        {table.seats}
+      </text>
+
+      {selected && canEdit ? (
+        <ResizeHandle
+          element={table}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+        />
+      ) : null}
+    </g>
+  );
+}
+
+/**
+ * A feature, drawn as the thing it is.
+ *
+ * Each kind reads differently on purpose: a wall is solid, a window is open, a
+ * walkway is only an outline because nothing stands in it. Staff should be able
+ * to recognise their own restaurant at a glance rather than decode a legend.
+ */
+function FeatureShape({
+  feature,
+  canEdit,
+  selected,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onKeyDown,
+}: { feature: FloorFeature } & ShapeHandlers) {
+  const outline = selected ? "stroke-accent" : "stroke-line-strong";
+
+  const body = () => {
+    switch (feature.kind) {
+      case "wall":
+        return <rect width={feature.width} height={feature.height} className={cx("fill-ink-subtle stroke-2", outline)} />;
+      case "window":
+        return (
+          <>
+            <rect width={feature.width} height={feature.height} className={cx("fill-surface stroke-2", outline)} />
+            <line
+              x1={0}
+              y1={feature.height / 2}
+              x2={feature.width}
+              y2={feature.height / 2}
+              className={cx("stroke-2", outline)}
+            />
+          </>
+        );
+      case "door":
+        return (
+          <>
+            <rect width={feature.width} height={feature.height} className="fill-surface" />
+            <path
+              d={`M 0 ${feature.height} A ${feature.width} ${feature.width} 0 0 1 ${feature.width} ${feature.height}`}
+              className={cx("fill-none stroke-2", outline)}
+              strokeDasharray="6 4"
+            />
+            <line x1={0} y1={feature.height} x2={feature.width} y2={feature.height} className={cx("stroke-2", outline)} />
+          </>
+        );
+      case "path":
+        return (
+          <rect
+            width={feature.width}
+            height={feature.height}
+            rx={4}
+            className={cx("fill-none stroke-2", outline)}
+            strokeDasharray="8 6"
+          />
+        );
+      case "plant":
+        return (
+          <ellipse
+            cx={feature.width / 2}
+            cy={feature.height / 2}
+            rx={feature.width / 2}
+            ry={feature.height / 2}
+            className={cx("fill-surface-sunken stroke-2", outline)}
+          />
+        );
+      case "text":
+        return <rect width={feature.width} height={feature.height} className="fill-none" />;
+      default:
+        // Stage, bar and screen: solid furniture with a name on it.
+        return (
+          <rect
+            width={feature.width}
+            height={feature.height}
+            rx={6}
+            className={cx("fill-surface-sunken stroke-2", outline)}
+          />
+        );
+    }
+  };
+
+  const caption = feature.label || (feature.kind === "text" ? "" : FEATURE_LABELS[feature.kind]);
+
+  return (
+    <g
+      transform={`translate(${feature.x} ${feature.y}) rotate(${feature.rotation} ${feature.width / 2} ${feature.height / 2})`}
+      className={cx(canEdit ? "cursor-grab" : "cursor-pointer")}
+      role="button"
+      tabIndex={0}
+      aria-label={`${FEATURE_LABELS[feature.kind]}${feature.label ? `: ${feature.label}` : ""}`}
+      onKeyDown={onKeyDown}
+      onPointerDown={(event) => onPointerDown(event, "move")}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+    >
+      {body()}
+
+      {caption && feature.height >= 30 ? (
+        <text
+          x={feature.width / 2}
+          y={feature.height / 2 + 4}
+          textAnchor="middle"
+          className="pointer-events-none select-none fill-ink-muted text-[12px] font-medium"
+        >
+          {caption}
+        </text>
+      ) : null}
+
+      {selected && canEdit ? (
+        <ResizeHandle
+          element={feature}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+        />
+      ) : null}
+    </g>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * The properties panel
+ * ------------------------------------------------------------------ */
+
+function ElementProperties({
+  element,
+  kind,
   canEdit,
   clashing,
   onChange,
   onRemove,
+  onDuplicate,
 }: {
-  table: FloorTable | null;
+  element: FloorTable | FloorFeature | null;
+  kind: "table" | "feature" | null;
   canEdit: boolean;
   clashing: boolean;
-  onChange: (edit: (table: FloorTable) => FloorTable) => void;
+  onChange: (edit: <T extends Placed>(element: T) => T) => void;
   onRemove: () => void;
+  onDuplicate: () => void;
 }) {
-  if (!table) {
+  if (!element || !kind) {
     return (
       <div className="rounded-control border border-dashed border-line-strong p-5 text-sm text-ink-subtle">
-        Select a table to change its label, seats or shape.
+        Select a table or a feature to change it. Add tables and the rest of the room from the buttons above.
       </div>
     );
   }
 
-  const tags = table.tags ?? [];
-
-  const toggleTag = (tag: string) => {
-    onChange((current) => {
-      const held = current.tags ?? [];
-      return {
-        ...current,
-        tags: held.includes(tag) ? held.filter((entry) => entry !== tag) : [...held, tag],
-      };
-    });
-  };
+  const table = kind === "table" ? (element as FloorTable) : null;
+  const feature = kind === "feature" ? (element as FloorFeature) : null;
+  const tags = table?.tags ?? [];
 
   return (
     <div className="flex flex-col gap-4 rounded-control border border-line bg-surface-muted p-5">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-muted">Selected table</h2>
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-muted">
+        {table ? "Selected table" : `Selected ${FEATURE_LABELS[feature!.kind].toLowerCase()}`}
+      </h2>
 
-      <Field
-        label="Label"
-        hint={clashing ? "Another table already uses this label." : "Appears on the service sheet."}
-      >
-        {(fieldProps) => (
-          <Input
-            {...fieldProps}
-            maxLength={12}
-            disabled={!canEdit}
-            value={table.label}
-            onChange={(event) => onChange((current) => ({ ...current, label: event.target.value }))}
-          />
-        )}
-      </Field>
+      {table ? (
+        <>
+          <Field label="Label" hint={clashing ? "Another table already uses this label." : "Appears on the service sheet."}>
+            {(fieldProps) => (
+              <Input
+                {...fieldProps}
+                maxLength={12}
+                disabled={!canEdit}
+                value={table.label}
+                onChange={(event) => onChange((current) => ({ ...current, label: event.target.value }))}
+              />
+            )}
+          </Field>
 
-      <Field label="Seats">
-        {(fieldProps) => (
-          <Input
-            {...fieldProps}
-            type="number"
-            min={0}
-            max={MAX_SEATS_PER_TABLE}
-            disabled={!canEdit}
-            value={table.seats}
-            onChange={(event) =>
-              onChange((current) => ({
-                ...current,
-                seats: Math.min(Math.max(Math.round(Number(event.target.value) || 0), 0), MAX_SEATS_PER_TABLE),
-              }))
-            }
-          />
-        )}
-      </Field>
+          <Field label="Seats">
+            {(fieldProps) => (
+              <Input
+                {...fieldProps}
+                type="number"
+                min={0}
+                max={MAX_SEATS_PER_TABLE}
+                disabled={!canEdit}
+                value={table.seats}
+                onChange={(event) =>
+                  onChange((current) => ({
+                    ...current,
+                    seats: Math.min(Math.max(Math.round(Number(event.target.value) || 0), 0), MAX_SEATS_PER_TABLE),
+                  }))
+                }
+              />
+            )}
+          </Field>
 
-      <Field label="Shape">
-        {(fieldProps) => (
-          <Select
-            {...fieldProps}
-            disabled={!canEdit}
-            value={table.shape}
-            onChange={(event) => {
-              const shape = event.target.value as TableShape;
-              // Re-clamped: a rectangle is wider, so a round table flush to the
-              // right wall would otherwise end up outside the room.
-              onChange((current) => ({
-                ...current,
-                shape,
-                ...clampToPlan({ x: current.x, y: current.y, shape }),
-              }));
-            }}
-          >
-            {TABLE_SHAPES.map((shape) => (
-              <option key={shape} value={shape}>
-                {SHAPE_LABELS[shape]}
-              </option>
-            ))}
-          </Select>
-        )}
-      </Field>
-
-      {table.shape === "rectangle" ? (
-        <Button
-          variant="secondary"
-          disabled={!canEdit}
-          onClick={() => onChange((current) => ({ ...current, rotation: ((current.rotation ?? 0) + 90) % 360 }))}
-        >
-          Rotate a quarter turn ({table.rotation ?? 0}°)
-        </Button>
-      ) : null}
-
-      <label className="flex items-center gap-3 text-sm text-ink">
-        <input
-          type="checkbox"
-          disabled={!canEdit}
-          checked={table.active}
-          onChange={(event) => onChange((current) => ({ ...current, active: event.target.checked }))}
-          className="size-4"
-        />
-        In service
-      </label>
-      <p className="-mt-2 text-sm text-ink-subtle">
-        A table out of service stays on the plan but is not counted in the seat total.
-      </p>
-
-      <div>
-        <p className="text-sm font-medium text-ink-muted">Tags</p>
-        <p className="mb-2 text-sm text-ink-subtle">
-          What a guest might ask for. Nothing reads these yet.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {[...new Set([...SUGGESTED_TAGS, ...tags])].map((tag) => (
-            <button
-              key={tag}
-              type="button"
+          <Field label="Shape">
+            {(fieldProps) => (
+              <Select
+                {...fieldProps}
+                disabled={!canEdit}
+                value={table.shape}
+                onChange={(event) => {
+                  const shape = event.target.value as TableShape;
+                  // Takes the new shape's default size, since a round table
+                  // stretched into an oval is otherwise still a circle.
+                  const size = clampSize(DEFAULT_TABLE_SIZE[shape].width, DEFAULT_TABLE_SIZE[shape].height);
+                  onChange((current) => ({
+                    ...current,
+                    shape,
+                    ...size,
+                    ...clampPosition({ x: current.x, y: current.y, ...size }),
+                  }));
+                }}
+              >
+                {TABLE_SHAPES.map((shape) => (
+                  <option key={shape} value={shape}>
+                    {SHAPE_LABELS[shape]}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+        </>
+      ) : (
+        <Field label="Name" hint="Drawn on the plan. The stage is worth naming — guests ask about the music.">
+          {(fieldProps) => (
+            <Input
+              {...fieldProps}
+              maxLength={40}
               disabled={!canEdit}
-              onClick={() => toggleTag(tag)}
-              className={cx(
-                "min-h-9 rounded-full border px-3 py-1 text-sm transition-colors disabled:opacity-60",
-                tags.includes(tag)
-                  ? "border-accent bg-accent-soft text-ink"
-                  : "border-line-strong bg-surface text-ink-muted hover:border-accent",
-              )}
-            >
-              {tag}
-            </button>
-          ))}
-        </div>
+              placeholder={FEATURE_LABELS[feature!.kind]}
+              value={feature!.label ?? ""}
+              onChange={(event) => onChange((current) => ({ ...current, label: event.target.value }))}
+            />
+          )}
+        </Field>
+      )}
+
+      {/* Size, typed as well as dragged: a bar is easier to make exactly 300
+          wide here than by aiming at a corner handle. */}
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Width">
+          {(fieldProps) => (
+            <Input
+              {...fieldProps}
+              type="number"
+              min={MIN_SIZE}
+              max={MAX_SIZE}
+              step={GRID}
+              disabled={!canEdit}
+              value={element.width}
+              onChange={(event) =>
+                onChange((current) => {
+                  const size = clampSize(Number(event.target.value) || MIN_SIZE, current.height);
+                  return { ...current, ...size, ...clampPosition({ x: current.x, y: current.y, ...size }) };
+                })
+              }
+            />
+          )}
+        </Field>
+        <Field label="Height">
+          {(fieldProps) => (
+            <Input
+              {...fieldProps}
+              type="number"
+              min={MIN_SIZE}
+              max={MAX_SIZE}
+              step={GRID}
+              disabled={!canEdit}
+              value={element.height}
+              onChange={(event) =>
+                onChange((current) => {
+                  const size = clampSize(current.width, Number(event.target.value) || MIN_SIZE);
+                  return { ...current, ...size, ...clampPosition({ x: current.x, y: current.y, ...size }) };
+                })
+              }
+            />
+          )}
+        </Field>
       </div>
 
+      <Button
+        variant="secondary"
+        disabled={!canEdit}
+        onClick={() => onChange((current) => ({ ...current, rotation: (current.rotation + 90) % 360 }))}
+      >
+        Rotate a quarter turn ({element.rotation}°)
+      </Button>
+
+      {table ? (
+        <>
+          <label className="flex items-center gap-3 text-sm text-ink">
+            <input
+              type="checkbox"
+              disabled={!canEdit}
+              checked={table.active}
+              onChange={(event) => onChange((current) => ({ ...current, active: event.target.checked }))}
+              className="size-4"
+            />
+            In service
+          </label>
+          <p className="-mt-2 text-sm text-ink-subtle">
+            A table out of service stays on the plan but is not counted in the seat total.
+          </p>
+
+          <div>
+            <p className="text-sm font-medium text-ink-muted">Tags</p>
+            <p className="mb-2 text-sm text-ink-subtle">What a guest might ask for. Nothing reads these yet.</p>
+            <div className="flex flex-wrap gap-2">
+              {[...new Set([...SUGGESTED_TAGS, ...tags])].map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  disabled={!canEdit}
+                  onClick={() =>
+                    onChange((current) => {
+                      const held = (current as unknown as FloorTable).tags ?? [];
+                      return {
+                        ...current,
+                        tags: held.includes(tag) ? held.filter((entry) => entry !== tag) : [...held, tag],
+                      };
+                    })
+                  }
+                  className={cx(
+                    "min-h-9 rounded-full border px-3 py-1 text-sm transition-colors disabled:opacity-60",
+                    tags.includes(tag)
+                      ? "border-accent bg-accent-soft text-ink"
+                      : "border-line-strong bg-surface text-ink-muted hover:border-accent",
+                  )}
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      ) : null}
+
       {canEdit ? (
-        <Button variant="secondary" onClick={onRemove}>
-          Remove this table
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={onDuplicate}>
+            Duplicate
+          </Button>
+          <Button variant="secondary" onClick={onRemove}>
+            Remove
+          </Button>
+        </div>
       ) : null}
     </div>
   );

@@ -4,12 +4,17 @@ import {
   DEFAULT_TABLE_SIZE,
   EMPTY_PLAN,
   GRID,
-  MAX_SIZE,
+  CM_PER_M,
+  DEFAULT_ZONE_HEIGHT,
+  DEFAULT_ZONE_WIDTH,
+  MAX_ZONE_SIDE,
   MIN_SIZE,
-  PLAN_HEIGHT,
-  PLAN_WIDTH,
+  MIN_ZONE_SIDE,
+  chairPositions,
   clampPosition,
   clampSize,
+  clampZoneSize,
+  formatLength,
   countPlan,
   countZone,
   describePlanProblems,
@@ -18,6 +23,7 @@ import {
   newTable,
   newZone,
   snap,
+  zoneArea,
   toFloorPlan,
   type FloorPlan,
   type FloorTable,
@@ -54,7 +60,15 @@ function table(extra: Partial<FloorTable> = {}): FloorTable {
 }
 
 function zone(tables: FloorTable[], extra: Partial<FloorZone> = {}): FloorZone {
-  return { id: "z1", name: "Main hall", tables, features: [], ...extra };
+  return {
+    id: "z1",
+    name: "Main hall",
+    width: DEFAULT_ZONE_WIDTH,
+    height: DEFAULT_ZONE_HEIGHT,
+    tables,
+    features: [],
+    ...extra,
+  };
 }
 
 describe("reading a stored plan", () => {
@@ -122,7 +136,7 @@ describe("reading a stored plan", () => {
 
     const [only] = plan.zones[0].tables;
     expect(only.x).toBe(0);
-    expect(only.y).toBe(PLAN_HEIGHT - 70);
+    expect(only.y).toBe(DEFAULT_ZONE_HEIGHT - 70);
   });
 
   it("holds a size within what can be drawn", () => {
@@ -141,7 +155,7 @@ describe("reading a stored plan", () => {
 
     const [tiny, odd] = plan.zones[0].tables;
     expect(tiny.width).toBe(MIN_SIZE);
-    expect(tiny.height).toBeLessThanOrEqual(MAX_SIZE);
+    expect(tiny.height).toBeLessThanOrEqual(DEFAULT_ZONE_HEIGHT);
     // Sizes land on the grid, like everything else.
     expect(odd.width % GRID).toBe(0);
     expect(odd.height % GRID).toBe(0);
@@ -317,8 +331,8 @@ describe("adding to the plan", () => {
 
     expect(created.x % GRID).toBe(0);
     expect(created.y % GRID).toBe(0);
-    expect(created.x + created.width).toBeLessThanOrEqual(PLAN_WIDTH);
-    expect(created.y + created.height).toBeLessThanOrEqual(PLAN_HEIGHT);
+    expect(created.x + created.width).toBeLessThanOrEqual(DEFAULT_ZONE_WIDTH);
+    expect(created.y + created.height).toBeLessThanOrEqual(DEFAULT_ZONE_HEIGHT);
   });
 
   it("does not drop a new table on top of an existing one", () => {
@@ -360,11 +374,130 @@ describe("the grid", () => {
     expect(snap(6)).toBe(10);
   });
 
-  it("keeps a wide thing's far edge inside the room", () => {
-    expect(clampPosition({ x: PLAN_WIDTH + 100, y: 0, width: 300, height: 60 }).x).toBe(PLAN_WIDTH - 300);
+  it("keeps a wide thing's far edge inside the hall", () => {
+    expect(clampPosition({ x: DEFAULT_ZONE_WIDTH + 100, y: 0, width: 300, height: 60 }).x).toBe(
+      DEFAULT_ZONE_WIDTH - 300,
+    );
+  });
+
+  /**
+   * The far wall is reachable. There is no dead band at the end of a hall —
+   * something 300 wide in a 1400 hall may sit at exactly 1100, flush against
+   * the wall, and the corner is both walls at once.
+   */
+  it("lets something sit flush against the far wall and into the corner", () => {
+    const hall = { width: 1400, height: 900 };
+
+    expect(clampPosition({ x: 1100, y: 0, width: 300, height: 60 }, hall).x).toBe(1100);
+    expect(clampPosition({ x: 99_999, y: 99_999, width: 300, height: 60 }, hall)).toEqual({ x: 1100, y: 840 });
   });
 
   it("refuses to make anything smaller than it can be grabbed", () => {
     expect(clampSize(1, 1)).toEqual({ width: MIN_SIZE, height: MIN_SIZE });
+  });
+});
+
+describe("the hall itself", () => {
+  it("holds a zone between an alcove and a banqueting hall", () => {
+    expect(clampZoneSize(10, 10)).toEqual({ width: MIN_ZONE_SIDE, height: MIN_ZONE_SIDE });
+    expect(clampZoneSize(99_999, 99_999)).toEqual({ width: MAX_ZONE_SIDE, height: MAX_ZONE_SIDE });
+  });
+
+  it("gives a zone drawn before halls had dimensions the default size", () => {
+    // Which is the size everything was implicitly laid out in, so an existing
+    // plan keeps every table exactly where it was put.
+    const plan = toFloorPlan({ zones: [{ id: "z1", name: "Main", tables: [], features: [] }] });
+
+    expect(plan.zones[0].width).toBe(DEFAULT_ZONE_WIDTH);
+    expect(plan.zones[0].height).toBe(DEFAULT_ZONE_HEIGHT);
+  });
+
+  it("will not let anything be larger than the hall holding it", () => {
+    const plan = toFloorPlan({
+      zones: [
+        {
+          id: "z1",
+          name: "Alcove",
+          width: 300,
+          height: 300,
+          tables: [{ id: "t1", label: "1", width: 900, height: 900 }],
+          features: [],
+        },
+      ],
+    });
+
+    const [only] = plan.zones[0].tables;
+    expect(only.width).toBeLessThanOrEqual(300);
+    expect(only.height).toBeLessThanOrEqual(300);
+  });
+
+  it("pulls a table inside when the hall it stands in is shrunk", () => {
+    const plan = toFloorPlan({
+      zones: [
+        {
+          id: "z1",
+          name: "Shrunk",
+          width: 400,
+          height: 400,
+          tables: [{ id: "t1", label: "1", x: 1200, y: 800, width: 70, height: 70 }],
+          features: [],
+        },
+      ],
+    });
+
+    const [only] = plan.zones[0].tables;
+    expect(only.x).toBeLessThanOrEqual(400 - only.width);
+    expect(only.y).toBeLessThanOrEqual(400 - only.height);
+  });
+});
+
+describe("real-world dimensions", () => {
+  it("says centimetres as centimetres and metres as metres", () => {
+    expect(formatLength(70)).toBe("70 cm");
+    expect(formatLength(CM_PER_M)).toBe("1 m");
+    expect(formatLength(1400)).toBe("14 m");
+    expect(formatLength(120)).toBe("1.2 m");
+  });
+
+  it("gives the floor area in square metres", () => {
+    expect(zoneArea({ width: 1400, height: 900 })).toBe(126);
+    expect(zoneArea({ width: 350, height: 250 })).toBe(8.8);
+  });
+});
+
+describe("chairs", () => {
+  it("draws one chair per seat", () => {
+    expect(chairPositions({ seats: 6, shape: "rectangle", width: 120, height: 70 })).toHaveLength(6);
+    expect(chairPositions({ seats: 4, shape: "round", width: 70, height: 70 })).toHaveLength(4);
+  });
+
+  /**
+   * The chairs are derived, so changing the seat count changes the drawing.
+   * There is no way for the two to disagree, which is the reason they are not
+   * stored as separate objects somebody could forget to update.
+   */
+  it("follows the seat count rather than being placed by hand", () => {
+    const table = { shape: "round" as const, width: 70, height: 70 };
+
+    expect(chairPositions({ ...table, seats: 2 })).toHaveLength(2);
+    expect(chairPositions({ ...table, seats: 8 })).toHaveLength(8);
+    expect(chairPositions({ ...table, seats: 0 })).toEqual([]);
+  });
+
+  it("puts more chairs along the long sides of a rectangle", () => {
+    const chairs = chairPositions({ seats: 6, shape: "rectangle", width: 240, height: 70 });
+    const above = chairs.filter((chair) => chair.y < 0).length;
+    const below = chairs.filter((chair) => chair.y > 70).length;
+
+    // A long table seats people down its length, not crowded at the ends.
+    expect(above + below).toBeGreaterThan(chairs.length - above - below);
+  });
+
+  it("places every chair clear of the table it belongs to", () => {
+    for (const chair of chairPositions({ seats: 4, shape: "square", width: 70, height: 70 })) {
+      const clear =
+        chair.x + 42 <= 0 || chair.x >= 70 || chair.y + 42 <= 0 || chair.y >= 70;
+      expect(clear).toBe(true);
+    }
   });
 });

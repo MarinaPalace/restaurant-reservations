@@ -16,19 +16,25 @@ import {
   MAX_SIZE,
   MAX_TABLES_PER_ZONE,
   MAX_ZONES,
+  MAX_ZONE_SIDE,
   MIN_SIZE,
-  PLAN_HEIGHT,
-  PLAN_WIDTH,
+  MIN_ZONE_SIDE,
   TABLE_SHAPES,
+  CHAIR_SIZE,
+  chairPositions,
   clampPosition,
   clampSize,
+  clampZoneSize,
   countPlan,
   countZone,
   describePlanProblems,
   duplicateLabels,
+  formatLength,
+  formatSize,
   newFeature,
   newTable,
   newZone,
+  zoneArea,
   type FeatureKind,
   type FloorFeature,
   type FloorPlan,
@@ -36,6 +42,7 @@ import {
   type FloorZone,
   type Placed,
   type TableShape,
+  type ZoneSize,
 } from "@/lib/floor-plan";
 
 /**
@@ -86,6 +93,8 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
   const drag = useRef<{ mode: DragMode; offsetX: number; offsetY: number } | null>(null);
 
   const zone = plan.zones.find((entry) => entry.id === activeZoneId) ?? plan.zones[0] ?? null;
+  /** The hall's own dimensions, which every clamp below is measured against. */
+  const zoneSize: ZoneSize = zone ?? { width: 1400, height: 900 };
 
   const selected: FloorTable | FloorFeature | null = useMemo(() => {
     if (!zone || !selection) return null;
@@ -129,18 +138,24 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
    * Dragging and resizing
    * ---------------------------------------------------------------- */
 
-  /** Pointer position in plan units, whatever size the SVG is on screen. */
+  /**
+   * Pointer position in centimetres of restaurant.
+   *
+   * Via the SVG's own screen matrix rather than its bounding box, and that is
+   * the fix for a real bug: the viewBox is letterboxed inside the element
+   * whenever the two aspect ratios differ, so measuring against the element
+   * rect included the empty bars and skewed every coordinate. The further from
+   * the middle, the worse it got — which is why the corners and the far wall
+   * behaved like dead space that nothing could be dragged into. `getScreenCTM`
+   * knows about the viewBox, the aspect ratio and any CSS transform above it.
+   */
   const toPlanUnits = (event: { clientX: number; clientY: number }) => {
     const svg = svgRef.current;
-    if (!svg) return null;
+    const matrix = svg?.getScreenCTM();
+    if (!svg || !matrix) return null;
 
-    const rect = svg.getBoundingClientRect();
-    if (!rect.width || !rect.height) return null;
-
-    return {
-      x: ((event.clientX - rect.left) / rect.width) * PLAN_WIDTH,
-      y: ((event.clientY - rect.top) / rect.height) * PLAN_HEIGHT,
-    };
+    const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
+    return { x: point.x, y: point.y };
   };
 
   const startDrag = (
@@ -174,12 +189,15 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
 
     if (active.mode === "move") {
       // Snapped and clamped as it moves, so what is on screen is what saves.
-      const position = clampPosition({
-        x: point.x - active.offsetX,
-        y: point.y - active.offsetY,
-        width: element.width,
-        height: element.height,
-      });
+      const position = clampPosition(
+        {
+          x: point.x - active.offsetX,
+          y: point.y - active.offsetY,
+          width: element.width,
+          height: element.height,
+        },
+        zoneSize,
+      );
 
       if (position.x !== element.x || position.y !== element.y) {
         editSelected((current) => ({ ...current, ...position }));
@@ -187,14 +205,18 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
       return;
     }
 
-    const size = clampSize(point.x - active.offsetX - element.x, point.y - active.offsetY - element.y);
+    const size = clampSize(
+      point.x - active.offsetX - element.x,
+      point.y - active.offsetY - element.y,
+      zoneSize,
+    );
 
     if (size.width !== element.width || size.height !== element.height) {
       // Re-clamped, since growing something at the far wall would push it out.
       editSelected((current) => ({
         ...current,
         ...size,
-        ...clampPosition({ x: current.x, y: current.y, ...size }),
+        ...clampPosition({ x: current.x, y: current.y, ...size }, zoneSize),
       }));
     }
   };
@@ -222,12 +244,10 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
     event.preventDefault();
     editSelected((current) => ({
       ...current,
-      ...clampPosition({
-        x: element.x + move[0],
-        y: element.y + move[1],
-        width: element.width,
-        height: element.height,
-      }),
+      ...clampPosition(
+        { x: element.x + move[0], y: element.y + move[1], width: element.width, height: element.height },
+        zoneSize,
+      ),
     }));
   };
 
@@ -254,6 +274,31 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
     change({ ...plan, zones });
     setActiveZoneId(zones[0]?.id ?? "");
     setSelection(null);
+  };
+
+  /**
+   * Changes the hall's dimensions, and pulls anything now outside back in.
+   *
+   * Shrinking a hall must not leave tables stranded beyond its wall where they
+   * cannot be selected — so everything is re-clamped into the new size, which
+   * is the same thing `toFloorPlan` would do on the next read anyway.
+   */
+  const resizeZone = (width: number, height: number) => {
+    const size = clampZoneSize(width || MIN_ZONE_SIDE, height || MIN_ZONE_SIDE);
+
+    editZone((current) => {
+      const fit = <T extends Placed>(element: T): T => {
+        const sized = clampSize(element.width, element.height, size);
+        return { ...element, ...sized, ...clampPosition({ ...element, ...sized }, size) };
+      };
+
+      return {
+        ...current,
+        ...size,
+        tables: current.tables.map(fit),
+        features: current.features.map(fit),
+      };
+    });
   };
 
   const addTable = (shape: TableShape) => {
@@ -289,12 +334,10 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
     const copy = {
       ...selected,
       id: `f-${Math.random().toString(36).slice(2, 10)}`,
-      ...clampPosition({
-        x: selected.x + GRID * 2,
-        y: selected.y + GRID * 2,
-        width: selected.width,
-        height: selected.height,
-      }),
+      ...clampPosition(
+        { x: selected.x + GRID * 2, y: selected.y + GRID * 2, width: selected.width, height: selected.height },
+        zoneSize,
+      ),
     };
 
     if (selection.kind === "table") {
@@ -456,10 +499,44 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
                       )}
                     </Field>
                   </div>
+                  <div className="w-28">
+                    <Field label="Width (cm)" hint={formatLength(zone.width)}>
+                      {(fieldProps) => (
+                        <Input
+                          {...fieldProps}
+                          type="number"
+                          min={MIN_ZONE_SIDE}
+                          max={MAX_ZONE_SIDE}
+                          step={GRID}
+                          value={zone.width}
+                          onChange={(event) => resizeZone(Number(event.target.value), zone.height)}
+                        />
+                      )}
+                    </Field>
+                  </div>
+                  <div className="w-28">
+                    <Field label="Depth (cm)" hint={formatLength(zone.height)}>
+                      {(fieldProps) => (
+                        <Input
+                          {...fieldProps}
+                          type="number"
+                          min={MIN_ZONE_SIDE}
+                          max={MAX_ZONE_SIDE}
+                          step={GRID}
+                          value={zone.height}
+                          onChange={(event) => resizeZone(zone.width, Number(event.target.value))}
+                        />
+                      )}
+                    </Field>
+                  </div>
                   <Button variant="secondary" onClick={removeZone}>
                     Delete zone
                   </Button>
                 </div>
+                <p className="text-sm text-ink-subtle">
+                  Measure the hall and type it here — {formatSize(zone)}, {zoneArea(zone)} m² of floor. One grid square
+                  is half a metre. An L-shaped hall is its bounding rectangle with the missing part walled off.
+                </p>
 
                 <div>
                   <p className="text-sm font-medium text-ink-muted">Tables</p>
@@ -489,7 +566,8 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
               <div className="overflow-x-auto">
                 <svg
                   ref={svgRef}
-                  viewBox={`0 0 ${PLAN_WIDTH} ${PLAN_HEIGHT}`}
+                  viewBox={`0 0 ${zone.width} ${zone.height}`}
+                  preserveAspectRatio="xMidYMid meet"
                   className="w-full min-w-[44rem] touch-none rounded-control border border-line bg-surface-muted"
                   role="group"
                   aria-label={`Floor plan of ${zone.name}`}
@@ -499,6 +577,7 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
                 >
                   <defs>
                     <pattern id="floor-grid" width={GRID * 5} height={GRID * 5} patternUnits="userSpaceOnUse">
+                      {/* One square is half a metre of floor. */}
                       <path
                         d={`M ${GRID * 5} 0 L 0 0 0 ${GRID * 5}`}
                         fill="none"
@@ -508,7 +587,14 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
                       />
                     </pattern>
                   </defs>
-                  <rect width={PLAN_WIDTH} height={PLAN_HEIGHT} fill="url(#floor-grid)" />
+                  {/* The hall itself: its walls are the edge of the drawing. */}
+                  <rect width={zone.width} height={zone.height} fill="url(#floor-grid)" />
+                  <rect
+                    width={zone.width}
+                    height={zone.height}
+                    className="fill-none stroke-line-strong"
+                    strokeWidth={4}
+                  />
 
                   {/* Features first, so a table is never hidden under the bar. */}
                   {zone.features.map((feature) => (
@@ -551,6 +637,7 @@ export function FloorPlanDesigner({ initialPlan, canEdit }: { initialPlan: Floor
               <ElementProperties
                 element={selected}
                 kind={selection?.kind ?? null}
+                zone={zoneSize}
                 canEdit={canEdit}
                 clashing={
                   selection?.kind === "table" && selected
@@ -656,6 +743,28 @@ function TableShape({
         />
       )}
 
+      {/* Chairs are derived from the seat count, so they cannot be left behind
+          when the table moves nor forgotten when it is duplicated. Drawn inside
+          the table's transform, so they rotate with it. */}
+      {table.chairs !== false
+        ? chairPositions(table).map((chair, index) => (
+            <rect
+              key={index}
+              x={chair.x}
+              y={chair.y}
+              width={CHAIR_SIZE}
+              height={CHAIR_SIZE}
+              rx={6}
+              transform={`rotate(${chair.rotation} ${chair.x + CHAIR_SIZE / 2} ${chair.y + CHAIR_SIZE / 2})`}
+              className={cx(
+                "pointer-events-none",
+                table.active ? "fill-surface-muted stroke-line-strong" : "fill-surface-sunken stroke-line",
+              )}
+              strokeWidth={2}
+            />
+          ))
+        : null}
+
       <text
         x={table.width / 2}
         y={table.height / 2 - 2}
@@ -733,12 +842,21 @@ function FeatureShape({
           </>
         );
       case "path":
+        /**
+         * A walkway is drawn as an outline because nothing stands in it — but
+         * an outline is only grabbable *on the line*, which made it almost
+         * impossible to pick up or move. The fill is transparent rather than
+         * absent: it takes pointer events across the whole shape, so the
+         * walkway grabs like everything else while still reading as empty
+         * floor.
+         */
         return (
           <rect
             width={feature.width}
             height={feature.height}
             rx={4}
-            className={cx("fill-none stroke-2", outline)}
+            fill="transparent"
+            className={cx("stroke-2", outline)}
             strokeDasharray="8 6"
           />
         );
@@ -753,7 +871,9 @@ function FeatureShape({
           />
         );
       case "text":
-        return <rect width={feature.width} height={feature.height} className="fill-none" />;
+        // Same reasoning as the walkway: a label with no box still has to be
+        // grabbable somewhere.
+        return <rect width={feature.width} height={feature.height} fill="transparent" />;
       default:
         // Stage, bar and screen: solid furniture with a name on it.
         return (
@@ -814,6 +934,7 @@ function FeatureShape({
 function ElementProperties({
   element,
   kind,
+  zone,
   canEdit,
   clashing,
   onChange,
@@ -822,6 +943,7 @@ function ElementProperties({
 }: {
   element: FloorTable | FloorFeature | null;
   kind: "table" | "feature" | null;
+  zone: ZoneSize;
   canEdit: boolean;
   clashing: boolean;
   onChange: (edit: <T extends Placed>(element: T) => T) => void;
@@ -845,6 +967,7 @@ function ElementProperties({
       <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-muted">
         {table ? "Selected table" : `Selected ${FEATURE_LABELS[feature!.kind].toLowerCase()}`}
       </h2>
+      <p className="-mt-2 text-sm text-ink-subtle">{formatSize(element)}</p>
 
       {table ? (
         <>
@@ -889,12 +1012,12 @@ function ElementProperties({
                   const shape = event.target.value as TableShape;
                   // Takes the new shape's default size, since a round table
                   // stretched into an oval is otherwise still a circle.
-                  const size = clampSize(DEFAULT_TABLE_SIZE[shape].width, DEFAULT_TABLE_SIZE[shape].height);
+                  const size = clampSize(DEFAULT_TABLE_SIZE[shape].width, DEFAULT_TABLE_SIZE[shape].height, zone);
                   onChange((current) => ({
                     ...current,
                     shape,
                     ...size,
-                    ...clampPosition({ x: current.x, y: current.y, ...size }),
+                    ...clampPosition({ x: current.x, y: current.y, ...size }, zone),
                   }));
                 }}
               >
@@ -925,7 +1048,7 @@ function ElementProperties({
       {/* Size, typed as well as dragged: a bar is easier to make exactly 300
           wide here than by aiming at a corner handle. */}
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Width">
+        <Field label="Width (cm)" hint={formatLength(element.width)}>
           {(fieldProps) => (
             <Input
               {...fieldProps}
@@ -937,14 +1060,14 @@ function ElementProperties({
               value={element.width}
               onChange={(event) =>
                 onChange((current) => {
-                  const size = clampSize(Number(event.target.value) || MIN_SIZE, current.height);
-                  return { ...current, ...size, ...clampPosition({ x: current.x, y: current.y, ...size }) };
+                  const size = clampSize(Number(event.target.value) || MIN_SIZE, current.height, zone);
+                  return { ...current, ...size, ...clampPosition({ x: current.x, y: current.y, ...size }, zone) };
                 })
               }
             />
           )}
         </Field>
-        <Field label="Height">
+        <Field label="Depth (cm)" hint={formatLength(element.height)}>
           {(fieldProps) => (
             <Input
               {...fieldProps}
@@ -956,8 +1079,8 @@ function ElementProperties({
               value={element.height}
               onChange={(event) =>
                 onChange((current) => {
-                  const size = clampSize(current.width, Number(event.target.value) || MIN_SIZE);
-                  return { ...current, ...size, ...clampPosition({ x: current.x, y: current.y, ...size }) };
+                  const size = clampSize(current.width, Number(event.target.value) || MIN_SIZE, zone);
+                  return { ...current, ...size, ...clampPosition({ x: current.x, y: current.y, ...size }, zone) };
                 })
               }
             />
@@ -975,6 +1098,21 @@ function ElementProperties({
 
       {table ? (
         <>
+          <label className="flex items-center gap-3 text-sm text-ink">
+            <input
+              type="checkbox"
+              disabled={!canEdit}
+              checked={table.chairs !== false}
+              onChange={(event) => onChange((current) => ({ ...current, chairs: event.target.checked }))}
+              className="size-4"
+            />
+            Draw chairs
+          </label>
+          <p className="-mt-2 text-sm text-ink-subtle">
+            One chair per seat, placed around the table and turned with it. Change the seat count and the chairs
+            follow — there is nothing to place by hand and nothing to leave behind when the table moves.
+          </p>
+
           <label className="flex items-center gap-3 text-sm text-ink">
             <input
               type="checkbox"

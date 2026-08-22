@@ -345,3 +345,62 @@ came back 90°.
 
 §6 is untouched and stays untouched until the designer is right, which is the order asked for. When
 it starts, §2 is the section that matters — the table claim, and its concurrency test written first.
+
+---
+
+## 13. Real dimensions, halls you can size, and chairs
+
+Four things from drawing a real restaurant with §11.
+
+### The dead space was a bug
+
+Tables could not be dragged into the corners or against the far wall. That was not a clamping
+rule — it was the pointer maths. The plan is an SVG with a `viewBox`, which by default is
+**letterboxed** inside its element (`xMidYMid meet`), and the old code measured the pointer against
+the element's bounding box: the empty bars were counted as floor. Every coordinate was skewed, worse
+the further from the centre, so the edges could not be reached at all.
+
+It now converts through the SVG's own `getScreenCTM()`, which knows about the viewBox, the aspect
+ratio and any transform above it. There is a test that something 300 wide in a 1400 hall may sit at
+exactly 1100 — flush to the wall — and that a wild coordinate lands in the corner rather than short
+of it.
+
+### Everything is centimetres of real restaurant
+
+A table 120 wide is 1.2 m. A hall of 1600 × 1000 is 16 m × 10 m, and says so on screen along with
+its floor area. Staff measure with a tape and type what they measured.
+
+No migration was needed: the numbers the earlier version stored were already in this range — a table
+of 70, a bar of 300 — so reading them as centimetres makes them mean what they always looked like
+they meant.
+
+### Halls have their own size
+
+`width` and `height` per zone, editable, from a 2 m alcove to a 60 m hall. Nothing may be larger than
+the hall holding it, and **shrinking a hall pulls everything back inside it** rather than stranding
+tables beyond a wall where they cannot be selected.
+
+A zone drawn before this takes the default 14 × 9 m, which is the size everything was implicitly laid
+out in, so an existing plan keeps every table exactly where it was put.
+
+**On "form":** a hall is a rectangle. An L-shaped or irregular room is drawn as its bounding
+rectangle with the missing part walled off, which is what the `wall` feature is for. A polygon editor
+would be a great deal more to build and to get wrong, and walls describe the same room.
+
+### Chairs are derived, not placed
+
+One chair per seat, arranged by shape — evenly around a round table, along the sides of a rectangle
+with the long sides taking more, which is how a table is actually laid up.
+
+They are **computed from the seat count, not stored**. That is the whole reason they cannot be got
+wrong: they move, rotate, resize and duplicate with the table because they are not separate objects
+that could be left behind, and a table that seats five cannot be drawn with six chairs. Change the
+seats and the chairs follow. There is a per-table switch for a table that genuinely has none — a
+counter, a poseur.
+
+### The walkway can be picked up
+
+A walkway is drawn as an outline because nothing stands in it, and an outline is only grabbable *on
+the line* — which made it nearly impossible to move. Its fill is now `transparent` rather than
+absent: pointer events land across the whole shape while it still reads as empty floor. Same for the
+free-text label.

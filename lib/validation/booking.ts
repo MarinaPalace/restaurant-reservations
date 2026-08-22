@@ -532,6 +532,7 @@ export const floorTableSchema = z.object({
   seats: z.number().int().min(0).max(MAX_SEATS_PER_TABLE),
   shape: z.enum(TABLE_SHAPES),
   active: z.boolean(),
+  chairs: z.boolean().optional(),
   tags: z.array(z.string().trim().max(24)).max(8).optional(),
 });
 
@@ -545,6 +546,9 @@ export const floorFeatureSchema = z.object({
 export const floorZoneSchema = z.object({
   id: z.string().trim().min(1).max(64),
   name: z.string().trim().min(1).max(60),
+  /** The hall itself, in centimetres. Absent takes the default size. */
+  width: z.number().finite().optional(),
+  height: z.number().finite().optional(),
   tables: z.array(floorTableSchema).max(MAX_TABLES_PER_ZONE),
   features: z.array(floorFeatureSchema).max(MAX_FEATURES_PER_ZONE).optional(),
 });

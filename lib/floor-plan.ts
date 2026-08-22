@@ -64,11 +64,35 @@ export const FEATURE_LABELS: Record<FeatureKind, string> = {
   text: "Label",
 };
 
+/**
+ * **Every measurement in this module is centimetres of real restaurant.**
+ *
+ * A table 120 wide is 1.2 metres wide, and a zone 1400 by 900 is fourteen
+ * metres by nine. Staff measure their room with a tape and type what they
+ * measured; nothing has to be converted in anybody's head, and a plan drawn to
+ * real dimensions is the only kind that can answer whether a table actually
+ * fits where it is drawn.
+ *
+ * The numbers the first version stored were already in this range — a table of
+ * 70, a bar of 300 — so reading them as centimetres needs no migration and
+ * makes them mean what they always looked like they meant.
+ */
+export const CM_PER_M = 100;
+
 /** The grid everything snaps to (§5). Free positioning produces a drunk plan. */
 export const GRID = 10;
 
-export const PLAN_WIDTH = 1400;
-export const PLAN_HEIGHT = 900;
+/** Default zone: 14m x 9m. Every zone carries its own, editable. */
+export const DEFAULT_ZONE_WIDTH = 1400;
+export const DEFAULT_ZONE_HEIGHT = 900;
+
+/** From a two-metre alcove to a sixty-metre hall. */
+export const MIN_ZONE_SIDE = 200;
+export const MAX_ZONE_SIDE = 6000;
+
+/** A chair, drawn around a table from its seat count rather than placed by hand. */
+export const CHAIR_SIZE = 42;
+export const CHAIR_GAP = 8;
 
 export const MAX_SEATS_PER_TABLE = 20;
 export const MAX_TABLES_PER_ZONE = 200;
@@ -98,6 +122,18 @@ export type FloorTable = Placed & {
   shape: TableShape;
   /** Out of service — a broken leg, a draught nobody will sit in. */
   active: boolean;
+  /**
+   * Draw chairs around this table.
+   *
+   * The chairs are **derived from the seat count**, not placed by hand and not
+   * stored. Six seats means six chairs, they sit where the shape says they sit,
+   * and they move, rotate, resize and duplicate with the table because they are
+   * not separate things that could be left behind. Setting the seats to five
+   * removes a chair; there is no way for the drawing and the count to disagree.
+   *
+   * Absent reads as on, so a table drawn before chairs existed grows them.
+   */
+  chairs?: boolean;
   /** Window, quiet, by the music. Nothing reads these yet (§8.4). */
   tags?: string[];
 };
@@ -113,9 +149,20 @@ export type FloorZone = {
   id: string;
   /** "Main hall", "Terrace", "Private dining". */
   name: string;
+  /** The hall itself, in centimetres. Measured with a tape, not guessed. */
+  width: number;
+  height: number;
   tables: FloorTable[];
   features: FloorFeature[];
 };
+
+/**
+ * A hall is a rectangle of a given size. An L-shaped or irregular room is drawn
+ * by taking the bounding rectangle and walling off the part that is not there —
+ * which is what the `wall` feature is for, and is far less to get wrong than a
+ * polygon editor nobody asked for.
+ */
+export type ZoneSize = Pick<FloorZone, "width" | "height">;
 
 /**
  * A list of zones rather than a list of tables, decided before the first zone
@@ -159,20 +206,158 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-/** A size snapped to the grid and kept within what can be drawn. */
-export function clampSize(width: number, height: number): { width: number; height: number } {
+export const DEFAULT_ZONE: ZoneSize = { width: DEFAULT_ZONE_WIDTH, height: DEFAULT_ZONE_HEIGHT };
+
+/** The hall itself, snapped and held between an alcove and a banqueting hall. */
+export function clampZoneSize(width: number, height: number): ZoneSize {
   return {
-    width: clamp(snap(width), MIN_SIZE, Math.min(MAX_SIZE, PLAN_WIDTH)),
-    height: clamp(snap(height), MIN_SIZE, Math.min(MAX_SIZE, PLAN_HEIGHT)),
+    width: clamp(snap(width), MIN_ZONE_SIDE, MAX_ZONE_SIDE),
+    height: clamp(snap(height), MIN_ZONE_SIDE, MAX_ZONE_SIDE),
   };
 }
 
-/** Keeps something inside the zone whatever the designer was asked to do. */
-export function clampPosition(placed: Pick<Placed, "x" | "y" | "width" | "height">): { x: number; y: number } {
+/**
+ * A size snapped to the grid and kept within the hall it stands in.
+ *
+ * Nothing may be larger than the zone that holds it — a four-metre bar in a
+ * three-metre alcove is not a drawing anybody can act on.
+ */
+export function clampSize(width: number, height: number, zone: ZoneSize = DEFAULT_ZONE): { width: number; height: number } {
   return {
-    x: clamp(snap(placed.x), 0, Math.max(0, PLAN_WIDTH - placed.width)),
-    y: clamp(snap(placed.y), 0, Math.max(0, PLAN_HEIGHT - placed.height)),
+    width: clamp(snap(width), MIN_SIZE, zone.width),
+    height: clamp(snap(height), MIN_SIZE, zone.height),
   };
+}
+
+/**
+ * Keeps something inside its zone whatever the designer was asked to do.
+ *
+ * The far edge is reachable: something 120 wide in a 1400 zone may sit at
+ * exactly 1280, flush against the wall. There is no dead band at the end.
+ */
+export function clampPosition(
+  placed: Pick<Placed, "x" | "y" | "width" | "height">,
+  zone: ZoneSize = DEFAULT_ZONE,
+): { x: number; y: number } {
+  return {
+    x: clamp(snap(placed.x), 0, Math.max(0, zone.width - placed.width)),
+    y: clamp(snap(placed.y), 0, Math.max(0, zone.height - placed.height)),
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Real-world dimensions
+ * ------------------------------------------------------------------ */
+
+/** Centimetres as a person would say them: 70 cm, 1.2 m, 14 m. */
+export function formatLength(cm: number): string {
+  if (cm < CM_PER_M) {
+    return `${Math.round(cm)} cm`;
+  }
+
+  const metres = cm / CM_PER_M;
+  // A whole number of metres does not need a decimal point after it.
+  return `${Number.isInteger(metres) ? metres : metres.toFixed(2).replace(/0$/, "")} m`;
+}
+
+export function formatSize(size: { width: number; height: number }): string {
+  return `${formatLength(size.width)} × ${formatLength(size.height)}`;
+}
+
+/** Floor area in square metres, for the zone header. */
+export function zoneArea(zone: ZoneSize): number {
+  return Math.round(((zone.width / CM_PER_M) * (zone.height / CM_PER_M) + Number.EPSILON) * 10) / 10;
+}
+
+/* ------------------------------------------------------------------ *
+ * Chairs
+ * ------------------------------------------------------------------ */
+
+/**
+ * Where the chairs go, worked out from the seat count and the shape.
+ *
+ * Derived rather than stored, which is the whole point: chairs cannot be left
+ * behind when a table moves, cannot be forgotten when it is duplicated, and
+ * cannot disagree with the number of people the table seats. Change the seats
+ * and the chairs follow.
+ *
+ * Positions are in the table's own coordinates, before its rotation is applied,
+ * so the caller draws them inside the same transform as the table and they turn
+ * with it.
+ */
+export function chairPositions(table: Pick<FloorTable, "seats" | "shape" | "width" | "height">): Array<{
+  x: number;
+  y: number;
+  rotation: number;
+}> {
+  const seats = Math.max(0, Math.min(Math.round(table.seats), MAX_SEATS_PER_TABLE));
+  if (seats === 0) {
+    return [];
+  }
+
+  const halfChair = CHAIR_SIZE / 2;
+  const out = CHAIR_SIZE / 2 + CHAIR_GAP;
+
+  if (table.shape === "round" || table.shape === "oval") {
+    // Evenly around the ellipse, each chair facing the middle.
+    const rx = table.width / 2 + out;
+    const ry = table.height / 2 + out;
+
+    return Array.from({ length: seats }, (_, index) => {
+      const angle = (index / seats) * Math.PI * 2 - Math.PI / 2;
+      return {
+        x: table.width / 2 + Math.cos(angle) * rx - halfChair,
+        y: table.height / 2 + Math.sin(angle) * ry - halfChair,
+        rotation: (angle * 180) / Math.PI + 90,
+      };
+    });
+  }
+
+  /**
+   * Rectangles seat people along their sides, and the long sides take more —
+   * which is how anybody actually lays a table up. Split proportionally, then
+   * space each side's chairs evenly along it.
+   */
+  const perimeter = 2 * (table.width + table.height);
+  let top = Math.round((seats * table.width) / perimeter);
+  let bottom = Math.round((seats * table.width) / perimeter);
+  let left = Math.round((seats * table.height) / perimeter);
+  let right = seats - top - bottom - left;
+
+  // Rounding can leave the last side short or over; give or take from the top.
+  if (right < 0) {
+    top += right;
+    right = 0;
+  }
+  if (top < 0) {
+    bottom += top;
+    top = 0;
+  }
+  if (bottom < 0) {
+    left += bottom;
+    bottom = 0;
+  }
+  if (left < 0) {
+    left = 0;
+  }
+
+  const along = (count: number, length: number) =>
+    Array.from({ length: count }, (_, index) => ((index + 1) / (count + 1)) * length);
+
+  return [
+    ...along(top, table.width).map((position) => ({ x: position - halfChair, y: -out - halfChair, rotation: 180 })),
+    ...along(bottom, table.width).map((position) => ({
+      x: position - halfChair,
+      y: table.height + out - halfChair,
+      rotation: 0,
+    })),
+    ...along(left, table.height).map((position) => ({ x: -out - halfChair, y: position - halfChair, rotation: 90 })),
+    ...along(right, table.height).map((position) => ({
+      x: table.width + out - halfChair,
+      y: position - halfChair,
+      rotation: 270,
+    })),
+  ];
 }
 
 /**
@@ -319,31 +504,54 @@ function toFloorZone(value: unknown): FloorZone | null {
     return null;
   }
 
-  const zone = value as { id?: unknown; name?: unknown; tables?: unknown; features?: unknown };
+  const zone = value as {
+    id?: unknown;
+    name?: unknown;
+    width?: unknown;
+    height?: unknown;
+    tables?: unknown;
+    features?: unknown;
+  };
+
+  /**
+   * A zone drawn before halls had their own dimensions takes the default,
+   * which is the size everything was implicitly laid out in — so an existing
+   * plan keeps every table exactly where it was put.
+   */
+  const size = clampZoneSize(
+    zone.width === undefined ? DEFAULT_ZONE_WIDTH : asNumber(zone.width),
+    zone.height === undefined ? DEFAULT_ZONE_HEIGHT : asNumber(zone.height),
+  );
 
   return {
     id: asId(zone.id),
     name: asText(zone.name, 60) || "Main hall",
+    ...size,
     tables: (Array.isArray(zone.tables) ? zone.tables : [])
       .slice(0, MAX_TABLES_PER_ZONE)
-      .map(toFloorTable)
+      .map((table) => toFloorTable(table, size))
       .filter((table): table is FloorTable => table !== null),
     // Absent on a plan drawn before features existed, which reads as a zone of
     // bare tables rather than as an unreadable zone.
     features: (Array.isArray(zone.features) ? zone.features : [])
       .slice(0, MAX_FEATURES_PER_ZONE)
-      .map(toFloorFeature)
+      .map((feature) => toFloorFeature(feature, size))
       .filter((feature): feature is FloorFeature => feature !== null),
   };
 }
 
 /** Position, size and rotation, made sane. Shared by tables and features. */
-function toPlaced(value: Record<string, unknown>, fallback: { width: number; height: number }): Placed {
+function toPlaced(
+  value: Record<string, unknown>,
+  fallback: { width: number; height: number },
+  zone: ZoneSize,
+): Placed {
   const size = clampSize(
     value.width === undefined ? fallback.width : asNumber(value.width),
     value.height === undefined ? fallback.height : asNumber(value.height),
+    zone,
   );
-  const position = clampPosition({ x: asNumber(value.x), y: asNumber(value.y), ...size });
+  const position = clampPosition({ x: asNumber(value.x), y: asNumber(value.y), ...size }, zone);
 
   return {
     ...position,
@@ -353,7 +561,7 @@ function toPlaced(value: Record<string, unknown>, fallback: { width: number; hei
   };
 }
 
-function toFloorTable(value: unknown): FloorTable | null {
+function toFloorTable(value: unknown, zone: ZoneSize): FloorTable | null {
   if (!value || typeof value !== "object") {
     return null;
   }
@@ -362,7 +570,7 @@ function toFloorTable(value: unknown): FloorTable | null {
   const shape = TABLE_SHAPES.includes(table.shape as TableShape) ? (table.shape as TableShape) : "round";
 
   return {
-    ...toPlaced(table, DEFAULT_TABLE_SIZE[shape]),
+    ...toPlaced(table, DEFAULT_TABLE_SIZE[shape], zone),
     id: asId(table.id),
     label: asText(table.label, 12),
     seats: Math.min(Math.max(Math.round(asNumber(table.seats)), 0), MAX_SEATS_PER_TABLE),
@@ -370,13 +578,15 @@ function toFloorTable(value: unknown): FloorTable | null {
     // Absent reads as in service, so a table written before the field existed
     // does not silently vanish from the floor.
     active: table.active !== false,
+    // Absent reads as on, so a table drawn before chairs existed grows them.
+    chairs: table.chairs !== false,
     tags: Array.isArray(table.tags)
       ? [...new Set(table.tags.map((tag) => asText(tag, 24)).filter(Boolean))].slice(0, 8)
       : undefined,
   };
 }
 
-function toFloorFeature(value: unknown): FloorFeature | null {
+function toFloorFeature(value: unknown, zone: ZoneSize): FloorFeature | null {
   if (!value || typeof value !== "object") {
     return null;
   }
@@ -393,7 +603,7 @@ function toFloorFeature(value: unknown): FloorFeature | null {
   const label = asText(feature.label, 40);
 
   return {
-    ...toPlaced(feature, DEFAULT_FEATURE_SIZE[kind]),
+    ...toPlaced(feature, DEFAULT_FEATURE_SIZE[kind], zone),
     id: asId(feature.id),
     kind,
     label: label || undefined,
@@ -420,11 +630,15 @@ function asId(value: unknown): string {
  * ------------------------------------------------------------------ */
 
 /** A free spot for something of this size, so new things do not stack up. */
-function freeSpot(taken: Placed[], size: { width: number; height: number }): { x: number; y: number } {
+function freeSpot(
+  taken: Placed[],
+  size: { width: number; height: number },
+  zone: ZoneSize,
+): { x: number; y: number } {
   const used = new Set(taken.map((entry) => `${entry.x},${entry.y}`));
 
-  for (let y = GRID * 2; y + size.height <= PLAN_HEIGHT; y += size.height + GRID) {
-    for (let x = GRID * 2; x + size.width <= PLAN_WIDTH; x += size.width + GRID) {
+  for (let y = GRID * 2; y + size.height <= zone.height; y += size.height + GRID) {
+    for (let x = GRID * 2; x + size.width <= zone.width; x += size.width + GRID) {
       if (!used.has(`${x},${y}`)) {
         return { x: snap(x), y: snap(y) };
       }
@@ -435,7 +649,7 @@ function freeSpot(taken: Placed[], size: { width: number; height: number }): { x
 }
 
 export function newTable(zone: FloorZone, shape: TableShape = "round"): FloorTable {
-  const size = DEFAULT_TABLE_SIZE[shape];
+  const size = clampSize(DEFAULT_TABLE_SIZE[shape].width, DEFAULT_TABLE_SIZE[shape].height, zone);
 
   return {
     id: asId(undefined),
@@ -443,14 +657,15 @@ export function newTable(zone: FloorZone, shape: TableShape = "round"): FloorTab
     seats: shape === "rectangle" || shape === "oval" ? 6 : 4,
     shape,
     active: true,
+    chairs: true,
     rotation: 0,
     ...size,
-    ...freeSpot([...zone.tables, ...zone.features], size),
+    ...freeSpot([...zone.tables, ...zone.features], size, zone),
   };
 }
 
 export function newFeature(zone: FloorZone, kind: FeatureKind): FloorFeature {
-  const size = DEFAULT_FEATURE_SIZE[kind];
+  const size = clampSize(DEFAULT_FEATURE_SIZE[kind].width, DEFAULT_FEATURE_SIZE[kind].height, zone);
 
   return {
     id: asId(undefined),
@@ -460,7 +675,7 @@ export function newFeature(zone: FloorZone, kind: FeatureKind): FloorFeature {
     label: kind === "stage" ? "Musician" : undefined,
     rotation: 0,
     ...size,
-    ...freeSpot([...zone.tables, ...zone.features], size),
+    ...freeSpot([...zone.tables, ...zone.features], size, zone),
   };
 }
 
@@ -494,5 +709,5 @@ export function newZone(plan: FloorPlan): FloorZone {
     name = `${base} ${suffix}`;
   }
 
-  return { id: asId(undefined), name, tables: [], features: [] };
+  return { id: asId(undefined), name, ...DEFAULT_ZONE, tables: [], features: [] };
 }

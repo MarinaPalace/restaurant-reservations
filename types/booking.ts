@@ -373,6 +373,22 @@ export type ReservationRecord = {
    * with it off, and on any table a member of staff typed in by hand.
    */
   tableId?: string;
+  /**
+   * Who put this booking on that table.
+   *
+   * Owner, staff and guest all write the same `tableNumber`, and once written
+   * they were indistinguishable — so nobody could tell whether a table could be
+   * moved freely or whether a guest had picked it deliberately and would mind.
+   * This is the missing half of that: the number says *where*, this says *who
+   * decided*.
+   *
+   * Absent on every booking taken before it existed and on anything with no
+   * table at all, which is what makes it additive (rule 2.2). Absent reads as
+   * "nobody recorded it", never as a guess.
+   */
+  tableSource?: TableSource;
+  /** When the table was last set, beside who set it. */
+  tableSetAt?: string;
   status: ReservationStatus;
   /**
    * The pass-key this booking was made with. It is what lets the guest come
@@ -409,6 +425,23 @@ export function withRemainingSeats(date: StoredRestaurantDate): RestaurantDateAv
  * `system` covers automatic action with nobody behind it.
  */
 export type ActorKind = "staff" | "guest" | "system";
+
+/**
+ * Who chose a table.
+ *
+ * Narrower than `ActorKind` on purpose: `system` never picks a table, and the
+ * distinction that matters on the floor is the one between the owner, a member
+ * of staff and the guest themselves. A guest's pick is the one staff should
+ * think twice about moving.
+ */
+export type TableSource = "owner" | "staff" | "guest";
+
+/** What to call each source on screen, and the letter drawn in its ring. */
+export const TABLE_SOURCE_LABELS: Record<TableSource, { name: string; letter: string }> = {
+  owner: { name: "Chosen by the owner", letter: "O" },
+  staff: { name: "Chosen by staff", letter: "S" },
+  guest: { name: "Chosen by the guest", letter: "G" },
+};
 
 export type Actor = {
   kind: ActorKind;
@@ -470,6 +503,20 @@ export const STAFF_PERMISSIONS = [
    * calendar.
    */
   "floorplan:edit",
+  /**
+   * Read the audit log, and a booking's own history with it.
+   *
+   * It used to be open to anybody signed in, on the reasoning that a log
+   * everybody can see is a log everybody knows is there. That was wrong about
+   * *what is in it*: the log names guests, rooms and what they changed, so the
+   * whole of it is a guest list — and the account left signed in on a tablet on
+   * the floor holds `service:record` and should hold nothing else.
+   *
+   * Additive, and `admin` holds every permission implicitly, so the owner keeps
+   * what they had and an existing staff account has to be granted this
+   * deliberately.
+   */
+  "audit:read",
   "users:manage",
 ] as const;
 
@@ -687,4 +734,29 @@ export type AuditEntry = {
   reservationNumber?: string;
   /** One line, already worded for a human reading the log. */
   summary: string;
+  /**
+   * What actually moved, field by field, when this entry is about an edit.
+   *
+   * Beside `summary` rather than instead of it (rule 2.2): every entry ever
+   * written has a summary and must keep rendering, and a UI that wants to draw
+   * the change properly should not be parsing prose to do it. Absent on
+   * anything that is not an edit, and on every entry written before this
+   * existed.
+   */
+  changes?: AuditChange[];
+};
+
+/**
+ * One field that moved. Built by `lib/reservation-changes.ts`, which is where
+ * the rules about what counts as a change live.
+ */
+export type AuditChange = {
+  /** The record field, for anything that wants to group or filter later. */
+  field: string;
+  /** What to call it on screen: "Table", "Party", "Arrival". */
+  label: string;
+  /** Absent when the field had nothing in it before. */
+  from?: string;
+  /** Absent when the field was cleared. */
+  to?: string;
 };

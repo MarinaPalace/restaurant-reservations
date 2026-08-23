@@ -208,6 +208,9 @@ export async function POST(request: Request) {
 
     const reservation = await createReservationEntry({
       table,
+      // The guest picked it themselves on /booking/table. That is the mark
+      // staff should think twice about before moving anybody.
+      tableSource: "guest",
       reservationNumber: claimedReservationNumber,
       roomNumber: parsed.data.roomNumber,
       guestCount: parsed.data.guestCount,

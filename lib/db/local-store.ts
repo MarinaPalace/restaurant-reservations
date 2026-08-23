@@ -11,6 +11,7 @@ import {
   type ReservationRecord,
   type RestaurantDateAvailability,
   type StoredRestaurantDate,
+  type TableSource,
 } from "@/types/booking";
 
 /**
@@ -187,6 +188,8 @@ export async function createLocalReservation(input: {
   tableNumber?: string;
   /** The table this booking picked, resolved from the plan by the caller. */
   table?: { id: string; label: string; seats: number };
+  /** Who chose it. Only meaningful when there is a table. */
+  tableSource?: TableSource;
   tableGroupId?: string;
   kind?: ReservationRecord["kind"];
   guestName?: string;
@@ -247,6 +250,9 @@ export async function createLocalReservation(input: {
       notes: input.notes,
       tableNumber: input.table?.label ?? input.tableNumber,
       tableId: input.table?.id,
+      // Only when there is a table to attribute.
+      tableSource: input.table?.label ?? input.tableNumber ? input.tableSource : undefined,
+      tableSetAt: input.table?.label ?? input.tableNumber ? timestamp : undefined,
       tableGroupId: input.tableGroupId,
       status: "confirmed",
       passKeyId: input.passKeyId,
@@ -393,7 +399,11 @@ export async function setLocalReservationGroup(reservationNumber: string, tableG
 }
 
 /** Sets the table number on a reservation and everyone sharing its table. */
-export async function setLocalReservationTable(reservationNumber: string, tableNumber: string) {
+export async function setLocalReservationTable(
+  reservationNumber: string,
+  tableNumber: string,
+  source: TableSource,
+) {
   return withStoreLock(async () => {
     const reservations = await readReservations();
     const target = reservations.find((entry) => entry.reservationNumber === reservationNumber);
@@ -411,7 +421,12 @@ export async function setLocalReservationTable(reservationNumber: string, tableN
         : entry.reservationNumber === reservationNumber;
 
       if (inGroup) {
-        reservations[index] = { ...entry, tableNumber, updatedAt: new Date().toISOString() };
+        const now = new Date().toISOString();
+        // Set together or cleared together — a table with no number cannot have
+        // been chosen by anybody.
+        reservations[index] = tableNumber.trim()
+          ? { ...entry, tableNumber, tableSource: source, tableSetAt: now, updatedAt: now }
+          : { ...entry, tableNumber, tableSource: undefined, tableSetAt: undefined, updatedAt: now };
         updated.push(reservations[index]);
       }
     }
@@ -797,6 +812,8 @@ export type LocalReservationPatch = {
   notes?: string;
   contact?: ReservationRecord["contact"];
   tableNumber?: string;
+  /** Who set that table. Ignored unless `tableNumber` is being set. */
+  tableSource?: TableSource;
   /**
    * Which table group this booking now belongs to, already resolved by the
    * service — `null` to take it off one, absent to leave it alone. Resolved
@@ -893,6 +910,13 @@ export async function updateLocalReservationDetails(
       notes: patch.notes ?? existing.notes,
       contact: patch.contact ?? existing.contact,
       tableNumber: patch.tableNumber ?? existing.tableNumber,
+      // Set together or cleared together, so the source can never describe a
+      // table that is no longer there.
+      ...(patch.tableNumber === undefined
+        ? {}
+        : patch.tableNumber.trim()
+          ? { tableSource: patch.tableSource ?? "staff", tableSetAt: new Date().toISOString() }
+          : { tableSource: undefined, tableSetAt: undefined }),
       // null means it was taken off the table, which is a real change and so
       // cannot fall back to the group it was on.
       tableGroupId:

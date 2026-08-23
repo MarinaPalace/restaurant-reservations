@@ -116,6 +116,13 @@ const reservationSchema = new Schema(
     // Shared by rooms dining together; indexed so a group loads in one query.
     tableGroupId: { type: String, index: true },
     tableNumber: { type: String },
+    /**
+     * Who put this booking on that table, and when. Additive (rule 2.2): every
+     * booking written before this reads back without either, which is the
+     * honest answer — nobody recorded it.
+     */
+    tableSource: { type: String, enum: ["owner", "staff", "guest"] },
+    tableSetAt: { type: String },
     status: { type: String, enum: ["confirmed", "cancelled"], default: "confirmed" },
     // The pass-key the guest booked with, and their credential for changing
     // it later. Indexed so "this key's booking" is one query. Absent on staff

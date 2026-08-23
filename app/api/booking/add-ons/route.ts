@@ -6,6 +6,8 @@ import { getEveningFeatures } from "@/lib/services/settings";
 import { updateAddOnsSchema } from "@/lib/validation/booking";
 import { checkRateLimit, clientKeyFrom } from "@/lib/rate-limit";
 import { toGuestReservation } from "@/lib/guest-reservation";
+import { recordAuditEntry } from "@/lib/services/audit-log";
+import { describeReservationChanges, summariseChanges } from "@/lib/reservation-changes";
 import type { ReservationAddOn } from "@/types/booking";
 
 /**
@@ -155,9 +157,36 @@ export async function POST(request: Request) {
 
     const updated = await updateReservationAddOns(reservation.reservationNumber, addOns);
 
-    return updated
-      ? NextResponse.json({ reservation: toGuestReservation(updated) })
-      : NextResponse.json({ error: "We could not find that reservation." }, { status: 404 });
+    if (!updated) {
+      return NextResponse.json({ error: "We could not find that reservation." }, { status: 404 });
+    }
+
+    /**
+     * Logged, because a guest changing their own booking is still somebody
+     * changing a booking. This route wrote to a reservation and left no trace,
+     * so a bottle of wine appearing on a bill had no history behind it — and
+     * the actor is the pass-key, which is the only name a guest has here.
+     *
+     * After the write and never awaited into it: a failed log write must not
+     * fail the thing being logged.
+     */
+    const changes = describeReservationChanges(reservation, updated);
+
+    if (changes.length > 0) {
+      await recordAuditEntry({
+        action: "reservation:update",
+        actor: {
+          kind: "guest",
+          id: passKey.id,
+          name: `Guest in room ${reservation.roomNumber}`,
+        },
+        reservationNumber: reservation.reservationNumber,
+        summary: summariseChanges(changes),
+        changes,
+      });
+    }
+
+    return NextResponse.json({ reservation: toGuestReservation(updated) });
   } catch (error) {
     console.error("[booking] failed to save promotions", error);
     return NextResponse.json({ error: "Unable to save your choices." }, { status: 500 });

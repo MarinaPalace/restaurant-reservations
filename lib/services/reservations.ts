@@ -40,6 +40,7 @@ import {
   type ReservationAddOn,
   type ReservationAttendance,
   type ReservationServiceProgress,
+  type TableSource,
 } from "@/types/booking";
 
 export class BookingError extends Error {
@@ -106,6 +107,8 @@ type MongoReservationDocument = {
   tableId?: unknown;
   tableGroupId?: unknown;
   tableNumber?: unknown;
+  tableSource?: unknown;
+  tableSetAt?: unknown;
   status?: unknown;
   passKeyId?: unknown;
   cancellation?: unknown;
@@ -141,6 +144,8 @@ function toReservationRecord(document: MongoReservationDocument): ReservationRec
     tableId: document.tableId ? String(document.tableId) : undefined,
     tableGroupId: document.tableGroupId ? String(document.tableGroupId) : undefined,
     tableNumber: document.tableNumber ? String(document.tableNumber) : undefined,
+    tableSource: (document.tableSource as ReservationRecord["tableSource"]) || undefined,
+    tableSetAt: document.tableSetAt ? String(document.tableSetAt) : undefined,
     status: document.status === "cancelled" ? "cancelled" : "confirmed",
     passKeyId: document.passKeyId ? String(document.passKeyId) : undefined,
     cancellation: (document.cancellation as CancellationRecord | undefined) ?? undefined,
@@ -201,10 +206,21 @@ async function setReservationGroup(reservationNumber: string, tableGroupId: stri
   await ReservationModel.updateOne({ reservationNumber }, { $set: { tableGroupId } });
 }
 
-/** Sets a table number across everyone sharing that table. */
-export async function assignTableNumber(reservationNumber: string, tableNumber: string) {
+/**
+ * Sets a table number across everyone sharing that table.
+ *
+ * `source` says who decided, and travels with the number itself rather than
+ * being written separately afterwards: the two must never disagree, and a
+ * table cleared without its source cleared would claim a guest had picked a
+ * table that is no longer there.
+ */
+export async function assignTableNumber(
+  reservationNumber: string,
+  tableNumber: string,
+  source: TableSource,
+) {
   if (!isMongoConfigured()) {
-    return setLocalReservationTable(reservationNumber, tableNumber);
+    return setLocalReservationTable(reservationNumber, tableNumber, source);
   }
 
   await connectToDatabase();
@@ -214,7 +230,11 @@ export async function assignTableNumber(reservationNumber: string, tableNumber: 
   }
 
   const filter = target.tableGroupId ? { tableGroupId: target.tableGroupId } : { reservationNumber };
-  await ReservationModel.updateMany(filter, { $set: { tableNumber } });
+  const written = tableNumber.trim()
+    ? { tableNumber, tableSource: source, tableSetAt: new Date().toISOString() }
+    : { tableNumber, tableSource: null, tableSetAt: null };
+
+  await ReservationModel.updateMany(filter, { $set: written });
 
   const updated = await ReservationModel.find(filter).lean();
   return updated.map((entry) => toReservationRecord(entry as MongoReservationDocument));
@@ -244,6 +264,15 @@ export async function createReservationEntry(input: {
    * (`docs/floor-plan.md` §3).
    */
   table?: { id: string; label: string; seats: number };
+  /**
+   * Who chose the table on this booking.
+   *
+   * A booking made through the guest flow with `table` set is a guest's own
+   * pick; one taken at the desk with `tableNumber` typed in is not. The caller
+   * knows which it is and this module does not, so it is passed rather than
+   * guessed. Absent when no table was set either way.
+   */
+  tableSource?: TableSource;
   kind?: ReservationRecord["kind"];
   guestName?: string;
   /** Reservation number of a party this booking should share a table with. */
@@ -351,6 +380,10 @@ export async function createReservationEntry(input: {
       // what every downstream screen already reads.
       tableNumber: input.table?.label ?? input.tableNumber,
       tableId: input.table?.id,
+      // Only when there is a table to attribute: a booking with no table has
+      // nobody who chose it.
+      tableSource: input.table?.label ?? input.tableNumber ? input.tableSource : undefined,
+      tableSetAt: input.table?.label ?? input.tableNumber ? new Date().toISOString() : undefined,
       tableGroupId,
       status: "confirmed",
       passKeyId: input.passKeyId,
@@ -608,6 +641,12 @@ export type StaffReservationPatch = {
   contact?: ReservationContact;
   tableNumber?: string;
   /**
+   * Who is setting that table. Required whenever `tableNumber` is, and ignored
+   * otherwise — an edit that does not touch the table must not rewrite who
+   * chose it.
+   */
+  tableSource?: TableSource;
+  /**
    * Seat this booking with another one, named by its reservation number.
    *
    * A different thing from `additionalRooms`, and the difference is the whole
@@ -740,7 +779,14 @@ export async function updateReservationDetails(
   if (patch.selections !== undefined) update.selections = patch.selections;
   if (patch.notes !== undefined) update.notes = patch.notes;
   if (patch.contact !== undefined) update.contact = patch.contact;
-  if (patch.tableNumber !== undefined) update.tableNumber = patch.tableNumber;
+  if (patch.tableNumber !== undefined) {
+    update.tableNumber = patch.tableNumber;
+    // Cleared together: a table with no number cannot have been chosen by
+    // anybody, and a stale source would be read as one.
+    const set = patch.tableNumber.trim().length > 0;
+    update.tableSource = set ? patch.tableSource ?? "staff" : null;
+    update.tableSetAt = set ? new Date().toISOString() : null;
+  }
   // null is stored as such and read back as "no table group", so leaving a
   // table needs no separate unset.
   if (tableGroupId !== undefined) update.tableGroupId = tableGroupId;

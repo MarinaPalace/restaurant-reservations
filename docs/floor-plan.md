@@ -783,3 +783,65 @@ with it.
 - **"Any table" is untouched** and still one tap, beside Continue.
 
 Seat accounting and the claim rules were not touched. This was a viewport and an input problem.
+
+---
+
+## 19. Who chose the table
+
+### The gap
+
+The admin day view showed the table number on a booking but not its provenance. Owner, staff and
+guest all write the same `tableNumber`, and once written they were indistinguishable — so nobody
+could tell whether a table could be moved freely or whether a guest had picked it deliberately on
+`/booking/table` and would mind being moved off it.
+
+### What is recorded
+
+`tableSource` — `"owner" | "staff" | "guest"` — and `tableSetAt` beside it. Additive (rule 2.2):
+every booking taken before this reads back with neither, which is the honest answer, and absent
+means "nobody recorded it", never a guess.
+
+**Taken from the account, never from the request body.** A source a caller could name is a source a
+caller could lie about, and the whole value of the mark is that a guest's pick can be trusted to be
+a guest's pick. `tableSourceOfUser` in `lib/auth/permissions.ts` maps the signed-in account to its
+source: an administrator is the owner, anybody else is staff. The guest flow passes `"guest"`
+because it is the flow the guest walked.
+
+**Set and cleared together with the number.** A table with no number cannot have been chosen by
+anybody, so clearing the table clears the source and the timestamp in the same write. A source left
+behind would be read as a guest still holding a table they do not have — which is exactly the kind
+of quiet lie this feature exists to prevent.
+
+Every path that writes a table sets it: the guest picker, the desk booking, the staff edit, and the
+table route. That last one also gained the audit entry it never had (`docs/audit-log.md`).
+
+### How it is drawn
+
+A ring around the number, and **never colour alone**. Roughly one man in twelve cannot separate a
+red-green pair, a screenshot printed in black and white has no colour at all, and the ring on a
+forty-row day sheet is small. So each source carries three signals — a colour, a letter (G, S, O),
+and a border style (solid, dashed, double) — plus the full name in the tooltip and in the
+accessible label. Any one of the three identifies it.
+
+The colours are amber for the guest, the app's accent for staff, and ink for the owner. Amber for
+the guest is what was asked for and is also right: guest picks are the ones staff must think twice
+about moving, and amber is this app's established "attention, not error". The blue and violet first
+suggested were dropped — this palette is warm throughout and two imported hues would read as
+another application's badges on the same sheet.
+
+A legend sits once at the top of the day sheet, and only when something on that evening is wearing
+a ring: three colours nobody explains is three colours nobody reads, and three colours explained on
+an evening where nothing wears them is worse. It is screen-only, because a new block on paper
+changes the sheet's arithmetic (rule 2.8) and whoever is holding the print has the screen beside
+them.
+
+On the reservation's own page there is room for the sentence, so it says "chosen by the owner" in
+words, with the time.
+
+### Not built: locking a table
+
+Backlog item 4 part two — a table that cannot be changed below a given permission level — is still
+a plan. It needs a decision about whether the check is a permission or a genuine rank comparison,
+and the current model is permission-based; inventing ranks is a bigger change than it looks. What
+is built here is the half that had to come first: a lock on a table nobody can attribute would say
+nothing about whose decision was being protected.

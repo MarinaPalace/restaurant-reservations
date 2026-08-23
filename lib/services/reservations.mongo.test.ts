@@ -365,10 +365,39 @@ describe("shared tables", () => {
     const second = await bookRoom("2026-09-28", "402", first.reservationNumber);
 
     // Setting it from the second booking must move the whole table.
-    await reservations.assignTableNumber(second.reservationNumber, "12");
+    await reservations.assignTableNumber(second.reservationNumber, "12", "staff");
 
     expect((await reservations.getReservationByNumber(first.reservationNumber))?.tableNumber).toBe("12");
     expect((await reservations.getReservationByNumber(second.reservationNumber))?.tableNumber).toBe("12");
+  });
+
+  it("records who chose the table, across the whole shared table", async () => {
+    const { reservations } = await loadServices();
+    await openDate("2026-09-30", 40);
+    const first = await bookRoom("2026-09-30", "401");
+    const second = await bookRoom("2026-09-30", "402", first.reservationNumber);
+
+    await reservations.assignTableNumber(second.reservationNumber, "12", "owner");
+
+    const moved = await reservations.getReservationByNumber(first.reservationNumber);
+    expect(moved?.tableSource).toBe("owner");
+    expect(moved?.tableSetAt).toBeTruthy();
+  });
+
+  it("clears the source when the table is taken away", async () => {
+    const { reservations } = await loadServices();
+    await openDate("2026-10-01", 40);
+    const booking = await bookRoom("2026-10-01", "401");
+
+    await reservations.assignTableNumber(booking.reservationNumber, "12", "guest");
+    await reservations.assignTableNumber(booking.reservationNumber, "", "staff");
+
+    const cleared = await reservations.getReservationByNumber(booking.reservationNumber);
+    // A table nobody is on cannot have been chosen by anybody; a source left
+    // behind would be read as a guest still holding a table they do not have.
+    expect(cleared?.tableNumber).toBeUndefined();
+    expect(cleared?.tableSource).toBeUndefined();
+    expect(cleared?.tableSetAt).toBeUndefined();
   });
 
   it("assigns a table to a lone booking without touching others", async () => {
@@ -377,7 +406,7 @@ describe("shared tables", () => {
     const alone = await bookRoom("2026-09-29", "401");
     const other = await bookRoom("2026-09-29", "402");
 
-    await reservations.assignTableNumber(alone.reservationNumber, "3");
+    await reservations.assignTableNumber(alone.reservationNumber, "3", "staff");
 
     expect((await reservations.getReservationByNumber(alone.reservationNumber))?.tableNumber).toBe("3");
     expect((await reservations.getReservationByNumber(other.reservationNumber))?.tableNumber).toBeUndefined();

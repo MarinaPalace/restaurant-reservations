@@ -9,11 +9,12 @@ import {
 } from "@/lib/services/reservations";
 import { releasePassKey } from "@/lib/services/pass-keys";
 import { recordAuditEntry } from "@/lib/services/audit-log";
+import { tableSourceOfUser } from "@/lib/auth/permissions";
+import { describeReservationChanges, summariseChanges } from "@/lib/reservation-changes";
 import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
 import { validateReservationRequest } from "@/lib/services/booking-rules";
 import { staffReservationPatchSchema } from "@/lib/validation/booking";
 import { normalizeContact } from "@/lib/contact";
-import { formatRoomList } from "@/lib/room";
 import { canonicalizeSelections } from "@/lib/menu-selection";
 import { pruneSelectionsToGuestCount } from "@/lib/booking-session";
 
@@ -95,6 +96,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ re
       notes: parsed.data.notes,
       contact: parsed.data.contact ? normalizeContact(parsed.data.contact) : undefined,
       tableNumber: parsed.data.tableNumber,
+      // Taken from the account rather than the body: a source a caller could
+      // name is a source a caller could lie about.
+      tableSource: tableSourceOfUser(auth.user),
       joinReservationNumber: parsed.data.joinReservationNumber,
     });
 
@@ -102,38 +106,28 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ re
       return NextResponse.json({ error: "Reservation not found." }, { status: 404 });
     }
 
-    // Worth naming what moved: "edited the booking" tells whoever reads the
-    // log later nothing about why the evening's numbers changed.
-    const changes: string[] = [];
-    if (updated.date !== existing.date) changes.push(`date ${existing.date} → ${updated.date}`);
-    if (updated.guestCount !== existing.guestCount) {
-      changes.push(`party ${existing.guestCount} → ${updated.guestCount}`);
-    }
-    const roomsBefore = formatRoomList(existing.roomNumber, existing.additionalRooms);
-    const roomsAfter = formatRoomList(updated.roomNumber, updated.additionalRooms);
-    if (roomsAfter !== roomsBefore) {
-      changes.push(`room ${roomsBefore || "—"} → ${roomsAfter || "—"}`);
-    }
-    if (parsed.data.selections !== undefined) changes.push("menu choices");
-    if (parsed.data.notes !== undefined) changes.push("comment");
-    if (parsed.data.contact !== undefined) changes.push("contact details");
-    if (parsed.data.tableNumber !== undefined) changes.push(`table ${updated.tableNumber || "—"}`);
-    if (updated.tableGroupId !== existing.tableGroupId) {
-      // Named rather than logged as "shared table", because who they were put
-      // with is the part anybody re-reading this will want to know.
-      changes.push(
-        updated.tableGroupId
-          ? `seated with ${updated.tableGroupId}`
-          : `taken off table ${existing.tableGroupId}`,
-      );
-    }
+    /**
+     * What moved, worked out from the record rather than from the patch.
+     *
+     * The patch says what was *sent*; the pair of records says what actually
+     * changed, which is a different thing — sending a table number that is
+     * already set is not a change, and this used to log it as one. It is also
+     * the only version that can say **Table 12 → 7** rather than "table 7".
+     *
+     * Nothing is written when nothing moved: a log full of "no visible change"
+     * is a log nobody scrolls.
+     */
+    const changes = describeReservationChanges(existing, updated);
 
-    await recordAuditEntry({
-      action: "reservation:update",
-      actor: auth.actor,
-      reservationNumber: updated.reservationNumber,
-      summary: `Edited the reservation: ${changes.join(", ") || "no visible change"}.`,
-    });
+    if (changes.length > 0) {
+      await recordAuditEntry({
+        action: "reservation:update",
+        actor: auth.actor,
+        reservationNumber: updated.reservationNumber,
+        summary: summariseChanges(changes),
+        changes,
+      });
+    }
 
     return NextResponse.json({ reservation: updated });
   } catch (error) {

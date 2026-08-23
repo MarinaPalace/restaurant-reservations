@@ -13,6 +13,7 @@ import { canonicalizeSelections } from "@/lib/menu-selection";
 import { manageReservationSchema, updateSelectionsSchema } from "@/lib/validation/booking";
 import { checkRateLimit, clientKeyFrom } from "@/lib/rate-limit";
 import { toGuestReservation } from "@/lib/guest-reservation";
+import { describeReservationChanges, summariseChanges } from "@/lib/reservation-changes";
 import type { ReservationRecord } from "@/types/booking";
 
 /**
@@ -218,11 +219,17 @@ export async function PATCH(request: Request) {
       return NextResponse.json(NOT_FOUND, { status: 404 });
     }
 
+    // What they changed it to, not only that they changed it: the kitchen
+    // reads the sheet, but the log is where "they had the fish yesterday"
+    // gets settled.
+    const changes = describeReservationChanges(reservation, updated);
+
     await recordAuditEntry({
       action: "reservation:update",
       actor: { kind: "guest", id: resolved.passKeyId, name: `Room ${reservation.roomNumber}` },
       reservationNumber: reservation.reservationNumber,
-      summary: "Guest changed their menu choices.",
+      summary: changes.length ? `Guest changed their menu choices: ${summariseChanges(changes)}` : "Guest changed their menu choices.",
+      ...(changes.length ? { changes } : {}),
     });
 
     return NextResponse.json({ reservation: toGuestReservation(updated) });

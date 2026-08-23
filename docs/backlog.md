@@ -183,7 +183,13 @@ problem — the availability logic behind it is already decided and tested.
 
 ## 4. Show *who* chose the table, and let a table be locked
 
-**Status: planned, not started. Raised 2026-08-23.**
+**Status: part one done, 2026-08-24 (`docs/floor-plan.md` §19). Part two — locking — still planned.**
+
+Part one is built as described below, with two deviations, both recorded in §19: the source is taken
+from the signed-in account rather than the request body, and the palette is the app's own warm
+tokens rather than the suggested blue and violet, because the letters and border styles carry the
+distinction and two imported hues read as another application's badges. Part two is unchanged and
+still needs its permission question settled.
 
 ### The gap
 
@@ -239,7 +245,13 @@ Before any code:
 
 ## 5. Every change to a reservation, in the log
 
-**Status: planned, not started. Raised 2026-08-23.**
+**Status: done, 2026-08-24. `docs/audit-log.md` is the note it asked for, coverage table and all.**
+
+Both gaps closed (the table route and the guest's own promotions), edits now log **Table 12 → 7**
+rather than "edited the reservation", the structured `changes` sit beside the summary, the history
+panel renders them, and reading the log needs `audit:read` — checked in the route and, on the
+reservation page, by never fetching it. Two things stayed as they were on purpose, with reasons in
+§2 of that note: the service-board staff note, and signing in and out.
 
 ### What exists already
 
@@ -296,5 +308,10 @@ it twice.
 
 ### Order for tomorrow
 
-Item 3 is done. Next is item 4 part one and item 5 together — they share the permission question,
-and item 4's lock needs item 5's entries to be worth anything.
+Items 3 and 5 are done, and so is item 4 part one. What is left, in the order it is worth doing:
+
+1. **Item 4 part two — locking a table.** The permission question is the whole of it. `audit:read`
+   is now the precedent for adding one; whether locking wants a permission or a genuine rank is
+   still open, and the four questions under part two still have to be answered before any code.
+2. **Item 6** — the header spilling off a phone. Small, visible on every page a guest sees.
+3. **Item 1** — the wallet card, whose first step needs no Apple or Google account at all.

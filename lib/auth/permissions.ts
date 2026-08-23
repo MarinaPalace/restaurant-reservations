@@ -1,4 +1,10 @@
-import { STAFF_PERMISSIONS, type StaffPermission, type StaffRole, type StaffUserRecord } from "@/types/booking";
+import {
+  STAFF_PERMISSIONS,
+  type StaffPermission,
+  type StaffRole,
+  type StaffUserRecord,
+  type TableSource,
+} from "@/types/booking";
 import type { EveningFeature } from "@/lib/evening-features";
 
 /**
@@ -65,6 +71,11 @@ export const PERMISSION_DETAILS: Record<
     group: "Administration",
     label: "Design the floor plan",
     description: "Lay out the room: add, move and label tables, and say how many each seats.",
+  },
+  "audit:read": {
+    group: "Administration",
+    label: "Read the log",
+    description: "See who changed what, on a booking and across the restaurant. Read-only, and it names guests.",
   },
   "users:manage": {
     group: "Administration",
@@ -176,4 +187,19 @@ export function sanitizePermissions(requested: unknown, role: StaffRole): StaffP
 
 export function describePermission(permission: StaffPermission) {
   return PERMISSION_DETAILS[permission];
+}
+
+/**
+ * Whose choice a table is, when this account sets one.
+ *
+ * Taken from the account rather than from the request body, because a source a
+ * caller could name is a source a caller could lie about — and the whole value
+ * of the mark is that a guest's pick can be trusted to be a guest's pick.
+ *
+ * An administrator is the owner. There is one restaurant and the owner runs it
+ * (`docs/multi-restaurant.md` is where that assumption is written down); when
+ * that stops being true this is one of the places that has to change.
+ */
+export function tableSourceOfUser(user: Pick<StaffUserRecord, "role">): TableSource {
+  return user.role === "admin" ? "owner" : "staff";
 }

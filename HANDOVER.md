@@ -784,6 +784,12 @@ guests to arrive ten minutes early.
 tracking — asked for, deliberately not built, and written down so the next session starts from a
 decision rather than a blank page.
 
+`docs/audit-log.md` is the log: which route writes which entry, what a change entry now says
+(**Table 12 → 7**, not "edited the reservation"), and the one deliberate gap. Note the change of
+mind in §4 — **reading the log needs `audit:read`** rather than any signed-in account, because
+every entry names a guest and a room, so the whole of it read end to end is a guest list. `admin`
+holds it implicitly; existing staff accounts have to be granted it.
+
 ## 5A. Decided but not built
 
 `docs/backlog.md` is the list: the wallet reservation card, and running more than one restaurant.

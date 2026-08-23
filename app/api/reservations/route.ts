@@ -7,9 +7,9 @@ import {
 } from "@/lib/services/reservations";
 import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
 import { getEveningFeatures, getFloorPlan } from "@/lib/services/settings";
-import { findPlanTable } from "@/lib/floor-plan-availability";
+import { findPlanCombination } from "@/lib/floor-plan-availability";
 import { TableClaimError } from "@/lib/services/table-claims";
-import { canGuestBookDate } from "@/lib/reservation-policy";
+import { canGuestBookDate, canGuestChooseTable } from "@/lib/reservation-policy";
 import { BOOKING_MESSAGES, validateReservationRequest } from "@/lib/services/booking-rules";
 import {
   PASS_KEY_MESSAGES,
@@ -208,7 +208,7 @@ export async function POST(request: Request) {
     const table = await resolveTable(parsed.data.date, parsed.data.tableId);
 
     const reservation = await createReservationEntry({
-      table,
+      tables: table,
       // The guest picked it themselves on /booking/table. That is the mark
       // staff should think twice about before moving anybody.
       tableSource: "guest",
@@ -300,7 +300,7 @@ export async function POST(request: Request) {
 async function resolveTable(
   date: string,
   tableId: string | undefined,
-): Promise<{ id: string; label: string; seats: number } | undefined> {
+): Promise<{ id: string; label: string; seats: number }[] | undefined> {
   if (!tableId) {
     return undefined;
   }
@@ -312,11 +312,30 @@ async function resolveTable(
     return undefined;
   }
 
-  const table = findPlanTable(await getFloorPlan(), tableId);
-
-  if (!table || !table.active || !table.label.trim()) {
+  /**
+   * Past the evening's table cutoff the room is already laid out, so a request
+   * arriving from a screen opened before it gets the dinner and not the table.
+   * Silently, and deliberately: the guest asked to eat, the seats are theirs,
+   * and "your table went while you were choosing" is not a booking failure.
+   */
+  if (!canGuestChooseTable(evening, new Date()).allowed) {
     return undefined;
   }
 
-  return { id: table.id, label: table.label.trim(), seats: table.seats };
+  /**
+   * One id or several joined with `+` — a party of five on two four-tops.
+   * Resolved from the plan, which is what says those tables may be pushed
+   * together at all (rule 2.6).
+   */
+  const combination = findPlanCombination(await getFloorPlan(), tableId);
+
+  if (!combination) {
+    return undefined;
+  }
+
+  return combination.tables.map((table) => ({
+    id: table.id,
+    label: table.label.trim(),
+    seats: table.seats,
+  }));
 }

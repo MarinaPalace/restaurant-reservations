@@ -1281,7 +1281,7 @@ describe("moving a booking to another table", () => {
       guestCount: guests,
       date: DATE,
       selections: [SELECTIONS[0]],
-      table,
+      tables: table ? [table] : undefined,
       tableSource: table ? "guest" : undefined,
     });
   }
@@ -1300,8 +1300,8 @@ describe("moving a booking to another table", () => {
       reservationNumber: booking.reservationNumber,
       date: DATE,
       guests: 2,
-      fromTableId: "t1",
-      to: { id: "t2", label: "2", seats: 4 },
+      from: [{ id: "t1", label: "1", seats: 4 }],
+      to: [{ id: "t2", label: "2", seats: 4 }],
       source: "guest",
     });
 
@@ -1328,8 +1328,8 @@ describe("moving a booking to another table", () => {
         reservationNumber: mine.reservationNumber,
         date: DATE,
         guests: 2,
-        fromTableId: "t3",
-        to: { id: "t4", label: "4", seats: 2 },
+        from: [{ id: "t3", label: "3", seats: 4 }],
+        to: [{ id: "t4", label: "4", seats: 2 }],
         source: "guest",
       }),
     ).rejects.toBeInstanceOf(TableClaimError);
@@ -1351,7 +1351,7 @@ describe("moving a booking to another table", () => {
       reservationNumber: booking.reservationNumber,
       date: DATE,
       guests: 2,
-      fromTableId: "t5",
+      from: [{ id: "t5", label: "5", seats: 4 }],
       to: null,
       source: "guest",
     });
@@ -1373,11 +1373,186 @@ describe("moving a booking to another table", () => {
       reservationNumber: booking.reservationNumber,
       date: DATE,
       guests: 2,
-      fromTableId: "t6",
-      to: { id: "t7", label: "7", seats: 4 },
+      from: [{ id: "t6", label: "6", seats: 4 }],
+      to: [{ id: "t7", label: "7", seats: 4 }],
       source: "guest",
     });
 
     expect(moved?.version).toBe(2);
+  });
+});
+
+/**
+ * A party of five in a room of four-tops. The claims are the part worth
+ * testing: a merged holding takes both tables whole, because nobody can be sat
+ * at a table pushed against a stranger's dinner.
+ */
+describe("tables pushed together", () => {
+  const DATE = "2026-11-09";
+
+  async function claimsNow() {
+    const { listTableClaims } = await import("@/lib/services/table-claims");
+    return listTableClaims(DATE);
+  }
+
+  it("claims every seat of every table, not just the ones the party fills", async () => {
+    const { reservations } = await loadServices();
+    await openDate(DATE, 40);
+
+    const booking = await reservations.createReservationEntry({
+      roomNumber: "601",
+      guestCount: 5,
+      date: DATE,
+      selections: [SELECTIONS[0]],
+      tables: [
+        { id: "m1", label: "1", seats: 4 },
+        { id: "m2", label: "2", seats: 4 },
+      ],
+      tableSource: "guest",
+    });
+
+    expect(booking.tableNumber).toBe("1 + 2");
+    expect(booking.tableId).toBe("m1");
+    expect(booking.tableIds).toEqual(["m1", "m2"]);
+
+    const claims = await claimsNow();
+    expect(claims.find((claim) => claim.tableId === "m1")?.guests).toBe(4);
+    // Not 1. The four-top with one guest on it is still gone.
+    expect(claims.find((claim) => claim.tableId === "m2")?.guests).toBe(4);
+  });
+
+  it("takes neither table when the second one is already gone", async () => {
+    const { reservations } = await loadServices();
+    const { TableClaimError } = await import("@/lib/services/table-claims");
+    await openDate(DATE, 40);
+
+    await reservations.createReservationEntry({
+      roomNumber: "602",
+      guestCount: 4,
+      date: DATE,
+      selections: [SELECTIONS[0]],
+      tables: [{ id: "m4", label: "4", seats: 4 }],
+      tableSource: "guest",
+    });
+
+    await expect(
+      reservations.createReservationEntry({
+        roomNumber: "603",
+        guestCount: 5,
+        date: DATE,
+        selections: [SELECTIONS[0]],
+        tables: [
+          { id: "m3", label: "3", seats: 4 },
+          { id: "m4", label: "4", seats: 4 },
+        ],
+        tableSource: "guest",
+      }),
+    ).rejects.toBeInstanceOf(TableClaimError);
+
+    // The first of the two was claimed before the second failed. It has to
+    // have been given back, or the room loses a table to a booking that never
+    // happened.
+    expect((await claimsNow()).find((claim) => claim.tableId === "m3")).toBeUndefined();
+  });
+
+  it("gives both tables back when the booking is cancelled", async () => {
+    const { reservations } = await loadServices();
+    await openDate(DATE, 40);
+
+    const booking = await reservations.createReservationEntry({
+      roomNumber: "604",
+      guestCount: 5,
+      date: DATE,
+      selections: [SELECTIONS[0]],
+      tables: [
+        { id: "m5", label: "5", seats: 4 },
+        { id: "m6", label: "6", seats: 4 },
+      ],
+      tableSource: "guest",
+    });
+
+    await reservations.cancelReservation(booking.reservationNumber);
+
+    const claims = await claimsNow();
+    expect(claims.find((claim) => claim.tableId === "m5")).toBeUndefined();
+    expect(claims.find((claim) => claim.tableId === "m6")).toBeUndefined();
+  });
+
+  it("moves a party off two tables onto one, releasing both", async () => {
+    const { reservations } = await loadServices();
+    await openDate(DATE, 40);
+
+    const booking = await reservations.createReservationEntry({
+      roomNumber: "605",
+      guestCount: 5,
+      date: DATE,
+      selections: [SELECTIONS[0]],
+      tables: [
+        { id: "m7", label: "7", seats: 4 },
+        { id: "m8", label: "8", seats: 4 },
+      ],
+      tableSource: "guest",
+    });
+
+    const moved = await reservations.moveReservationTable({
+      reservationNumber: booking.reservationNumber,
+      date: DATE,
+      guests: 5,
+      from: [
+        { id: "m7", label: "7", seats: 4 },
+        { id: "m8", label: "8", seats: 4 },
+      ],
+      to: [{ id: "m9", label: "9", seats: 6 }],
+      source: "guest",
+    });
+
+    expect(moved?.tableNumber).toBe("9");
+    // A single table again, so the list goes away rather than lingering as a
+    // list of one.
+    expect(moved?.tableIds).toBeUndefined();
+
+    const claims = await claimsNow();
+    expect(claims.find((claim) => claim.tableId === "m7")).toBeUndefined();
+    expect(claims.find((claim) => claim.tableId === "m8")).toBeUndefined();
+    expect(claims.find((claim) => claim.tableId === "m9")?.guests).toBe(5);
+  });
+
+  it("keeps the table a move is not leaving", async () => {
+    const { reservations } = await loadServices();
+    await openDate(DATE, 40);
+
+    const booking = await reservations.createReservationEntry({
+      roomNumber: "606",
+      guestCount: 5,
+      date: DATE,
+      selections: [SELECTIONS[0]],
+      tables: [
+        { id: "n1", label: "1", seats: 4 },
+        { id: "n2", label: "2", seats: 4 },
+      ],
+      tableSource: "guest",
+    });
+
+    // Swapping one of the two: the one being kept must not be released and
+    // re-claimed, and must certainly not end up released.
+    await reservations.moveReservationTable({
+      reservationNumber: booking.reservationNumber,
+      date: DATE,
+      guests: 5,
+      from: [
+        { id: "n1", label: "1", seats: 4 },
+        { id: "n2", label: "2", seats: 4 },
+      ],
+      to: [
+        { id: "n1", label: "1", seats: 4 },
+        { id: "n3", label: "3", seats: 4 },
+      ],
+      source: "guest",
+    });
+
+    const claims = await claimsNow();
+    expect(claims.find((claim) => claim.tableId === "n1")?.guests).toBe(4);
+    expect(claims.find((claim) => claim.tableId === "n3")?.guests).toBe(4);
+    expect(claims.find((claim) => claim.tableId === "n2")).toBeUndefined();
   });
 });

@@ -120,6 +120,8 @@ export const ROTATION_STEP = 15;
 
 export const MAX_SEATS_PER_TABLE = 20;
 export const MAX_TABLES_PER_ZONE = 200;
+/** Long enough for "By the window" and short enough for a badge. */
+export const MAX_MERGE_GROUP_LENGTH = 24;
 export const MAX_FEATURES_PER_ZONE = 300;
 export const MAX_ZONES = 12;
 
@@ -185,6 +187,25 @@ export type FloorTable = Placed & {
    * no such thing as a chair somebody placed by hand and could leave behind.
    */
   chairSides?: ChairSide[];
+  /**
+   * Tables that may be pushed together, named.
+   *
+   * A restaurant of four-tops cannot seat a party of five, and the honest
+   * answer is not "no" — it is the two tables staff would actually push
+   * together. Which two is a fact about the *room*, not something software can
+   * work out from coordinates: two tables 30 cm apart may have a pillar between
+   * them, and two a metre apart may be routinely joined. So whoever draws the
+   * plan says so, by giving them the same group name.
+   *
+   * Any non-empty string; tables sharing one may be combined. Absent — which is
+   * every table drawn before this — means the table stands alone, so no
+   * existing plan changes behaviour.
+   *
+   * **A merged table is taken whole.** You cannot seat strangers at a table
+   * pushed against somebody's party, so a combination claims every seat of
+   * every table in it. `docs/floor-plan.md` §21.
+   */
+  mergeGroup?: string;
   /** Window, quiet, by the music. Nothing reads these yet (§8.4). */
   tags?: string[];
 };
@@ -788,6 +809,9 @@ function toFloorTable(value: unknown, zone: ZoneSize): FloorTable | null {
         ? undefined
         : Math.min(Math.max(Math.round(asNumber(table.chairCount)), 0), MAX_CHAIRS_PER_TABLE),
     chairSides: toChairSides(table.chairSides),
+    // Trimmed to nothing reads as "stands alone", so a group cleared in the
+    // designer is a table that is no longer merged with anything.
+    mergeGroup: asText(table.mergeGroup, MAX_MERGE_GROUP_LENGTH) || undefined,
     tags: Array.isArray(table.tags)
       ? [...new Set(table.tags.map((tag) => asText(tag, 24)).filter(Boolean))].slice(0, 8)
       : undefined,

@@ -784,6 +784,14 @@ guests to arrive ten minutes early.
 tracking — asked for, deliberately not built, and written down so the next session starts from a
 decision rather than a blank page.
 
+**Tables pushed together.** A party of five in a room of four-tops books two
+tables joined — which tables may be joined is written on the plan as a
+`mergeGroup`, never guessed from coordinates, and a merged holding **claims both
+tables whole** because nobody can be seated at a table pushed against a
+stranger's party. `docs/floor-plan.md` §21. Guests also stop choosing tables at
+the evening's own `tableCutoffHours`, which is **off unless somebody sets it**
+(§22).
+
 `docs/audit-log.md` is the log: which route writes which entry, what a change entry now says
 (**Table 12 → 7**, not "edited the reservation"), how **versions** work — every booking counts its
 writes, every menu counts its saves, and every entry names the version it produced — and the one

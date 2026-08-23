@@ -62,14 +62,25 @@ export function BoardRoom({
   const [revealed, setRevealed] = useState<FloorTable | null>(null);
   const zone = plan.zones.find((entry) => entry.id === zoneId) ?? plan.zones[0] ?? null;
 
-  /** The evening's tables, reachable by the label the plan draws. */
+  /**
+   * The evening's tables, reachable by the label the plan draws.
+   *
+   * A booking on tables pushed together carries both labels — "7 + 8" — so it
+   * is registered under each of them and lights up both tables on the plan.
+   * Splitting on the separator rather than matching the whole string is what
+   * stops a merged party being listed as unplaced beneath a room where both its
+   * tables are drawn.
+   */
   const byLabel = useMemo(() => {
     const map = new Map<string, BoardTable>();
 
     for (const table of tables) {
-      const key = table.table.trim().toUpperCase();
-      if (key) {
-        map.set(key, table);
+      for (const part of table.table.split("+")) {
+        const key = part.trim().toUpperCase();
+
+        if (key) {
+          map.set(key, table);
+        }
       }
     }
 
@@ -85,7 +96,16 @@ export function BoardRoom({
       plan.zones.flatMap((entry) => entry.tables.map((table) => table.label.trim().toUpperCase())).filter(Boolean),
     );
 
-    return tables.filter((table) => !table.table.trim() || !drawn.has(table.table.trim().toUpperCase()));
+    return tables.filter((table) => {
+      const parts = table.table
+        .split("+")
+        .map((part) => part.trim().toUpperCase())
+        .filter(Boolean);
+
+      // A merged booking counts as placed once any of its tables is on the
+      // plan: the party is findable, which is what this list is for.
+      return parts.length === 0 || !parts.some((part) => drawn.has(part));
+    });
   }, [plan, tables]);
 
   if (!zone) {

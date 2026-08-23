@@ -48,17 +48,19 @@ export function TableChange({
 }) {
   const [zones, setZones] = useState<ZoneOffer[] | null>(null);
   const [open, setOpen] = useState(false);
-  const [chosen, setChosen] = useState<string | null>(reservation.tableId ?? null);
+  const [chosen, setChosen] = useState<string | null>(heldId(reservation));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   /** Nothing to offer tonight, so the button is not worth drawing. */
   const [offered, setOffered] = useState(true);
+  /** Why not, when the reason is the evening's table cutoff rather than a switch. */
+  const [closed, setClosed] = useState("");
 
   const openChooser = async () => {
     setOpen(true);
     setError("");
-    setChosen(reservation.tableId ?? null);
+    setChosen(heldId(reservation));
 
     if (zones) {
       return;
@@ -76,9 +78,21 @@ export function TableChange({
       }
 
       if (body.mode === "off") {
-        // The evening stopped offering the choice after this booking was made.
+        /**
+         * Either the evening never offered the choice, or its table cutoff has
+         * passed and the room is already laid out. The second is worth saying
+         * out loud: a guest who had a "change table" button a moment ago and
+         * now does not is owed the reason.
+         */
         setOffered(false);
         setOpen(false);
+
+        if (body.closed === "cutoff") {
+          setClosed(
+            "The tables for that evening are already laid out. Reception can still move you if you ask them.",
+          );
+        }
+
         return;
       }
 
@@ -144,6 +158,8 @@ export function TableChange({
         ) : null}
       </div>
 
+      {closed ? <p className="mt-2 text-sm text-ink-muted">{closed}</p> : null}
+
       {/*
         Shared tables are refused by the route, and saying so before the guest
         has picked one is kinder than refusing afterwards. The route still
@@ -176,7 +192,12 @@ export function TableChange({
             <div className="mt-4 rounded-control border border-line bg-surface px-4 py-3 text-center text-sm">
               {pending ? (
                 <span className="text-ink">
-                  Moving to <strong>table {pending.label}</strong>, which seats {pending.seats}.
+                  Moving to{" "}
+                  <strong>
+                    {pending.tables > 1 ? "tables" : "table"} {pending.label}
+                  </strong>
+                  , which {pending.tables > 1 ? "seat" : "seats"} {pending.seats}
+                  {pending.tables > 1 ? " between them" : ""}.
                 </span>
               ) : (
                 <span className="text-ink-muted">No table chosen — we will seat you.</span>
@@ -187,7 +208,7 @@ export function TableChange({
               <Button variant="secondary" className="flex-1" onClick={() => setOpen(false)} disabled={busy}>
                 Cancel
               </Button>
-              <Button className="flex-1" onClick={save} disabled={busy || chosen === (reservation.tableId ?? null)}>
+              <Button className="flex-1" onClick={save} disabled={busy || chosen === heldId(reservation)}>
                 {busy ? "Saving…" : "Save this table"}
               </Button>
             </div>
@@ -196,4 +217,19 @@ export function TableChange({
       ) : null}
     </section>
   );
+}
+
+/**
+ * What this booking holds, in the same shape the chooser hands back.
+ *
+ * One table is its id; several pushed together are their ids joined with `+`,
+ * which is exactly what a combination is called — so "have they changed
+ * anything?" is one string comparison rather than a set difference.
+ */
+function heldId(reservation: ReservationRecord): string | null {
+  if (reservation.tableIds?.length) {
+    return reservation.tableIds.join("+");
+  }
+
+  return reservation.tableId ?? null;
 }

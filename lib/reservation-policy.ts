@@ -136,3 +136,72 @@ export function canGuestBookDate(
     cutoffHours: Math.max(0, Number(date.bookingCutoffHours ?? 0)),
   };
 }
+
+/* ------------------------------------------------------------------ *
+ * How late a guest may choose their table
+ * ------------------------------------------------------------------ */
+
+/**
+ * When guests stop choosing tables for an evening.
+ *
+ * A third deadline, and deliberately not one of the two that already exist.
+ * Bookings close when the kitchen can take no more covers (`bookingCutoffHours`).
+ * Changes close when the kitchen has counted (`MODIFICATION_CUTOFF_HOURS`).
+ * Tables close when **the floor is laid out** — which is usually earlier than
+ * either, because a table moving at 18:55 is a table nobody has told the waiter
+ * about, and the plan on the wall is already wrong.
+ *
+ * `tableCutoffHours` absent or 0 means **off**: no separate deadline, tables
+ * stay choosable for as long as the booking rules allow. That is what every
+ * evening did before this existed, so no date needs touching and a restaurant
+ * that does not care never has to think about it.
+ */
+export function getTableSelectionDeadline(
+  date: Pick<RestaurantDateAvailability, "date" | "serviceTime" | "serviceEndTime" | "tableCutoffHours">,
+): Date | null {
+  const hours = Math.max(0, Number(date.tableCutoffHours ?? 0));
+
+  if (hours <= 0) {
+    return null;
+  }
+
+  const { start } = getReservationWindow(date.date, date.serviceTime, date.serviceEndTime);
+  const deadline = new Date(start);
+
+  deadline.setMinutes(deadline.getMinutes() - Math.round(hours * 60));
+  return deadline;
+}
+
+export type TableSelectionCheck = {
+  allowed: boolean;
+  /** Absent when this evening has no table cutoff at all. */
+  deadline: Date | null;
+  /** How many hours before the sitting tables stop being chosen. 0 = never. */
+  cutoffHours: number;
+};
+
+/**
+ * Whether a **guest** may still choose or change a table on this evening.
+ *
+ * Staff never call this. Reception seats a party that has walked up to the
+ * desk, and a rule that stopped them would only be worked around on paper.
+ *
+ * Note what this does *not* check: whether the booking may be changed at all.
+ * That is `canGuestModify`, and both have to pass — the table cutoff can only
+ * ever close the door earlier, never hold it open after the booking itself has
+ * closed.
+ */
+export function canGuestChooseTable(
+  date: Pick<RestaurantDateAvailability, "date" | "serviceTime" | "serviceEndTime" | "tableCutoffHours"> | null,
+  now = new Date(),
+): TableSelectionCheck {
+  const cutoffHours = Math.max(0, Number(date?.tableCutoffHours ?? 0));
+
+  if (!date || cutoffHours <= 0) {
+    return { allowed: true, deadline: null, cutoffHours: 0 };
+  }
+
+  const deadline = getTableSelectionDeadline(date);
+
+  return { allowed: deadline === null || now < deadline, deadline, cutoffHours };
+}

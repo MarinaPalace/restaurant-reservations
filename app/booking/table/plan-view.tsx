@@ -40,8 +40,9 @@ export function PlanView({
 }: {
   zone: ZoneOffer;
   guestCount: number;
+  /** A table id, or a combination id — `t7+t8` — when tables are pushed together. */
   chosen: string | null;
-  onChoose: (tableId: string) => void;
+  onChoose: (id: string) => void;
   /** A guest tapped a table they cannot have. Says why, in words. */
   onRefuse: (table: TableOffer) => void;
 }) {
@@ -50,6 +51,28 @@ export function PlanView({
    * the keyboard never lands on something off screen.
    */
   const [reveal, setReveal] = useState<TableOffer | null>(null);
+
+  /**
+   * Which combination each table belongs to, when it belongs to one.
+   *
+   * A four-top is "too small" for a party of five on its own, and the plan used
+   * to grey it out and stop there. If it is half of an offered pair, tapping it
+   * takes the pair — the guest is choosing *where to sit*, and which two tables
+   * that means is the restaurant's arithmetic, not theirs.
+   */
+  const inCombination = new Map<string, string>();
+
+  for (const combination of zone.combinations) {
+    for (const tableId of combination.tableIds) {
+      inCombination.set(tableId, combination.id);
+    }
+  }
+
+  /** Every table the current choice covers. One, or two pushed together. */
+  const chosenTables = new Set((chosen ?? "").split("+").filter(Boolean));
+
+  /** The tables of the chosen combination, so the join can be drawn. */
+  const joined = chosenTables.size > 1 ? zone.tables.filter((table) => chosenTables.has(table.id)) : [];
 
   return (
     <div className="mt-5">
@@ -74,11 +97,37 @@ export function PlanView({
           <RoomFeature key={feature.id} feature={feature} />
         ))}
 
+        {/*
+          The join, drawn under the tables: a band from the middle of one to the
+          middle of the next, so two tables chosen together read as one table
+          rather than as two separate picks that happen to be highlighted.
+        */}
+        {joined.length > 1
+          ? joined.slice(1).map((table, index) => {
+              const previous = joined[index];
+
+              return (
+                <line
+                  key={`join-${table.id}`}
+                  x1={previous.x + previous.width / 2}
+                  y1={previous.y + previous.height / 2}
+                  x2={table.x + table.width / 2}
+                  y2={table.y + table.height / 2}
+                  className="pointer-events-none stroke-primary"
+                  strokeWidth={14}
+                  strokeLinecap="round"
+                  opacity={0.85}
+                />
+              );
+            })
+          : null}
+
         {zone.tables.map((table) => (
           <PickableTable
             key={table.id}
             table={table}
-            chosen={chosen === table.id}
+            chosen={chosenTables.has(table.id)}
+            joinWith={inCombination.get(table.id) ?? null}
             onChoose={onChoose}
             onRefuse={onRefuse}
             onFocus={() => setReveal(table)}
@@ -135,22 +184,39 @@ function RoomFeature({ feature }: { feature: FloorFeature }) {
 function PickableTable({
   table,
   chosen,
+  joinWith,
   onChoose,
   onRefuse,
   onFocus,
 }: {
   table: TableOffer;
   chosen: boolean;
-  onChoose: (tableId: string) => void;
+  /**
+   * The combination this table is half of, when the party needs two tables
+   * pushed together. Tapping it takes the whole combination.
+   */
+  joinWith: string | null;
+  onChoose: (id: string) => void;
   onRefuse: (table: TableOffer) => void;
   onFocus: () => void;
 }) {
   const dragged = usePlanDragged();
-  const free = !table.unavailable;
+
+  /**
+   * A table too small on its own is still pickable when it is half of an
+   * offered pair — that is the entire point of pushing two together. Anything
+   * taken or out of service is not, whatever group it is in.
+   */
+  const free = !table.unavailable || Boolean(joinWith);
 
   const onActivate = () => {
     // Sliding the room past a table must never book it.
     if (dragged()) return;
+
+    if (joinWith) {
+      onChoose(joinWith);
+      return;
+    }
 
     if (table.unavailable) {
       onRefuse(table);
@@ -176,7 +242,13 @@ function PickableTable({
       tabIndex={0}
       aria-disabled={free ? undefined : true}
       aria-pressed={free ? chosen : undefined}
-      aria-label={free ? `Table ${table.label}, seats ${table.seats}` : refusalSentence(table)}
+      aria-label={
+        joinWith
+          ? `Table ${table.label}, seats ${table.seats}, pushed together with another table for your party`
+          : free
+            ? `Table ${table.label}, seats ${table.seats}`
+            : refusalSentence(table)
+      }
       className={cx(free ? "cursor-pointer" : "cursor-default opacity-60")}
       onClick={onActivate}
       onFocus={onFocus}

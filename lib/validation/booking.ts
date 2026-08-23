@@ -128,6 +128,8 @@ export const restaurantDateSchema = z.object({
    * what "closed" is for.
    */
   bookingCutoffHours: z.number().int().min(0).max(240).optional(),
+  /** When guests stop choosing tables. 0 — the default — is no cutoff at all. */
+  tableCutoffHours: z.number().int().min(0).max(240).optional(),
   /**
    * What this evening switches on for itself. Every field is optional inside
    * it, because **absent is "inherit the restaurant"** and is a third state

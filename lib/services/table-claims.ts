@@ -242,3 +242,44 @@ function toRecord(value: unknown): TableClaimRecord {
       : [],
   };
 }
+
+/* ------------------------------------------------------------------ *
+ * Tables pushed together
+ * ------------------------------------------------------------------ */
+
+/** The shape both stores hold a claimed plan table in. */
+export type HeldTable = { id: string; label: string; seats: number };
+
+/**
+ * How many seats one table of a booking's holding is claimed for.
+ *
+ * **One table: the party.** Which is what it has always been, and what lets two
+ * rooms share a four-top — the second books the same table and joins the claim.
+ *
+ * **Several tables: all of them.** A table pushed against somebody's party
+ * cannot be sold to a stranger, so a merged holding takes every seat of every
+ * table in it. A party of five on two four-tops claims 4 and 4, not 5 and 0,
+ * and the room correctly shows both tables gone.
+ */
+export function seatsToClaim(
+  held: readonly HeldTable[],
+  table: HeldTable,
+  guests: number,
+): number {
+  return held.length > 1 ? table.seats : guests;
+}
+
+/**
+ * What a booking's tables are called between them: `7`, or `7 + 8`.
+ *
+ * This becomes `tableNumber`, which is the string the service sheet, the board
+ * and `groupRoomRowsByTable` have always keyed on — the continuity point the
+ * whole floor-plan feature rests on (`docs/floor-plan.md` §3).
+ */
+export function tableNumberFrom(held: readonly HeldTable[] | undefined): string | undefined {
+  if (!held?.length) {
+    return undefined;
+  }
+
+  return held.map((table) => table.label).join(" + ");
+}

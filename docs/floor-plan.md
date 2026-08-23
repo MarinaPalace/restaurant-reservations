@@ -919,3 +919,108 @@ reminder — the Google link and the `.ics` both — because the reminder is wha
 guest actually opens on the way down, days after the confirmation screen was
 closed. Only when there is one: a line promising a table that does not exist yet
 is worse than no line, because the guest turns up looking for it.
+
+---
+
+## 21. A party of five in a room of four-tops
+
+### The refusal that should never have been
+
+A restaurant of four-tops was telling a party of five *there is no table free
+for 5 on that evening*. Which was true and useless: staff would push two tables
+together without thinking about it, and the software refused a booking over
+furniture it could have moved.
+
+### Which tables may be joined is written down, not measured
+
+`FloorTable.mergeGroup` — any name; tables sharing one may be pushed together.
+Deliberately **not** worked out from coordinates: two tables 30 cm apart may
+have a pillar between them, and two a metre apart may be joined every Saturday.
+Whoever draws the room knows which is which and the software does not, so the
+designer asks ("May be pushed together with") and names the partners back, since
+a group is a string and a typo is a group of one that silently offers nothing.
+
+Absent on every table drawn before this, so no existing plan changes behaviour.
+
+### One combination per group, and only when nothing else will do
+
+`offerTables` returns `combinations` beside `tables`. Three rules decide them,
+and each is there to stop the room being wasted:
+
+- **Only if no single table fits.** Pushing tables together is work for staff and
+  it costs the room a second table. Offering it beside a four-top that would
+  have done loses a table for nothing.
+- **The fewest tables, then the fewest seats.** A group of four tables offers
+  eleven combinations for a party of five, and a guest asked to choose between
+  them is being asked to do the maitre d's job. So each group offers exactly
+  one — and 4 + 4 beats 6 + 4 for a party of seven, which leaves the six-top for
+  a party that needs a six-top.
+- **Whole tables only.** Every table in a combination must be *completely* free.
+  Half a table cannot be pushed against somebody else's dinner.
+
+### A merged table is claimed whole
+
+This is the rule everything else follows from. A party of five on two four-tops
+claims **4 and 4, not 5 and 0**: nobody can be seated at a table pushed against a
+stranger's party, so both tables leave the room. Measured in a running server —
+after that booking, a party of two is shown both four-tops as *taken*.
+
+The claims are taken one at a time and **a failure part way through gives back
+what was already taken**, or the room loses a table to a booking that never
+happened. Releasing reads the plan to find each table's seats, because that is
+what was claimed; a single-table booking still releases the party's own count
+and still cancels with exactly the reads it always did.
+
+### What it looks like
+
+The booking carries `tableIds` (additive — `tableId` stays the first of them,
+so everything written for one table keeps working) and `tableNumber` becomes
+`"7 + 8"`, which is the string the sheet, the board and `groupRoomRowsByTable`
+have always keyed on. The service board splits on the `+` so a merged party
+lights up **both** its tables and is not listed as unplaced.
+
+On the guest's plan the two tables are drawn joined by a band, tapping either
+takes the pair, and the list offers *Tables 1 + 2 · Seats 8* above the ordinary
+rows. `t7+t8` is also the id the screen sends back — one field carries a table
+or a combination, and `findPlanCombination` resolves it **from the plan**, so a
+request cannot join two tables at opposite ends of the room (rule 2.6).
+
+One trap this caught, in a real browser and not in a test: the picker's "nothing
+is available" check counted only single tables, so the very evening the feature
+exists for still said *we will seat you*. `hasOffer` counts combinations now.
+
+---
+
+## 22. Tables close before the booking does
+
+Backlog item 7, built. `tableCutoffHours` on the evening: how many hours before
+the sitting guests stop choosing or changing a table. **0 — the default — is
+off**, and off is what every evening did before this existed, so a restaurant
+that lays the floor as bookings arrive never has to think about it.
+
+Its own number rather than sharing `bookingCutoffHours`, because the two answer
+different questions:
+
+| Deadline | Closes when | Default |
+| --- | --- | --- |
+| `bookingCutoffHours` | the kitchen can take no more covers | at the sitting |
+| `MODIFICATION_CUTOFF_HOURS` | the kitchen has counted | 12 hours |
+| `tableCutoffHours` | **the floor is laid out** | off |
+
+Enforced in three places, all of them write paths:
+
+- `/api/restaurant/tables` answers `{ mode: "off", closed: "cutoff" }`, so the
+  booking flow skips the step exactly as it does for an evening with selection
+  switched off — and the manage screen, which had a *Change table* button a
+  moment ago, says why rather than silently losing it.
+- The **booking** route drops a table named by a screen opened before the cutoff
+  and takes the reservation anyway. Silently, deliberately: the guest asked to
+  eat, the seats are theirs, and "your table went while you were choosing" is
+  not a booking failure.
+- The **change** route refuses with a sentence naming reception, who are never
+  bound by any of this.
+
+Verified against a running server: with the cutoff four hours out and service at
+19:00 it was still open at 02:45; set to 24 hours it answered `closed: "cutoff"`
+with the deadline, a booking naming a table came back with none, and a guest
+trying to move got the 409.

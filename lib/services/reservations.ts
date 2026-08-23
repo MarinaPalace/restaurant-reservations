@@ -4,7 +4,14 @@ import { isMongoConfigured, connectToDatabase } from "@/lib/db/connect";
 import { ReservationModel } from "@/lib/models/reservation";
 import { RestaurantDateModel } from "@/lib/models/restaurant-date";
 import { toEveningOverrides, type EveningOverrides } from "@/lib/evening-features";
-import { claimTable, releaseTable, TableClaimError } from "@/lib/services/table-claims";
+import {
+  claimTable,
+  releaseTable,
+  seatsToClaim,
+  tableNumberFrom,
+  TableClaimError,
+  type HeldTable,
+} from "@/lib/services/table-claims";
 import { getFloorPlan } from "@/lib/services/settings";
 import { allTables } from "@/lib/floor-plan";
 import {
@@ -106,6 +113,7 @@ type MongoReservationDocument = {
   notes?: unknown;
   staffNote?: unknown;
   tableId?: unknown;
+  tableIds?: unknown;
   tableGroupId?: unknown;
   tableNumber?: unknown;
   tableSource?: unknown;
@@ -144,6 +152,13 @@ function toReservationRecord(document: MongoReservationDocument): ReservationRec
     notes: document.notes ? String(document.notes) : undefined,
     staffNote: document.staffNote ? String(document.staffNote) : undefined,
     tableId: document.tableId ? String(document.tableId) : undefined,
+    // Only meaningful with more than one: a list of one is a single table
+    // wearing a list, and every reader would then have two ways to ask the
+    // same question.
+    tableIds:
+      Array.isArray(document.tableIds) && document.tableIds.length > 1
+        ? document.tableIds.map((id) => String(id))
+        : undefined,
     tableGroupId: document.tableGroupId ? String(document.tableGroupId) : undefined,
     tableNumber: document.tableNumber ? String(document.tableNumber) : undefined,
     tableSource: (document.tableSource as ReservationRecord["tableSource"]) || undefined,
@@ -302,92 +317,89 @@ export async function moveReservationTable(input: {
   reservationNumber: string;
   date: string;
   guests: number;
-  /** The plan table currently held, if any. */
-  fromTableId?: string;
-  /** Where it is going, or `null` to hand the table back and be seated. */
-  to: { id: string; label: string; seats: number } | null;
+  /** The plan tables currently held, if any. */
+  from?: HeldTable[];
+  /** Where it is going, or `null` to hand the tables back and be seated. */
+  to: HeldTable[] | null;
   source: TableSource;
 }): Promise<ReservationRecord | null> {
-  if (input.to) {
-    await claimTable({
-      date: input.date,
-      tableId: input.to.id,
-      seats: input.to.seats,
-      guests: input.guests,
-      reservationNumber: input.reservationNumber,
-    });
+  const wanted = input.to ?? [];
+  const claimed: HeldTable[] = [];
+
+  for (const table of wanted) {
+    // Claimed one at a time, and a failure part way through gives back what was
+    // already taken: a party that fits on the first of two tables and not the
+    // second must end up holding neither.
+    try {
+      await claimTable({
+        date: input.date,
+        tableId: table.id,
+        seats: table.seats,
+        guests: seatsToClaim(wanted, table, input.guests),
+        reservationNumber: input.reservationNumber,
+      });
+    } catch (error) {
+      await releaseHeldTables(input.date, claimed, input.guests, input.reservationNumber, wanted);
+      throw error;
+    }
+
+    claimed.push(table);
   }
 
   let saved: ReservationRecord | null = null;
 
   try {
-    saved = await writePlanTable(input.reservationNumber, input.to, input.source);
+    saved = await writePlanTable(input.reservationNumber, wanted, input.source);
   } catch (error) {
-    if (input.to) {
-      await releaseTable({
-        date: input.date,
-        tableId: input.to.id,
-        guests: input.guests,
-        reservationNumber: input.reservationNumber,
-      }).catch((releaseError) => {
-        console.error("[reservations] failed to release a table after a failed move", releaseError);
-      });
-    }
-
+    await releaseHeldTables(input.date, claimed, input.guests, input.reservationNumber, wanted);
     throw error;
   }
 
   if (!saved) {
     // The booking vanished between being read and being written. Give the new
-    // claim back rather than holding a table for nobody.
-    if (input.to) {
-      await releaseTable({
-        date: input.date,
-        tableId: input.to.id,
-        guests: input.guests,
-        reservationNumber: input.reservationNumber,
-      }).catch(() => {});
-    }
-
+    // claims back rather than holding tables for nobody.
+    await releaseHeldTables(input.date, claimed, input.guests, input.reservationNumber, wanted);
     return null;
   }
 
-  if (input.fromTableId && input.fromTableId !== input.to?.id) {
-    await releaseTable({
-      date: input.date,
-      tableId: input.fromTableId,
-      guests: input.guests,
-      reservationNumber: input.reservationNumber,
-    }).catch((error) => {
-      console.error("[reservations] failed to release the table a booking moved off", error);
-    });
+  const keeping = new Set(wanted.map((table) => table.id));
+  const leaving = (input.from ?? []).filter((table) => !keeping.has(table.id));
+
+  if (leaving.length > 0) {
+    // Released against what the booking *was* holding, not what it holds now:
+    // a party coming off two pushed-together tables claimed both whole, and
+    // releasing either for the party size would leave the count wrong.
+    await releaseHeldTables(input.date, leaving, input.guests, input.reservationNumber, input.from ?? []);
   }
 
   return saved;
 }
 
-/** The write half of a move: the plan table on the booking, and who chose it. */
+/** The write half of a move: the plan tables on the booking, and who chose them. */
 async function writePlanTable(
   reservationNumber: string,
-  table: { id: string; label: string; seats: number } | null,
+  tables: readonly HeldTable[],
   source: TableSource,
 ): Promise<ReservationRecord | null> {
   if (!isMongoConfigured()) {
-    return setLocalReservationPlanTable(reservationNumber, table, source);
+    return setLocalReservationPlanTable(reservationNumber, tables, source);
   }
 
   await connectToDatabase();
 
-  const update = table
+  const update = tables.length
     ? {
         $set: {
-          tableId: table.id,
-          tableNumber: table.label,
+          tableId: tables[0].id,
+          tableNumber: tableNumberFrom(tables),
           tableSource: source,
           tableSetAt: new Date().toISOString(),
+          // Written as an empty list rather than unset for one table, so the
+          // two fields cannot disagree about how many tables a booking holds.
+          tableIds: tables.length > 1 ? tables.map((table) => table.id) : [],
         },
       }
-    : { $unset: { tableId: "", tableNumber: "", tableSource: "", tableSetAt: "" } };
+    : { $unset: { tableId: "", tableIds: "", tableNumber: "", tableSource: "", tableSetAt: "" } };
 
   const saved = await ReservationModel.findOneAndUpdate({ reservationNumber }, bumped(update), {
     returnDocument: "after",
@@ -419,7 +431,7 @@ export async function createReservationEntry(input: {
    * `groupRoomRowsByTable` already key on that string and need no changes
    * (`docs/floor-plan.md` §3).
    */
-  table?: { id: string; label: string; seats: number };
+  tables?: HeldTable[];
   /**
    * Who chose the table on this booking.
    *
@@ -502,16 +514,27 @@ export async function createReservationEntry(input: {
    * `docs/floor-plan.md` §2: never a read-then-write. `claimTable` is
    * conditional all the way down.
    */
-  if (input.table) {
+  if (input.tables?.length) {
+    const claimed: HeldTable[] = [];
+
     try {
-      await claimTable({
-        date: input.date,
-        tableId: input.table.id,
-        seats: input.table.seats,
-        guests: input.guestCount,
-        reservationNumber,
-      });
+      for (const table of input.tables) {
+        await claimTable({
+          date: input.date,
+          tableId: table.id,
+          seats: table.seats,
+          guests: seatsToClaim(input.tables, table, input.guestCount),
+          reservationNumber,
+        });
+
+        claimed.push(table);
+      }
     } catch (error) {
+      // Tables pushed together are claimed one at a time, so the second can
+      // fail with the first already held. Give back whatever was taken before
+      // handing the seats back, or the room loses a table to a booking that
+      // never happened.
+      await releaseHeldTables(input.date, claimed, input.guestCount, reservationNumber, input.tables);
       await RestaurantDateModel.updateOne({ date: input.date }, { $inc: { reservedSeats: -input.guestCount } });
       throw error;
     }
@@ -534,12 +557,15 @@ export async function createReservationEntry(input: {
       notes: input.notes,
       // The claimed table's label becomes the booking's table number, which is
       // what every downstream screen already reads.
-      tableNumber: input.table?.label ?? input.tableNumber,
-      tableId: input.table?.id,
+      tableNumber: tableNumberFrom(input.tables) ?? input.tableNumber,
+      tableId: input.tables?.[0]?.id,
+      // Only the several-table case stores a list; one table keeps reading as
+      // one table, on every booking ever written.
+      tableIds: (input.tables?.length ?? 0) > 1 ? input.tables?.map((table) => table.id) : undefined,
       // Only when there is a table to attribute: a booking with no table has
       // nobody who chose it.
-      tableSource: input.table?.label ?? input.tableNumber ? input.tableSource : undefined,
-      tableSetAt: input.table?.label ?? input.tableNumber ? new Date().toISOString() : undefined,
+      tableSource: tableNumberFrom(input.tables) ?? input.tableNumber ? input.tableSource : undefined,
+      tableSetAt: tableNumberFrom(input.tables) ?? input.tableNumber ? new Date().toISOString() : undefined,
       tableGroupId,
       status: "confirmed",
       passKeyId: input.passKeyId,
@@ -553,15 +579,8 @@ export async function createReservationEntry(input: {
     // Give back both claims if the reservation itself could not be written.
     await RestaurantDateModel.updateOne({ date: input.date }, { $inc: { reservedSeats: -input.guestCount } });
 
-    if (input.table) {
-      await releaseTable({
-        date: input.date,
-        tableId: input.table.id,
-        guests: input.guestCount,
-        reservationNumber,
-      }).catch((releaseError) => {
-        console.error("[reservations] failed to release a table after a failed booking", releaseError);
-      });
+    if (input.tables?.length) {
+      await releaseHeldTables(input.date, input.tables, input.guestCount, reservationNumber, input.tables);
     }
 
     throw error;
@@ -624,23 +643,85 @@ export async function cancelReservation(
   return record;
 }
 
-/** Hands a booking's table back, if it held one. Safe to call twice. */
+/**
+ * Hands back the tables a booking held. Safe to call twice.
+ *
+ * One table releases the party's own guests, which is what it claimed and what
+ * lets a second room sharing the table keep its seats. Several tables were
+ * claimed **whole**, so they are released whole — and finding out how many
+ * seats each has means reading the plan, which is why that read happens here
+ * and only for the bookings that need it. A single-table booking cancels with
+ * exactly the reads it always did.
+ */
 async function releaseClaimedTable(record: ReservationRecord): Promise<void> {
-  if (!record.tableId) {
+  const ids = record.tableIds?.length ? record.tableIds : record.tableId ? [record.tableId] : [];
+
+  if (ids.length === 0) {
     return;
   }
 
-  await releaseTable({
-    date: record.date,
-    tableId: record.tableId,
-    guests: record.guestCount,
-    reservationNumber: record.reservationNumber,
-  }).catch((error) => {
-    // The booking is already cancelled and its seats are back. A table that
-    // failed to release is a table that reads busy — visible and fixable —
-    // rather than a cancellation that half happened.
-    console.error("[reservations] failed to release a table on cancellation", error);
-  });
+  if (ids.length === 1) {
+    await releaseTable({
+      date: record.date,
+      tableId: ids[0],
+      guests: record.guestCount,
+      reservationNumber: record.reservationNumber,
+    }).catch((error) => {
+      // The booking is already cancelled and its seats are back. A table that
+      // failed to release is a table that reads busy — visible and fixable —
+      // rather than a cancellation that half happened.
+      console.error("[reservations] failed to release a table on cancellation", error);
+    });
+
+    return;
+  }
+
+  const plan = await getFloorPlan();
+  const held = allTables(plan).filter((table) => ids.includes(table.id));
+
+  for (const id of ids) {
+    const table = held.find((entry) => entry.id === id);
+
+    await releaseTable({
+      date: record.date,
+      tableId: id,
+      // A table missing from the plan since the booking was made still has to
+      // be let go of; releasing the party's own count is the closest honest
+      // guess, and the claim is deleted either way once nobody is on it.
+      guests: table?.seats ?? record.guestCount,
+      reservationNumber: record.reservationNumber,
+    }).catch((error) => {
+      console.error("[reservations] failed to release a table on cancellation", error);
+    });
+  }
+}
+
+/**
+ * Gives back tables a half-finished booking had already taken.
+ *
+ * `held` is what was actually claimed; `all` is what the booking was trying to
+ * hold, which is what decides whether each was claimed whole or for the party.
+ * Failures are logged and swallowed — this runs while something else is already
+ * going wrong, and a stale claim is a table that reads busy rather than a
+ * booking that half happened.
+ */
+async function releaseHeldTables(
+  date: string,
+  held: readonly HeldTable[],
+  guests: number,
+  reservationNumber: string,
+  all: readonly HeldTable[],
+): Promise<void> {
+  for (const table of held) {
+    await releaseTable({
+      date,
+      tableId: table.id,
+      guests: seatsToClaim(all, table, guests),
+      reservationNumber,
+    }).catch((error) => {
+      console.error("[reservations] failed to release a table after a failed booking", error);
+    });
+  }
 }
 
 export class RestoreError extends Error {
@@ -1302,6 +1383,7 @@ export async function updateRestaurantDate(input: {
   premium?: boolean;
   /** How many hours before the sitting guest bookings close. 0 = at the sitting. */
   bookingCutoffHours?: number;
+  tableCutoffHours?: number;
   /**
    * What this evening switches on for itself.
    *
@@ -1330,6 +1412,7 @@ export async function updateRestaurantDate(input: {
         serviceEndTime: input.serviceEndTime ?? null,
         premium: input.premium ?? false,
         bookingCutoffHours: Math.max(0, Math.round(Number(input.bookingCutoffHours ?? 0))),
+        tableCutoffHours: Math.max(0, Math.round(Number(input.tableCutoffHours ?? 0))),
         // Only written when the caller said something about it, so omitting it
         // leaves the evening as it was rather than clearing it.
         ...(input.features === undefined ? {} : { features: toEveningOverrides(input.features) ?? null }),
@@ -1348,6 +1431,7 @@ export async function updateRestaurantDate(input: {
     serviceEndTime: updated.serviceEndTime ? String(updated.serviceEndTime) : undefined,
     premium: Boolean(updated.premium),
     bookingCutoffHours: Number(updated.bookingCutoffHours ?? 0),
+    tableCutoffHours: Number(updated.tableCutoffHours ?? 0),
     features: toEveningOverrides(updated.features),
   });
 }

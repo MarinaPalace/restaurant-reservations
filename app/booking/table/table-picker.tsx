@@ -8,8 +8,8 @@ import { Alert, Skeleton } from "@/components/ui/feedback";
 import { BookingSteps } from "@/components/booking-steps";
 import { PageShell } from "@/components/page-shell";
 import { useBookingGuard, writeBookingSession } from "@/hooks/use-booking-session";
-import type { ZoneOffer } from "@/lib/floor-plan-availability";
-import { TableChooser } from "@/components/table-chooser";
+import { hasOffer, type ZoneOffer } from "@/lib/floor-plan-availability";
+import { TableChooser, findOffer } from "@/components/table-chooser";
 
 /**
  * Where the guest sits — `docs/floor-plan.md` §6.
@@ -107,14 +107,16 @@ export function TablePicker() {
     };
   }, [ready, date, guestCount, router]);
 
-  const offerable = zones?.some((entry) => entry.tables.some((table) => !table.unavailable)) ?? false;
+  // Tables pushed together count: a room of four-tops has nothing free for a
+  // party of five and can still seat them, which is the whole point of them.
+  const offerable = zones ? hasOffer(zones) : false;
 
   /**
-   * The chosen table is looked up across every zone, not only the one on
-   * screen: a guest may pick on the terrace and then look at the main hall, and
-   * the summary must still name what they have.
+   * What is chosen, looked up across every zone — a guest may pick on the
+   * terrace and then look at the main hall, and the summary must still name
+   * what they have. Answers for tables pushed together as well as for one.
    */
-  const chosenTable = zones?.flatMap((entry) => entry.tables).find((table) => table.id === chosen) ?? null;
+  const chosenTable = findOffer(zones ?? [], chosen);
 
   const goOn = (tableId: string | null) => {
     writeBookingSession({ tableId: tableId ?? "" });
@@ -188,7 +190,12 @@ export function TablePicker() {
             >
               {chosenTable ? (
                 <span className="text-ink">
-                  You have chosen <strong>table {chosenTable.label}</strong>, which seats {chosenTable.seats}.
+                  You have chosen{" "}
+                  <strong>
+                    {chosenTable.tables > 1 ? "tables" : "table"} {chosenTable.label}
+                  </strong>
+                  , which {chosenTable.tables > 1 ? "seat" : "seats"} {chosenTable.seats}
+                  {chosenTable.tables > 1 ? " between them" : ""}.
                 </span>
               ) : (
                 <span className="text-ink-muted">

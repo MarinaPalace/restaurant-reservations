@@ -10,7 +10,11 @@ import { InfoTip } from "@/components/ui/tooltip";
 import { cx } from "@/components/ui/utils";
 import { KitchenReport } from "@/app/admin/kitchen-report";
 import { formatLongDate, isPastDateKey, isValidDateKey, startOfMonth } from "@/lib/date";
-import { canGuestBookDate, getBookingDeadline } from "@/lib/reservation-policy";
+import {
+  canGuestBookDate,
+  getBookingDeadline,
+  getTableSelectionDeadline,
+} from "@/lib/reservation-policy";
 import { toRestaurantDatePayload } from "@/lib/restaurant-date-form";
 import {
   EVENING_FEATURES,
@@ -48,6 +52,26 @@ function describeCutoff(entry: RestaurantDateAvailability) {
   const closes = hours === 0 ? "the sitting starts" : clock;
 
   return `Guests may book until ${closes}. Reception can always add a booking, whatever this says.`;
+}
+
+/**
+ * When guests stop choosing tables, in words.
+ *
+ * Off is the normal answer and says so plainly: a restaurant that lays the
+ * floor as bookings come in has no reason to think about this, and a control
+ * that reads "0 hours before" would make it look like a decision somebody has
+ * to make.
+ */
+function describeTableCutoff(entry: RestaurantDateAvailability) {
+  const deadline = getTableSelectionDeadline(entry);
+
+  if (!deadline) {
+    return "Guests may choose a table for as long as they can change the booking.";
+  }
+
+  const clock = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(deadline);
+
+  return `Guests may choose a table until ${clock}, after which the room is yours to lay out. Reception can still move anybody.`;
 }
 
 export function AdminDateManager({
@@ -886,7 +910,8 @@ function AdvancedEvening({
   onChangeDefault: (patch: Partial<EveningDefaults>) => void;
 }) {
   const cutoff = Math.max(0, Number(entry.bookingCutoffHours ?? 0));
-  const unusual = hasOverrides(entry.features) || cutoff > 0;
+  const tableCutoff = Math.max(0, Number(entry.tableCutoffHours ?? 0));
+  const unusual = hasOverrides(entry.features) || cutoff > 0 || tableCutoff > 0;
 
   const [open, setOpen] = useState(unusual);
   const [grain, setGrain] = useState<"evening" | "restaurant">("evening");
@@ -957,7 +982,7 @@ function AdvancedEvening({
         {/* Says what is in there without opening it, so a folded panel is
             never hiding something somebody needed to know about. */}
         <span className="text-xs font-normal text-ink-subtle">
-          {unusual ? "set for this evening" : "booking cutoff, what guests may do"}
+          {unusual ? "set for this evening" : "cutoffs, what guests may do"}
         </span>
       </button>
 
@@ -988,6 +1013,42 @@ function AdvancedEvening({
                   }
                 />
                 <span className="text-xs text-ink-muted">hours before</span>
+              </div>
+            )}
+          </Field>
+
+          {/*
+            A second deadline, and a different question from the first. Bookings
+            close when the kitchen can take no more covers; tables close when the
+            floor is laid out, which is usually earlier. Zero is off — no
+            separate deadline at all — because that is what every evening did
+            before this existed.
+          */}
+          <Field
+            label="Guests stop choosing tables"
+            compact
+            hint={describeTableCutoff(entry)}
+            tip="Hours before the sitting that guests stop picking or changing their own table, so the room can be laid out. 0 turns it off, and tables stay choosable for as long as the booking can be changed. Reception is never bound by it."
+          >
+            {(fieldProps) => (
+              <div className="flex items-center gap-2">
+                <Input
+                  {...fieldProps}
+                  compact
+                  type="number"
+                  min={0}
+                  max={240}
+                  step={1}
+                  inputMode="numeric"
+                  className="w-20"
+                  value={entry.tableCutoffHours ?? 0}
+                  onChange={(event) =>
+                    onPatch({
+                      tableCutoffHours: Math.max(0, Math.min(240, Math.round(Number(event.target.value) || 0))),
+                    })
+                  }
+                />
+                <span className="text-xs text-ink-muted">{tableCutoff > 0 ? "hours before" : "hours before (off)"}</span>
               </div>
             )}
           </Field>

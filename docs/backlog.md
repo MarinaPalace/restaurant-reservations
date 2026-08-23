@@ -310,7 +310,13 @@ it twice.
 
 ## 7. Table selection should close before the booking does
 
-**Status: asked for, not built. Raised 2026-08-24.**
+**Status: done, 2026-08-24. `docs/floor-plan.md` §22.**
+
+`tableCutoffHours` per evening, 0 meaning off, edited beside the booking cutoff
+in Advanced and enforced in all three write paths. The two questions below were
+settled as: **per evening** (it sits beside the booking cutoff, which is already
+per evening), and a guest booking after the cutoff **gets the dinner without the
+table**, silently, because the seats are what they came for.
 
 Guests can now change their own table from the manage screen
 (`docs/floor-plan.md` §20), and it is governed by the same 12-hour deadline as
@@ -345,10 +351,8 @@ place, and `lib/reservation-policy.ts` is where the deadline arithmetic lives.
 
 Items 3 and 5 are done, and so is item 4 part one. What is left, in the order it is worth doing:
 
-1. **Item 7** — the table-selection cutoff, which is the newest ask and small
-   once the two questions above are answered.
-2. **Item 4 part two — locking a table.** The permission question is the whole of it. `audit:read`
+1. **Item 4 part two — locking a table.** The permission question is the whole of it. `audit:read`
    is now the precedent for adding one; whether locking wants a permission or a genuine rank is
    still open, and the four questions under part two still have to be answered before any code.
-3. **Item 6** — the header spilling off a phone. Small, visible on every page a guest sees.
-4. **Item 1** — the wallet card, whose first step needs no Apple or Google account at all.
+2. **Item 6** — the header spilling off a phone. Small, visible on every page a guest sees.
+3. **Item 1** — the wallet card, whose first step needs no Apple or Google account at all.

@@ -4,6 +4,7 @@ import { getEveningFeatures, getFloorPlan } from "@/lib/services/settings";
 import { listTableClaims } from "@/lib/services/table-claims";
 import { offerTables } from "@/lib/floor-plan-availability";
 import { isValidDateKey } from "@/lib/date";
+import { canGuestChooseTable } from "@/lib/reservation-policy";
 import { MAX_GUESTS_PER_RESERVATION } from "@/lib/validation/booking";
 
 /**
@@ -45,6 +46,26 @@ export async function GET(request: Request) {
 
     if (features.tableSelection === "off") {
       return NextResponse.json({ mode: "off", zones: [] });
+    }
+
+    /**
+     * Past the evening's table cutoff the room is laid out and guests stop
+     * choosing — answered as `off`, because that is exactly what it is from the
+     * screen's point of view, with a reason beside it so the screen can say why
+     * rather than silently skipping a step the guest was expecting.
+     *
+     * Off unless somebody set it, so an evening that does not care about this
+     * behaves as it always did.
+     */
+    const selection = canGuestChooseTable(evening, new Date());
+
+    if (!selection.allowed) {
+      return NextResponse.json({
+        mode: "off",
+        zones: [],
+        closed: "cutoff",
+        deadline: selection.deadline?.toISOString(),
+      });
     }
 
     /**

@@ -48,6 +48,9 @@ export function toRestaurantDatePayload(entry: RestaurantDateAvailability) {
     premium: Boolean(entry.premium),
     // Absent reads as 0: bookings close when the sitting starts.
     bookingCutoffHours: Math.max(0, Math.round(Number(entry.bookingCutoffHours ?? 0))),
+    // Absent reads as 0 too, but 0 means something different here: no table
+    // cutoff at all, rather than one at the sitting.
+    tableCutoffHours: Math.max(0, Math.round(Number(entry.tableCutoffHours ?? 0))),
     /**
      * Carried by the spread already; named here so the guard test below can see
      * it, and so the three-way contract is stated where somebody editing this

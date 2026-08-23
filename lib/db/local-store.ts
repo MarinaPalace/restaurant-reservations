@@ -3,7 +3,12 @@ import { getDataFilePath, readJsonFile, writeJsonFile } from "@/lib/db/json-file
 import { withStoreLock } from "@/lib/db/store-lock";
 import { DEFAULT_MENU, buildDefaultDates } from "@/lib/db/seed-data";
 import { toEveningOverrides, type EveningOverrides } from "@/lib/evening-features";
-import { TableClaimError, type TableClaimRecord } from "@/lib/services/table-claims";
+import {
+  TableClaimError,
+  seatsToClaim,
+  tableNumberFrom,
+  type TableClaimRecord,
+} from "@/lib/services/table-claims";
 import {
   withRemainingSeats,
   type CancellationRecord,
@@ -96,6 +101,7 @@ export async function upsertLocalDate(input: {
   serviceEndTime?: string;
   premium?: boolean;
   bookingCutoffHours?: number;
+  tableCutoffHours?: number;
   /** Absent leaves whatever the evening already said; null clears it. */
   features?: EveningOverrides | null;
 }): Promise<RestaurantDateAvailability> {
@@ -114,6 +120,7 @@ export async function upsertLocalDate(input: {
             serviceEndTime: input.serviceEndTime,
             premium: input.premium ?? false,
             bookingCutoffHours: Math.max(0, Math.round(Number(input.bookingCutoffHours ?? 0))),
+            tableCutoffHours: Math.max(0, Math.round(Number(input.tableCutoffHours ?? 0))),
             features: toEveningOverrides(input.features),
           }
         : {
@@ -124,6 +131,7 @@ export async function upsertLocalDate(input: {
             serviceEndTime: input.serviceEndTime,
             premium: input.premium ?? false,
             bookingCutoffHours: Math.max(0, Math.round(Number(input.bookingCutoffHours ?? 0))),
+            tableCutoffHours: Math.max(0, Math.round(Number(input.tableCutoffHours ?? 0))),
             /**
              * Absent leaves what the evening already said, so a caller that
              * knows nothing about overrides cannot silently clear them. Null
@@ -186,8 +194,14 @@ export async function createLocalReservation(input: {
   contact?: ReservationRecord["contact"];
   notes?: string;
   tableNumber?: string;
-  /** The table this booking picked, resolved from the plan by the caller. */
-  table?: { id: string; label: string; seats: number };
+  /**
+   * The tables this booking picked, resolved from the plan by the caller.
+   *
+   * Usually one. Several when they were pushed together for a party no single
+   * table could take — and then every seat of every one of them is claimed,
+   * because a merged table cannot be shared with a stranger.
+   */
+  tables?: { id: string; label: string; seats: number }[];
   /** Who chose it. Only meaningful when there is a table. */
   tableSource?: TableSource;
   tableGroupId?: string;
@@ -218,18 +232,22 @@ export async function createLocalReservation(input: {
      */
     let claims: TableClaimRecord[] | null = null;
 
-    if (input.table) {
+    if (input.tables?.length) {
       claims = await readTableClaims();
 
       // Thrown rather than returned, so both stores fail a taken table the
-      // same way and the route has one error to handle.
-      applyTableClaim(claims, {
-        date: input.date,
-        tableId: input.table.id,
-        seats: input.table.seats,
-        guests: input.guestCount,
-        reservationNumber: input.reservationNumber,
-      });
+      // same way and the route has one error to handle. Applied to the same
+      // in-memory list, so a party that fits on the first table and not the
+      // second takes neither.
+      for (const table of input.tables) {
+        applyTableClaim(claims, {
+          date: input.date,
+          tableId: table.id,
+          seats: table.seats,
+          guests: seatsToClaim(input.tables, table, input.guestCount),
+          reservationNumber: input.reservationNumber,
+        });
+      }
     }
 
     const timestamp = new Date().toISOString();
@@ -248,11 +266,12 @@ export async function createLocalReservation(input: {
       time: dateEntry.serviceTime,
       endTime: dateEntry.serviceEndTime,
       notes: input.notes,
-      tableNumber: input.table?.label ?? input.tableNumber,
-      tableId: input.table?.id,
+      tableNumber: tableNumberFrom(input.tables) ?? input.tableNumber,
+      tableId: input.tables?.[0]?.id,
+      tableIds: (input.tables?.length ?? 0) > 1 ? input.tables?.map((table) => table.id) : undefined,
       // Only when there is a table to attribute.
-      tableSource: input.table?.label ?? input.tableNumber ? input.tableSource : undefined,
-      tableSetAt: input.table?.label ?? input.tableNumber ? timestamp : undefined,
+      tableSource: tableNumberFrom(input.tables) ?? input.tableNumber ? input.tableSource : undefined,
+      tableSetAt: tableNumberFrom(input.tables) ?? input.tableNumber ? timestamp : undefined,
       tableGroupId: input.tableGroupId,
       status: "confirmed",
       passKeyId: input.passKeyId,
@@ -426,7 +445,7 @@ function nextVersion(entry: Pick<ReservationRecord, "version">): number {
  */
 export async function setLocalReservationPlanTable(
   reservationNumber: string,
-  table: { id: string; label: string; seats: number } | null,
+  tables: readonly { id: string; label: string; seats: number }[],
   source: TableSource,
 ): Promise<ReservationRecord | null> {
   return withStoreLock(async () => {
@@ -439,11 +458,12 @@ export async function setLocalReservationPlanTable(
     const now = new Date().toISOString();
     const existing = reservations[index];
 
-    reservations[index] = table
+    reservations[index] = tables.length
       ? {
           ...existing,
-          tableId: table.id,
-          tableNumber: table.label,
+          tableId: tables[0].id,
+          tableIds: tables.length > 1 ? tables.map((table) => table.id) : undefined,
+          tableNumber: tableNumberFrom(tables),
           tableSource: source,
           tableSetAt: now,
           version: nextVersion(existing),
@@ -452,6 +472,7 @@ export async function setLocalReservationPlanTable(
       : {
           ...existing,
           tableId: undefined,
+          tableIds: undefined,
           tableNumber: undefined,
           tableSource: undefined,
           tableSetAt: undefined,

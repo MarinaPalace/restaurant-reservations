@@ -36,19 +36,22 @@ export function TableChooser({
 }: {
   zones: ZoneOffer[];
   guestCount: number;
-  /** The plan table id currently chosen, or nothing. */
+  /**
+   * What is chosen: a plan table id, or a combination id — `t7+t8` — when
+   * tables are pushed together for a party no single table can take.
+   */
   chosen: string | null;
-  onChoose: (tableId: string | null) => void;
+  onChoose: (id: string | null) => void;
 }) {
   const [zoneId, setZoneId] = useState<string | null>(null);
   const [refused, setRefused] = useState("");
 
   const zone = zones.find((entry) => entry.id === zoneId) ?? zones[0] ?? null;
 
-  const choose = (tableId: string) => {
-    // Tapping the chosen table again lets it go, which is how a guest changes
+  const choose = (id: string) => {
+    // Tapping what is already chosen lets it go, which is how a guest changes
     // their mind back to "you seat us" without hunting for another control.
-    onChoose(chosen === tableId ? null : tableId);
+    onChoose(chosen === id ? null : id);
     setRefused("");
   };
 
@@ -125,7 +128,7 @@ function TableList({
 }: {
   zone: ZoneOffer;
   chosen: string | null;
-  onChoose: (tableId: string) => void;
+  onChoose: (id: string) => void;
 }) {
   const ordered = [...zone.tables].sort((a, b) => {
     const free = Number(Boolean(a.unavailable)) - Number(Boolean(b.unavailable));
@@ -137,6 +140,45 @@ function TableList({
 
   return (
     <div className="mt-5">
+      {/*
+        Tables pushed together come first, and only appear when no single table
+        would have done — so on the evening a guest sees them, they are the
+        answer rather than an option to weigh up.
+      */}
+      {zone.combinations.length > 0 ? (
+        <div className="mb-4">
+          <h2 className="text-sm font-medium text-ink-muted">Tables pushed together for your party</h2>
+          <p className="mt-0.5 text-xs text-ink-subtle">
+            No single table in {zone.name} seats your party, so these are joined for you.
+          </p>
+          <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+            {zone.combinations.map((combination) => (
+              <li key={combination.id}>
+                <button
+                  type="button"
+                  aria-pressed={chosen === combination.id}
+                  onClick={() => onChoose(combination.id)}
+                  className={cx(
+                    "flex min-h-12 w-full items-center justify-between gap-3 rounded-control border px-3 py-2 text-left text-sm transition-colors",
+                    chosen === combination.id
+                      ? "border-accent bg-accent-soft text-accent-ink"
+                      : "border-line-strong bg-surface text-ink hover:border-accent",
+                  )}
+                >
+                  <span className="font-medium">Tables {combination.labels.join(" + ")}</span>
+                  <span
+                    className={cx("text-xs", chosen === combination.id ? "text-accent-ink" : "text-ink-muted")}
+                  >
+                    Seats {combination.seats}
+                    {chosen === combination.id ? " · chosen" : ""}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       <h2 className="text-sm font-medium text-ink-muted">Every table in {zone.name}</h2>
       <ul className="mt-2 grid gap-2 sm:grid-cols-2">
         {ordered.map((table) => (
@@ -192,9 +234,34 @@ function Key({ className, label }: { className: string; label: string }) {
   );
 }
 
-/** Every table on offer, across every zone. What a summary line names. */
-export function findOffer(zones: ZoneOffer[], tableId: string | null): TableOffer | null {
-  if (!tableId) return null;
+/**
+ * What a choice is called and how many it seats, for the line that confirms it.
+ *
+ * Answers for a combination as well as a table, because from the summary bar's
+ * point of view they are the same thing: somewhere to sit, with a name and a
+ * size.
+ */
+export function findOffer(
+  zones: ZoneOffer[],
+  id: string | null,
+): { label: string; seats: number; tables: number } | null {
+  if (!id) return null;
 
-  return zones.flatMap((zone) => zone.tables).find((table) => table.id === tableId) ?? null;
+  const table = zones.flatMap((zone) => zone.tables).find((entry) => entry.id === id);
+
+  if (table) {
+    return { label: table.label, seats: table.seats, tables: 1 };
+  }
+
+  const combination = zones.flatMap((zone) => zone.combinations).find((entry) => entry.id === id);
+
+  if (combination) {
+    return {
+      label: combination.labels.join(" + "),
+      seats: combination.seats,
+      tables: combination.tableIds.length,
+    };
+  }
+
+  return null;
 }

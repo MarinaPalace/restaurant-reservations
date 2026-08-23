@@ -169,6 +169,22 @@ export type StoredRestaurantDate = {
    */
   bookingCutoffHours?: number;
   /**
+   * How many hours before the sitting **guests stop choosing tables** for this
+   * evening. Absent or 0 means no cutoff at all: tables stay pickable for as
+   * long as the booking itself can be made or changed, which is exactly what
+   * every evening did before this existed.
+   *
+   * Its own number rather than `bookingCutoffHours`, because the two answer
+   * different questions. Bookings close when the kitchen can no longer take
+   * another cover; table selection closes when the floor is laid out, which is
+   * usually earlier and sometimes not a concern at all. An evening that does
+   * not care leaves it off.
+   *
+   * Staff are never bound by it, the same as the booking cutoff: reception
+   * moves a table at 18:55 because the guest is standing in front of them.
+   */
+  tableCutoffHours?: number;
+  /**
    * What this evening switches on or off for itself — see
    * `lib/evening-features.ts`.
    *
@@ -373,6 +389,21 @@ export type ReservationRecord = {
    * with it off, and on any table a member of staff typed in by hand.
    */
   tableId?: string;
+  /**
+   * Every plan table this booking holds, when it holds more than one.
+   *
+   * A restaurant of four-tops cannot seat five at a table, so two get pushed
+   * together — `docs/floor-plan.md` §21. `tableId` stays the first of them, so
+   * everything written before combinations existed keeps reading a single id
+   * and finding one there (rule 2.2: additive, never a rename).
+   *
+   * `tableNumber` is what they are called between them, "7 + 8", which is the
+   * string the sheet, the board and `groupRoomRowsByTable` already key on.
+   *
+   * Absent on every booking with one table or none, which is nearly all of
+   * them.
+   */
+  tableIds?: string[];
   /**
    * Who put this booking on that table.
    *

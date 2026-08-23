@@ -15,6 +15,7 @@ import {
   FLOOR_PLAN_MODE_LABELS,
   GRID,
   MAX_FEATURES_PER_ZONE,
+  MAX_MERGE_GROUP_LENGTH,
   MAX_SEATS_PER_TABLE,
   MAX_SIZE,
   MAX_TABLES_PER_ZONE,
@@ -789,6 +790,7 @@ export function FloorPlanDesigner({
                 element={selected}
                 kind={selection?.kind ?? null}
                 zone={zoneSize}
+                zoneTables={zone.tables}
                 canEdit={canEdit}
                 clashing={
                   selection?.kind === "table" && selected
@@ -1199,6 +1201,7 @@ function ElementProperties({
   element,
   kind,
   zone,
+  zoneTables,
   canEdit,
   clashing,
   onChange,
@@ -1208,6 +1211,8 @@ function ElementProperties({
   element: FloorTable | FloorFeature | null;
   kind: "table" | "feature" | null;
   zone: ZoneSize;
+  /** Everything else in this hall, for the merge groups already in use. */
+  zoneTables: FloorTable[];
   canEdit: boolean;
   clashing: boolean;
   onChange: (edit: <T extends Placed>(element: T) => T) => void;
@@ -1226,6 +1231,25 @@ function ElementProperties({
   const feature = kind === "feature" ? (element as FloorFeature) : null;
   const tags = table?.tags ?? [];
   const sides = table ? chairSidesOf(table) : [];
+
+  /** Every merge group already used in this zone, for the suggestion list. */
+  const mergeGroups = [
+    ...new Set(zoneTables.map((entry) => (entry.mergeGroup ?? "").trim()).filter(Boolean)),
+  ].sort();
+
+  /**
+   * The tables this one would actually be joined with. Naming them is the whole
+   * confirmation: a group is a string, and a typo is a group of one that says
+   * nothing about why no combination is ever offered.
+   */
+  const mergeMates = table?.mergeGroup?.trim()
+    ? zoneTables
+        .filter(
+          (entry) =>
+            entry.id !== table.id && (entry.mergeGroup ?? "").trim() === table.mergeGroup?.trim(),
+        )
+        .map((entry) => entry.label.trim() || "an unlabelled table")
+    : [];
 
   /**
    * Turns something, then puts it back inside the hall.
@@ -1270,6 +1294,42 @@ function ElementProperties({
             disabled={!canEdit}
             onCommit={(seats) => onChange((current) => ({ ...current, seats }))}
           />
+
+          {/*
+            Which tables may be pushed together, and it has to be said rather
+            than measured: two tables 30 cm apart may have a pillar between them,
+            and two a metre apart may be joined every Saturday. Whoever draws the
+            room knows; the software does not.
+          */}
+          <Field
+            label="May be pushed together with"
+            hint={
+              mergeMates.length > 0
+                ? `Joins with ${mergeMates.join(", ")} when a party is too big for one table.`
+                : "Give two or more tables the same name here and guests too many for one table can book them together."
+            }
+          >
+            {(fieldProps) => (
+              <Input
+                {...fieldProps}
+                list="merge-groups"
+                maxLength={MAX_MERGE_GROUP_LENGTH}
+                placeholder="e.g. window, or leave empty"
+                disabled={!canEdit}
+                value={table.mergeGroup ?? ""}
+                onChange={(event) =>
+                  onChange((current) => ({ ...current, mergeGroup: event.target.value || undefined }))
+                }
+              />
+            )}
+          </Field>
+          {/* The groups already in use, so a second table joins one by picking
+              it rather than by spelling it identically. */}
+          <datalist id="merge-groups">
+            {mergeGroups.map((group) => (
+              <option key={group} value={group} />
+            ))}
+          </datalist>
 
           <Field label="Shape">
             {(fieldProps) => (

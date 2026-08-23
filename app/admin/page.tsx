@@ -9,7 +9,7 @@ import { hasPermission, permissionsOf } from "@/lib/auth/permissions";
 import { getDashboardCounts, getReservationsByDate } from "@/lib/services/reservations";
 import { getFullMenuCatalog, getRestaurantDates } from "@/lib/services/restaurant";
 import { todayKey } from "@/lib/date";
-import { getTimeZone } from "@/lib/services/settings";
+import { getEveningDefaults, getTimeZone } from "@/lib/services/settings";
 import { describeClockMismatch } from "@/lib/timezone";
 
 export const metadata: Metadata = { title: "Staff dashboard" };
@@ -25,11 +25,14 @@ export default async function AdminPage() {
 
   const today = todayKey();
 
-  const [restaurantDates, menu, timeZone, counts] = await Promise.all([
+  const [restaurantDates, menu, timeZone, counts, eveningDefaults] = await Promise.all([
     getRestaurantDates(),
     getFullMenuCatalog(),
     getTimeZone(),
     getDashboardCounts(today),
+    // What the restaurant does on an evening that does not say otherwise, so
+    // the editor can show each date's switch beside the thing it inherits.
+    getEveningDefaults(),
   ]);
 
   /**
@@ -118,6 +121,7 @@ export default async function AdminPage() {
         menu={menu}
         permissions={permissions}
         initialTimeZone={timeZone}
+        initialEveningDefaults={eveningDefaults}
         clockMismatch={clockMismatch}
       />
     </PageShell>

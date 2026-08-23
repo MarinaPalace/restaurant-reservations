@@ -7,6 +7,7 @@ import { RestaurantDateModel } from "@/lib/models/restaurant-date";
 import { localizeMenuCatalog } from "@/lib/menu-localization";
 import { decodeStoredImage, isStoredImage, toPublicImageUrl } from "@/lib/menu-images";
 import { discountedPrice, toCents } from "@/lib/money";
+import { toEveningOverrides } from "@/lib/evening-features";
 import {
   menuCatalogOf,
   menuKindOf,
@@ -35,6 +36,8 @@ export async function getRestaurantDates(): Promise<RestaurantDateAvailability[]
       serviceEndTime: date.serviceEndTime ? String(date.serviceEndTime) : undefined,
       premium: Boolean(date.premium),
       bookingCutoffHours: Number(date.bookingCutoffHours ?? 0),
+      // Absent stays absent: it is "follow the restaurant", not "off".
+      features: toEveningOverrides(date.features),
     }),
   );
 }
@@ -59,6 +62,7 @@ export async function getRestaurantDate(date: string): Promise<RestaurantDateAva
     serviceEndTime: record.serviceEndTime ? String(record.serviceEndTime) : undefined,
     premium: Boolean(record.premium),
     bookingCutoffHours: Number(record.bookingCutoffHours ?? 0),
+    features: toEveningOverrides(record.features),
   });
 }
 

@@ -48,5 +48,17 @@ export function toRestaurantDatePayload(entry: RestaurantDateAvailability) {
     premium: Boolean(entry.premium),
     // Absent reads as 0: bookings close when the sitting starts.
     bookingCutoffHours: Math.max(0, Math.round(Number(entry.bookingCutoffHours ?? 0))),
+    /**
+     * Carried by the spread already; named here so the guard test below can see
+     * it, and so the three-way contract is stated where somebody editing this
+     * function will read it.
+     *
+     * `undefined` is the point, not an oversight: `JSON.stringify` drops the
+     * key, the route sees no mention of the evening's switches, and whatever it
+     * already said survives. Sending `{}` instead would clear them — which is
+     * how the editor says "follow the restaurant again", and must not be what
+     * an evening that was never touched sends.
+     */
+    features: entry.features,
   };
 }

@@ -24,6 +24,7 @@ import {
 } from "@/lib/analytics/range";
 import type {
   CancellationLine,
+  Coefficient,
   FunnelStage,
   Popularity,
   PartySize,
@@ -59,6 +60,8 @@ export type AnalyticsData = {
   parties: PartySize[];
   cancellations: CancellationLine[];
   funnel: FunnelStage[];
+  coefficients: Coefficient[];
+  minutesPerManualBooking: number;
 };
 
 function Section({
@@ -372,6 +375,49 @@ export function AnalyticsView({
             </div>
           </div>
 
+          <Section
+            title="What the system is doing for you"
+            description="Each of these is something that happened by itself against something a member of staff would otherwise have done by hand."
+          >
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {data.coefficients.map((coefficient) => (
+                <CoefficientTile key={coefficient.key} coefficient={coefficient} />
+              ))}
+            </div>
+
+            {/*
+              The one assumption on the page, put where the figure that rests
+              on it is read rather than buried in a settings screen. It lives in
+              the address, like the date range does, so a particular reading can
+              be sent to somebody else and come back saying the same thing.
+            */}
+            <form className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4" method="get">
+              {preset ? <input type="hidden" name="range" value={preset} /> : null}
+              {isCustom ? (
+                <>
+                  <input type="hidden" name="from" value={data.range.from} />
+                  <input type="hidden" name="to" value={data.range.to} />
+                </>
+              ) : null}
+              <label className="text-sm text-ink-muted" htmlFor="minutes-per-booking">
+                A booking taken by hand costs
+              </label>
+              <input
+                id="minutes-per-booking"
+                name="minutes"
+                type="number"
+                min={0}
+                max={120}
+                defaultValue={data.minutesPerManualBooking}
+                className="h-9 w-20 rounded-control border border-line-strong bg-surface px-2 text-sm tabular-nums text-ink"
+              />
+              <span className="text-sm text-ink-muted">minutes of somebody&rsquo;s time.</span>
+              <Button type="submit" variant="secondary">
+                Apply
+              </Button>
+            </form>
+          </Section>
+
           <div className="grid gap-5 lg:grid-cols-2">
             <Section title="Party sizes" description="How many people a booking is usually for.">
               <BarList
@@ -467,6 +513,45 @@ export function AnalyticsView({
           </Card>
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * One coefficient, with the two numbers it came out of.
+ *
+ * The counts are printed under every figure and are not decoration: "68%" over
+ * four bookings and "68%" over four hundred are different facts, and a tile
+ * showing only the percentage cannot tell them apart. It is the same argument
+ * the no-show rate already makes for never appearing without its coverage.
+ *
+ * A null value prints as a dash rather than as zero. There is no self-service
+ * rate for a period with no bookings, and reporting 0% would be a confident
+ * statement about nothing.
+ */
+function CoefficientTile({ coefficient }: { coefficient: Coefficient }) {
+  const { value, unit } = coefficient;
+
+  const shown =
+    value === null
+      ? "—"
+      : unit === "percent"
+        ? `${value}%`
+        : unit === "ratio"
+          ? `${value}×`
+          : unit === "hours"
+            ? `${value} h`
+            : String(value);
+
+  return (
+    <div className="rounded-control border border-line bg-surface-muted p-4">
+      <p className="text-sm font-medium text-ink-muted">{coefficient.label}</p>
+      <p className="mt-1 text-2xl font-semibold tabular-nums text-ink">{shown}</p>
+      <p className="mt-1 text-sm tabular-nums text-ink-subtle">
+        {coefficient.part.toLocaleString()} {coefficient.partLabel} · {coefficient.whole.toLocaleString()}{" "}
+        {coefficient.wholeLabel}
+      </p>
+      <p className="mt-2 text-sm text-ink-subtle">{coefficient.hint}</p>
     </div>
   );
 }

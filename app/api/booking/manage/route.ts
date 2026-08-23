@@ -4,6 +4,7 @@ import {
   updateReservationSelections,
 } from "@/lib/services/reservations";
 import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
+import { getEveningFeatures } from "@/lib/services/settings";
 import { validateReservationRequest } from "@/lib/services/booking-rules";
 import { getPassKeyByCode } from "@/lib/services/pass-keys";
 import { recordAuditEntry } from "@/lib/services/audit-log";
@@ -97,12 +98,31 @@ export async function POST(request: Request) {
       return NextResponse.json(NOT_FOUND, { status: 404 });
     }
 
+    /**
+     * Self-service is a property of the **evening**, and this key may hold
+     * dinners on several of them — so each booking is checked against its own
+     * night rather than against one answer for the whole key. Looked up once
+     * per distinct date, because a key with four dinners on one evening should
+     * not cost four reads.
+     */
+    const eveningByDate = new Map<string, { selfService: boolean; promotions: boolean }>();
+
+    await Promise.all(
+      [...new Set(resolved.reservations.map((reservation) => reservation.date))].map(async (date) => {
+        const evening = await getEveningFeatures(await getRestaurantDate(date));
+        eveningByDate.set(date, { selfService: evening.selfService, promotions: evening.promotions });
+      }),
+    );
+
     return NextResponse.json({
       usesRemaining: resolved.usesRemaining,
       // Every dinner this key has booked. The screen lists them and the guest
       // picks which one to change.
       reservations: resolved.reservations.map((reservation) => {
-        const check = canGuestModify(reservation);
+        // Absent only if the evening has left the calendar, which is the same
+        // as it saying nothing: the restaurant's own defaults apply.
+        const evening = eveningByDate.get(reservation.date);
+        const check = canGuestModify(reservation, new Date(), evening?.selfService ?? true);
 
         return {
           reservation,
@@ -110,6 +130,13 @@ export async function POST(request: Request) {
           canModify: check.allowed,
           modificationDeadline: check.deadline.toISOString(),
           modificationBlockedReason: check.reason ?? null,
+          /**
+           * Whether this evening is still offering promotions. The screen only
+           * ever lets a guest swap one they already hold — the route refuses a
+           * group the booking does not carry — so this closes the swap too,
+           * and giving one back stays possible either way.
+           */
+          promotionsOpen: evening?.promotions ?? true,
         };
       }),
     });
@@ -144,15 +171,19 @@ export async function PATCH(request: Request) {
       );
     }
 
-    const check = canGuestModify(reservation);
-    if (!check.allowed) {
-      return NextResponse.json({ error: check.reason, code: "CHANGES_CLOSED" }, { status: 409 });
-    }
-
     const [menu, restaurantDate] = await Promise.all([
       getMenuCatalog(),
       getRestaurantDate(reservation.date),
     ]);
+
+    // The evening's own switch, checked in the route rather than only by the
+    // screen hiding its buttons (rule 2.5).
+    const evening = await getEveningFeatures(restaurantDate);
+
+    const check = canGuestModify(reservation, new Date(), evening.selfService);
+    if (!check.allowed) {
+      return NextResponse.json({ error: check.reason, code: "CHANGES_CLOSED" }, { status: 409 });
+    }
 
     /**
      * The same rules as a new booking, minus availability: the seats are

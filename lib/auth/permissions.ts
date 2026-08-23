@@ -1,4 +1,5 @@
 import { STAFF_PERMISSIONS, type StaffPermission, type StaffRole, type StaffUserRecord } from "@/types/booking";
+import type { EveningFeature } from "@/lib/evening-features";
 
 /**
  * What each permission means, in the words the panel shows next to its
@@ -70,6 +71,31 @@ export const PERMISSION_DETAILS: Record<
     label: "Manage staff accounts",
     description: "Create accounts and decide what they may do. Grant sparingly.",
   },
+};
+
+/**
+ * Who may flip each of an evening's switches, and the restaurant-wide default
+ * behind it — `lib/evening-features.ts`.
+ *
+ * Deliberately **not** `dates:manage` for all three. Opening an evening and
+ * deciding that guests pick their own tables are different decisions by
+ * different people, and the floor-plan route already draws that line: whoever
+ * prices the wine list has no business turning table selection on. So changing
+ * a switch — for one evening or for the restaurant — needs the same permission
+ * either way, and the rest of an evening still only needs `dates:manage`.
+ *
+ * Self-service belongs to whoever runs the calendar: it is the one switch with
+ * no owner elsewhere, and "must this evening's guests telephone reception?" is
+ * a reception question.
+ *
+ * Lives here rather than beside the features themselves because
+ * `types/booking.ts` reads `EveningOverrides`, so the features module cannot
+ * read `StaffPermission` back without the two importing each other.
+ */
+export const EVENING_FEATURE_PERMISSIONS: Record<EveningFeature, StaffPermission> = {
+  tableSelection: "floorplan:edit",
+  promotions: "menu:edit",
+  selfService: "dates:manage",
 };
 
 /** Never grantable to a plain staff account, whatever the request says. */

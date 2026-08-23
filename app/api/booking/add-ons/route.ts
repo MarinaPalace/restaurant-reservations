@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getPassKeyByCode } from "@/lib/services/pass-keys";
 import { getReservationByNumber, updateReservationAddOns } from "@/lib/services/reservations";
-import { getPromoCatalog, priceOfPromoOption } from "@/lib/services/restaurant";
+import { getPromoCatalog, getRestaurantDate, priceOfPromoOption } from "@/lib/services/restaurant";
+import { getEveningFeatures } from "@/lib/services/settings";
 import { updateAddOnsSchema } from "@/lib/validation/booking";
 import { checkRateLimit, clientKeyFrom } from "@/lib/rate-limit";
 import type { ReservationAddOn } from "@/types/booking";
@@ -83,6 +84,31 @@ export async function POST(request: Request) {
         return NextResponse.json(
           {
             error: "That can only be added on the confirmation screen, when the booking is made.",
+            code: "PROMO_CLOSED",
+          },
+          { status: 409 },
+        );
+      }
+    }
+
+    /**
+     * An evening may have promotions switched off — see
+     * `lib/evening-features.ts`. Checked here and not only by hiding the
+     * screen (rule 2.5), because the confirmation page may have been open
+     * since before the switch was thrown.
+     *
+     * Giving one back is always allowed. The offer being closed is a reason
+     * not to sell somebody a bottle of wine, never a reason to trap them with
+     * one they have already decided against — and an empty list is the shape
+     * both "I decline" and "remove it" arrive in.
+     */
+    if (parsed.data.addOns.length > 0) {
+      const evening = await getEveningFeatures(await getRestaurantDate(reservation.date));
+
+      if (!evening.promotions) {
+        return NextResponse.json(
+          {
+            error: "Promotions are not being offered for that evening.",
             code: "PROMO_CLOSED",
           },
           { status: 409 },

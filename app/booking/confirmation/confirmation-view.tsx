@@ -6,7 +6,7 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/feedback";
 import { useBookingSession, useConfirmation, storeConfirmation } from "@/hooks/use-booking-session";
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { PromoPicker } from "@/components/promo-picker";
 import { useI18n } from "@/components/i18n-provider";
 import { format, localeOf } from "@/lib/i18n";
@@ -47,6 +47,47 @@ export function ConfirmationView({
   const handlePromoSaved = useCallback((updated: ReservationRecord) => {
     storeConfirmation(updated);
   }, []);
+
+  /**
+   * Whether this evening is offering promotions at all
+   * (`lib/evening-features.ts`).
+   *
+   * Fetched here rather than handed down from the page, because the page does
+   * not know which evening this is: the booking lives in sessionStorage and is
+   * read in the browser. It starts as "offered", which is what every evening
+   * says unless somebody has switched it off — so the ordinary confirmation
+   * screen renders exactly as it always did, with no flash of a missing offer
+   * and no round trip in front of the number the guest came for.
+   *
+   * The route is the gate either way (rule 2.5). This only avoids showing an
+   * offer that would be refused.
+   */
+  const [promotionsOpen, setPromotionsOpen] = useState(true);
+  const eveningDate = reservation?.date;
+
+  useEffect(() => {
+    if (!eveningDate) {
+      return;
+    }
+
+    let cancelled = false;
+
+    fetch(`/api/restaurant/dates/${eveningDate}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((date) => {
+        // Anything unreadable leaves the offer as it was. A screen that hid
+        // the promotions because a fetch failed would cost the restaurant a
+        // sale over a network blip.
+        if (!cancelled && date?.features && typeof date.features.promotions === "boolean") {
+          setPromotionsOpen(date.features.promotions);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [eveningDate]);
 
   /** Hands the guest an .ics file for any calendar that is not Google. */
   const downloadIcs = () => {
@@ -194,14 +235,17 @@ export function ConfirmationView({
           </div>
         </div>
 
-        {/* Offered here and only here, after the number the guest came for. */}
-        <PromoPicker
-          groups={promoGroups}
-          currency={currency}
-          reservation={reservation}
-          passKey={session.passKey}
-          onSaved={handlePromoSaved}
-        />
+        {/* Offered here and only here, after the number the guest came for —
+            and not at all on an evening that has them switched off. */}
+        {promotionsOpen ? (
+          <PromoPicker
+            groups={promoGroups}
+            currency={currency}
+            reservation={reservation}
+            passKey={session.passKey}
+            onSaved={handlePromoSaved}
+          />
+        ) : null}
 
         <div className="mt-5 space-y-3">
           {guestGroups.map(({ guestIndex, entries }) =>

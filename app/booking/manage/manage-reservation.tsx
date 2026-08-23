@@ -27,6 +27,12 @@ type Entry = {
   canModify: boolean;
   modificationDeadline: string;
   modificationBlockedReason: string | null;
+  /**
+   * Whether this evening is still offering promotions
+   * (`lib/evening-features.ts`). Absent on a response from before this
+   * existed, which reads as open — the same direction the server takes.
+   */
+  promotionsOpen?: boolean;
 };
 
 type Loaded = {
@@ -360,6 +366,9 @@ export function ManageReservation({
   }
 
   const { reservation, canModify, modificationDeadline, modificationBlockedReason } = activeEntry;
+  // Closed for this evening means the swap goes too, since the route refuses
+  // it. Giving a promotion back is still possible: see the route for why.
+  const promotionsOpen = activeEntry.promotionsOpen !== false;
   const guestIndexes = Array.from({ length: Math.max(reservation.guestCount, 1) }, (_, index) => index);
   const isCancelled = reservation.status === "cancelled";
 
@@ -466,7 +475,7 @@ export function ManageReservation({
          * dish choices follow.
          */
         editing={
-          canModify && !isCancelled
+          canModify && !isCancelled && promotionsOpen
             ? {
                 groups: localizeMenuCatalog(promoGroups, language),
                 passKey: normalizePassKey(passKey),

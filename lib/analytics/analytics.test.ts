@@ -9,13 +9,17 @@ import {
   previousRange,
   resolvePreset,
   startOfWeek,
+  type DateRange,
 } from "@/lib/analytics/range";
 import {
+  DEFAULT_MINUTES_PER_MANUAL_BOOKING,
   buildTotals,
   cancellationLines,
   capacityTrend,
+  coefficients,
   coversTrend,
   dishPopularity,
+  keyCohort,
   partySizes,
   passKeyFunnel,
   promotionLines,
@@ -511,5 +515,218 @@ describe("attendance", () => {
 
     expect(totals.attendanceRecorded).toBe(0);
     expect(totals.noShows).toBe(0);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Coefficients
+ * ------------------------------------------------------------------ */
+
+describe("what the system did that staff would otherwise have done", () => {
+  const range: DateRange = { from: "2026-03-01", to: "2026-03-31" };
+  const today = "2026-04-15";
+
+  const booking = (over: Partial<ReservationRecord> = {}): ReservationRecord =>
+    ({
+      reservationNumber: `R${Math.random().toString(36).slice(2, 8)}`,
+      roomNumber: "101",
+      guestCount: 2,
+      date: "2026-03-10",
+      selections: [],
+      status: "confirmed",
+      ...over,
+    }) as ReservationRecord;
+
+  const key = (over: Record<string, unknown> = {}) => ({
+    issuedAt: "2026-03-02T10:00:00.000Z",
+    usedCount: 0,
+    reservationNumbers: [] as string[],
+    ...over,
+  });
+
+  const find = (list: ReturnType<typeof coefficients>["coefficients"], key: string) =>
+    list.find((entry) => entry.key === key)!;
+
+  it("separates what guests booked from what the desk typed in", () => {
+    const { coefficients: list } = coefficients(
+      [
+        booking({ passKeyId: "k1" }),
+        booking({ passKeyId: "k2" }),
+        booking({ passKeyId: "k3" }),
+        booking(),
+      ],
+      [],
+      range,
+      { today },
+    );
+
+    expect(find(list, "self-service").value).toBe(75);
+    // Three guest bookings for every one taken by hand.
+    expect(find(list, "guest-per-staff").value).toBe(3);
+  });
+
+  /**
+   * Unknown is not zero. A period with no bookings has no self-service rate,
+   * and reporting 0% would be a confident statement about nothing.
+   */
+  it("reports nothing rather than zero when there is nothing to divide by", () => {
+    const { coefficients: list } = coefficients([], [], range, { today });
+
+    expect(find(list, "self-service").value).toBeNull();
+    expect(find(list, "guest-per-staff").value).toBeNull();
+    expect(find(list, "key-waste").value).toBeNull();
+    expect(find(list, "dinners-per-key").value).toBeNull();
+    expect(find(list, "guest-cancellations").value).toBeNull();
+  });
+
+  /**
+   * A booking that was later cancelled was still a booking somebody took. A
+   * guest who books and then cancels online has saved reception two jobs, not
+   * none, so filtering cancellations out would understate the guest side.
+   */
+  it("counts a cancelled booking as a booking that was taken", () => {
+    const { coefficients: list } = coefficients(
+      [booking({ passKeyId: "k1", status: "cancelled" }), booking()],
+      [],
+      range,
+      { today },
+    );
+
+    expect(find(list, "self-service").value).toBe(50);
+  });
+
+  it("counts who did the cancelling", () => {
+    const cancelled = (actorKind: "guest" | "staff") =>
+      booking({
+        status: "cancelled",
+        cancellation: { at: "2026-03-05T09:00:00.000Z", actorKind, actorName: "Someone" },
+      });
+
+    const { coefficients: list } = coefficients(
+      [cancelled("guest"), cancelled("guest"), cancelled("staff"), booking()],
+      [],
+      range,
+      { today },
+    );
+
+    const guestCancels = find(list, "guest-cancellations");
+    expect(guestCancels.part).toBe(2);
+    // The booking that was never cancelled is not in the denominator.
+    expect(guestCancels.whole).toBe(3);
+  });
+
+  describe("the keys issued in the period", () => {
+    it("sorts them into used, lapsed, still open and withdrawn", () => {
+      const cohort = keyCohort(
+        [
+          key({ usedCount: 1, reservationNumbers: ["R1"] }),
+          key({ expiresOn: "2026-03-20" }),
+          key({ expiresOn: "2026-05-01" }),
+          key({ expiresOn: "2026-03-20", status: "revoked" }),
+          // Issued outside the period: a different cohort entirely.
+          key({ issuedAt: "2026-01-04T10:00:00.000Z", expiresOn: "2026-01-09" }),
+        ],
+        range,
+        today,
+      );
+
+      expect(cohort).toEqual({
+        issued: 4,
+        used: 1,
+        wastedExpired: 1,
+        stillOpen: 1,
+        revoked: 1,
+        dinners: 1,
+      });
+    });
+
+    /**
+     * The reason `stillOpen` exists. A key issued yesterday with a week left
+     * has not been wasted; counting it as waste would make the figure worst on
+     * the most recent period and best on the oldest, which says something about
+     * the calendar rather than about the restaurant.
+     */
+    it("leaves a key with time left on it out of the waste rate entirely", () => {
+      const { coefficients: list } = coefficients(
+        [],
+        [
+          key({ usedCount: 1, reservationNumbers: ["R1"] }),
+          key({ expiresOn: "2026-03-20" }),
+          key({ expiresOn: "2026-05-01" }),
+          key({ expiresOn: "2026-06-01" }),
+        ],
+        range,
+        { today },
+      );
+
+      const waste = find(list, "key-waste");
+      // One lapsed out of two settled — the two still open are in neither half.
+      expect(waste.part).toBe(1);
+      expect(waste.whole).toBe(2);
+      expect(waste.value).toBe(50);
+    });
+
+    it("never calls a key with no expiry wasted", () => {
+      const cohort = keyCohort([key({})], range, today);
+
+      expect(cohort.wastedExpired).toBe(0);
+      expect(cohort.stillOpen).toBe(1);
+    });
+
+    it("counts what a key turned out to be worth", () => {
+      const { coefficients: list } = coefficients(
+        [],
+        [
+          key({ usedCount: 2, reservationNumbers: ["R1", "R2"] }),
+          key({ usedCount: 1, reservationNumbers: ["R3"] }),
+        ],
+        range,
+        { today },
+      );
+
+      expect(find(list, "dinners-per-key").value).toBe(1.5);
+    });
+  });
+
+  /**
+   * The one figure on the page that is an estimate. The count of guest actions
+   * is real; the minutes each would have taken is the caller's assumption.
+   */
+  describe("the desk time estimate", () => {
+    const guestActions = [
+      booking({ passKeyId: "k1" }),
+      booking({ passKeyId: "k2" }),
+      booking({
+        passKeyId: "k3",
+        status: "cancelled",
+        cancellation: { at: "2026-03-05T09:00:00.000Z", actorKind: "guest", actorName: "Guest" },
+      }),
+    ];
+
+    it("counts a booking and a cancellation as one interaction each", () => {
+      // Three guest bookings, one of which the guest also cancelled: four jobs.
+      const { coefficients: list } = coefficients(guestActions, [], range, {
+        today,
+        minutesPerManualBooking: 6,
+      });
+
+      expect(find(list, "time-saved").part).toBe(4);
+      expect(find(list, "time-saved").value).toBe(0.4);
+    });
+
+    it("moves with the assumption it is given", () => {
+      const at = (minutes: number) =>
+        find(coefficients(guestActions, [], range, { today, minutesPerManualBooking: minutes }).coefficients, "time-saved");
+
+      expect(at(15).value).toBe(1);
+      expect(at(0).value).toBe(0);
+      // The assumption is on the tile, so it can never be read without it.
+      expect(at(15).whole).toBe(15);
+    });
+
+    it("takes the default when nobody says", () => {
+      const list = coefficients(guestActions, [], range, { today }).coefficients;
+      expect(find(list, "time-saved").whole).toBe(DEFAULT_MINUTES_PER_MANUAL_BOOKING);
+    });
   });
 });

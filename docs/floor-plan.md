@@ -343,6 +343,11 @@ came back 90°.
 
 ## 12. Still not started: the guests' picker
 
+> **Since §16:** the mode can now also be set **per evening** — see `docs/evening-features.md`. That
+> changes where the answer comes from and nothing about what is missing here: with no picker, an
+> evening set to `optional` or `required` still shows a guest nothing.
+
+
 §6 is untouched and stays untouched until the designer is right, which is the order asked for. When
 it starts, §2 is the section that matters — the table claim, and its concurrency test written first.
 

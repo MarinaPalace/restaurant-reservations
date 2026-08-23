@@ -3,6 +3,7 @@ import { RESERVATION_PREFIX } from "@/lib/brand";
 import { isMongoConfigured, connectToDatabase } from "@/lib/db/connect";
 import { ReservationModel } from "@/lib/models/reservation";
 import { RestaurantDateModel } from "@/lib/models/restaurant-date";
+import { toEveningOverrides, type EveningOverrides } from "@/lib/evening-features";
 import {
   cancelLocalReservation,
   createLocalReservation,
@@ -932,6 +933,17 @@ export async function updateRestaurantDate(input: {
   premium?: boolean;
   /** How many hours before the sitting guest bookings close. 0 = at the sitting. */
   bookingCutoffHours?: number;
+  /**
+   * What this evening switches on for itself.
+   *
+   * Three-way, like the switches inside it: **absent leaves what the evening
+   * already said**, null clears it back to following the restaurant, and an
+   * object replaces it. A caller that knows nothing about overrides therefore
+   * cannot wipe them by omission — which is the failure
+   * `toRestaurantDatePayload` exists to prevent one layer up, and is worth
+   * defending twice.
+   */
+  features?: EveningOverrides | null;
 }) {
   if (!isMongoConfigured()) {
     return upsertLocalDate(input);
@@ -949,6 +961,9 @@ export async function updateRestaurantDate(input: {
         serviceEndTime: input.serviceEndTime ?? null,
         premium: input.premium ?? false,
         bookingCutoffHours: Math.max(0, Math.round(Number(input.bookingCutoffHours ?? 0))),
+        // Only written when the caller said something about it, so omitting it
+        // leaves the evening as it was rather than clearing it.
+        ...(input.features === undefined ? {} : { features: toEveningOverrides(input.features) ?? null }),
       },
       $setOnInsert: { reservedSeats: 0 },
     },
@@ -964,5 +979,6 @@ export async function updateRestaurantDate(input: {
     serviceEndTime: updated.serviceEndTime ? String(updated.serviceEndTime) : undefined,
     premium: Boolean(updated.premium),
     bookingCutoffHours: Number(updated.bookingCutoffHours ?? 0),
+    features: toEveningOverrides(updated.features),
   });
 }

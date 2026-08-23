@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { getDataFilePath, readJsonFile, writeJsonFile } from "@/lib/db/json-file";
 import { withStoreLock } from "@/lib/db/store-lock";
 import { DEFAULT_MENU, buildDefaultDates } from "@/lib/db/seed-data";
+import { toEveningOverrides, type EveningOverrides } from "@/lib/evening-features";
 import {
   withRemainingSeats,
   type CancellationRecord,
@@ -92,6 +93,8 @@ export async function upsertLocalDate(input: {
   serviceEndTime?: string;
   premium?: boolean;
   bookingCutoffHours?: number;
+  /** Absent leaves whatever the evening already said; null clears it. */
+  features?: EveningOverrides | null;
 }): Promise<RestaurantDateAvailability> {
   return withStoreLock(async () => {
     const dates = await readDates();
@@ -108,6 +111,7 @@ export async function upsertLocalDate(input: {
             serviceEndTime: input.serviceEndTime,
             premium: input.premium ?? false,
             bookingCutoffHours: Math.max(0, Math.round(Number(input.bookingCutoffHours ?? 0))),
+            features: toEveningOverrides(input.features),
           }
         : {
             ...dates[index],
@@ -117,6 +121,13 @@ export async function upsertLocalDate(input: {
             serviceEndTime: input.serviceEndTime,
             premium: input.premium ?? false,
             bookingCutoffHours: Math.max(0, Math.round(Number(input.bookingCutoffHours ?? 0))),
+            /**
+             * Absent leaves what the evening already said, so a caller that
+             * knows nothing about overrides cannot silently clear them. Null
+             * is how the editor says "follow the restaurant again".
+             */
+            features:
+              input.features === undefined ? dates[index].features : toEveningOverrides(input.features),
           };
 
     if (index === -1) {

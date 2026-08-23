@@ -4,6 +4,15 @@ import { AppSettingModel } from "@/lib/models/app-setting";
 import { DEFAULT_CURRENCY, toCurrency, type Currency } from "@/lib/money";
 import { DEFAULT_TIME_ZONE, toTimeZone, type TimeZone } from "@/lib/timezone";
 import {
+  DEFAULT_EVENING_TOGGLES,
+  resolveEveningFeatures,
+  toEveningToggles,
+  type EveningDefaults,
+  type EveningFeatures,
+  type EveningOverrides,
+  type EveningToggles,
+} from "@/lib/evening-features";
+import {
   DEFAULT_FLOOR_PLAN_MODE,
   EMPTY_PLAN,
   resolveFloorPlanMode,
@@ -30,6 +39,13 @@ const CURRENCY_KEY = "promo.currency";
 const TIME_ZONE_KEY = "restaurant.timeZone";
 const FLOOR_PLAN_KEY = "restaurant.floorPlan";
 const FLOOR_PLAN_MODE_KEY = "restaurant.floorPlanMode";
+/**
+ * The two switches that had no restaurant-wide setting before evenings could
+ * override them. Table selection is not in here: it keeps its own key, because
+ * rule 2.2 says schema changes are additive and moving it would be a migration
+ * bought with nothing.
+ */
+const EVENING_TOGGLES_KEY = "restaurant.eveningToggles";
 
 async function readSetting(key: string): Promise<unknown> {
   if (!isMongoConfigured()) {
@@ -137,6 +153,60 @@ export async function setFloorPlanMode(mode: FloorPlanMode): Promise<FloorPlanMo
   const safe = toFloorPlanMode(mode);
   await writeSetting(FLOOR_PLAN_MODE_KEY, safe);
   return safe;
+}
+
+/**
+ * What the restaurant does on an evening that does not say otherwise.
+ *
+ * Both halves read together and handed back as one object, for the same reason
+ * `getTableSelection` reads the mode and the plan together: a caller holding
+ * one half and guessing the other is a caller that can disagree with itself.
+ *
+ * Every default is what the app did before any of this existed — promotions on,
+ * self-service on, table selection off — so a restaurant that never opens the
+ * settings screen behaves exactly as it always has.
+ */
+export async function getEveningDefaults(): Promise<EveningDefaults> {
+  const [tableSelection, toggles] = await Promise.all([
+    getFloorPlanMode(),
+    (async () => {
+      try {
+        return toEveningToggles(await readSetting(EVENING_TOGGLES_KEY));
+      } catch (error) {
+        // A booking screen must still render if the settings store is down,
+        // and it must render as the app has always behaved.
+        console.error("[settings] failed to read the evening toggles", error);
+        return { ...DEFAULT_EVENING_TOGGLES };
+      }
+    })(),
+  ]);
+
+  return { tableSelection, ...toggles };
+}
+
+export async function setEveningToggles(toggles: EveningToggles): Promise<EveningToggles> {
+  const safe = toEveningToggles(toggles);
+  await writeSetting(EVENING_TOGGLES_KEY, safe);
+  return safe;
+}
+
+/**
+ * What is switched on for **one evening**, which is the question every guest
+ * path actually has. Nothing reads a stored switch raw.
+ *
+ * The evening's own overrides win where it has them, everything else inherits
+ * the restaurant, and table selection is resolved against the plan so that a
+ * policy pointing at an empty room comes back off. See
+ * `lib/evening-features.ts` for why absent is inherit rather than off.
+ *
+ * `date` may be null — an evening that is not in the calendar has no overrides,
+ * which is the same as having none, so it simply gets the defaults.
+ */
+export async function getEveningFeatures(
+  date: { features?: EveningOverrides } | null,
+): Promise<EveningFeatures> {
+  const [defaults, plan] = await Promise.all([getEveningDefaults(), getFloorPlan()]);
+  return resolveEveningFeatures(defaults, date?.features, plan);
 }
 
 /**

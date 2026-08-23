@@ -432,3 +432,71 @@ Collected so they are in one place:
 - **Nothing in the suite looks at print CSS** (rule 2.10). If this page prints, print it by hand.
 - The audit log is **append-only and outlives the record it describes** — which makes it the right
   source for "what happened", and the wrong source for "what is true now".
+
+---
+
+## 13. Coefficients: is the system earning its keep?
+
+Every number above answers "what happened". These answer a different question — **how much of the
+work is the system taking off the desk** — and they do it by putting something that happened by
+itself over something a member of staff would otherwise have done by hand.
+
+`coefficients()` in `lib/analytics/metrics.ts`, shown under *What the system is doing for you*.
+
+| Coefficient | Over | Reads |
+| --- | --- | --- |
+| Booked by guests | bookings with a pass-key ÷ bookings taken | % |
+| Guest bookings per staff booking | with a key ÷ without one | × |
+| Keys that lapsed unused | expired with no booking ÷ keys whose stay has ended | % |
+| Dinners per key issued | dinners booked ÷ keys issued | per key |
+| Cancelled by the guest | guest cancellations ÷ all cancellations | % |
+| Desk time not spent | guest actions × assumed minutes | hours |
+
+### The discriminator already existed
+
+A booking a guest made for themselves carries the `passKeyId` it was made with; one taken at the desk
+or over the telephone does not. That is the whole of the staff-versus-guest split, with nothing new
+to record and no migration. `cancellation.actorKind` does the same job for cancellations.
+
+### Every count is printed under its figure
+
+"68%" over four bookings and "68%" over four hundred are different facts, and a tile showing only the
+percentage cannot tell them apart. Each coefficient carries its numerator, its denominator and what
+each of them is — the same argument `attendanceCoverage` already makes for never quoting a no-show
+rate on its own.
+
+### A key with time left on it has not been wasted
+
+The trap in the waste rate, and the reason `KeyCohort.stillOpen` exists.
+
+Keys are counted over the cohort **issued** in the range, like the funnel. But a key issued yesterday
+with a week to run is neither used nor wasted — its story has not finished. Counting it as waste would
+make the figure look worst on the most recent range and best on the oldest, which says something
+about the calendar rather than about the restaurant.
+
+So the denominator is **settled keys only**: used, plus expired-unused. The still-open ones are in
+neither half and the hint says how many they are. A key with no expiry at all is never waste either —
+it never lapses, which is what "no expiry" means. A revoked key is neither: somebody decided.
+
+### Cancelled bookings count as bookings taken
+
+Somebody was booked in, and the work of taking that booking happened whether or not they later
+cancelled. Filtering cancellations out would *understate* the guest side, because a guest who books
+and then cancels online has saved reception two jobs, not none.
+
+### One figure is an estimate, and says so
+
+**Desk time not spent** is the only number on this page that is not a measurement. The count of guest
+actions is real — a booking taken, a cancellation processed, one interaction reception did not have.
+The minutes each would have cost is an assumption, and it is the reader's to set.
+
+It lives in the address (`?minutes=8`), like the date range does, rather than in the settings store:
+it is a what-if rather than a policy, a manager tries four and then eight to see how much the answer
+moves, and a particular reading can be sent to somebody else and come back saying the same thing. The
+default is 6. The assumption is printed on the tile, so the figure can never be read without it.
+
+### Unknown is still not zero
+
+A range with no bookings has no self-service rate; a cohort with nothing settled has no waste rate.
+Both come back `null` and print as a dash. Reporting 0% would be a confident statement about nothing —
+the rule from §1 of `lib/analytics/metrics.ts`, applied again.

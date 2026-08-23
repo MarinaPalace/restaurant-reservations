@@ -1,3 +1,5 @@
+import type { EveningOverrides } from "@/lib/evening-features";
+
 /**
  * Which dinner a booking is. Two values, and only two: an evening is either
  * everyday or invitation-only, and a pass-key belongs to one of those flows.
@@ -166,6 +168,20 @@ export type StoredRestaurantDate = {
    * be worked around by writing it on paper.
    */
   bookingCutoffHours?: number;
+  /**
+   * What this evening switches on or off for itself — see
+   * `lib/evening-features.ts`.
+   *
+   * **Absent means "whatever the restaurant says"**, and so does an absent
+   * field inside it. Every date that existed before this has none, which is
+   * why none of them changed behaviour: they all resolve to the defaults, and
+   * the defaults are the app exactly as it was.
+   *
+   * It is what lets one future date run a feature nobody else has yet — open
+   * the date, write a pass-key for it, and test against real bookings without
+   * turning anything on for tonight.
+   */
+  features?: EveningOverrides;
 };
 
 export type RestaurantDateAvailability = StoredRestaurantDate & {

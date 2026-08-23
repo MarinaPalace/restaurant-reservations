@@ -24,15 +24,38 @@ export function getModificationDeadline(reservation: Pick<ReservationRecord, "da
   return deadline;
 }
 
-/** Whether the guest may still change or cancel this booking themselves. */
+/**
+ * Whether the guest may still change or cancel this booking themselves.
+ *
+ * `selfService` is the evening's own switch (`lib/evening-features.ts`), and it
+ * is checked **before the deadline** on purpose: an evening that sends its
+ * guests to reception is a standing arrangement, not a thing that runs out at
+ * a particular hour, and telling somebody "changes close four hours before"
+ * when they were never going to be able to change it online is a wrong answer
+ * dressed as a helpful one.
+ *
+ * It defaults to on, which is what the app has always done — and is why the
+ * deadline tests below did not need touching when this was added.
+ */
 export function canGuestModify(
   reservation: Pick<ReservationRecord, "date" | "time" | "endTime" | "status">,
   now = new Date(),
+  selfService = true,
 ): ModificationCheck {
   const deadline = getModificationDeadline(reservation);
 
   if (reservation.status === "cancelled") {
     return { allowed: false, deadline, reason: "This reservation has already been cancelled." };
+  }
+
+  if (!selfService) {
+    return {
+      allowed: false,
+      deadline,
+      reason:
+        "Changes to this evening are arranged by reception. Please give them a call and they will " +
+        "take care of it for you.",
+    };
   }
 
   if (now >= deadline) {

@@ -98,6 +98,15 @@ export const menuKindSchema = z.enum(["standard", "premium"]);
 /** Which catalogue is being read or edited. Promotions are one of the three. */
 export const menuCatalogSchema = z.enum(MENU_CATALOGS);
 
+/**
+ * Whether guests choose their own table (§4).
+ *
+ * Strict, unlike the reader in `lib/floor-plan.ts`: a mode this app does not
+ * know is a bug in whatever sent it, and accepting it silently as `off` would
+ * hide a screen that thinks it saved a policy it did not.
+ */
+export const floorPlanModeSchema = z.enum(FLOOR_PLAN_MODES);
+
 export const restaurantDateSchema = z.object({
   date: dateKeySchema,
   isOpen: z.boolean(),
@@ -111,6 +120,24 @@ export const restaurantDateSchema = z.object({
    * what "closed" is for.
    */
   bookingCutoffHours: z.number().int().min(0).max(240).optional(),
+  /**
+   * What this evening switches on for itself. Every field is optional inside
+   * it, because **absent is "inherit the restaurant"** and is a third state
+   * rather than a missing one — see `lib/evening-features.ts`.
+   *
+   * Strict about shape, like the floor plan: an unknown mode is a bug in
+   * whatever sent it. `.nullable()` so the editor can clear an override back
+   * to inherit by sending null, which an optional field alone cannot express
+   * once it has been set.
+   */
+  features: z
+    .object({
+      tableSelection: floorPlanModeSchema.nullable().optional(),
+      promotions: z.boolean().nullable().optional(),
+      selfService: z.boolean().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
 });
 
 /**
@@ -561,13 +588,23 @@ export const floorPlanSchema = z.object({
   zones: z.array(floorZoneSchema).max(MAX_ZONES),
 });
 
-/**
- * Whether guests choose their own table (§4).
- *
- * Strict, unlike the reader in `lib/floor-plan.ts`: a mode this app does not
- * know is a bug in whatever sent it, and accepting it silently as `off` would
- * hide a screen that thinks it saved a policy it did not.
- */
-export const floorPlanModeSchema = z.enum(FLOOR_PLAN_MODES);
-
 export const updateFloorPlanModeSchema = z.object({ mode: floorPlanModeSchema });
+
+/**
+ * What the restaurant does on an evening that does not say otherwise.
+ *
+ * Every field optional, and **absent means "not talking about it"** rather than
+ * a value: the route writes only what was sent, so saving one switch cannot
+ * reset another. Unlike an evening's own overrides there is no null here —
+ * a restaurant-wide default has nothing to inherit from, so there is no third
+ * state to express.
+ */
+export const updateEveningDefaultsSchema = z
+  .object({
+    tableSelection: floorPlanModeSchema.optional(),
+    promotions: z.boolean().optional(),
+    selfService: z.boolean().optional(),
+  })
+  .refine((row) => Object.values(row).some((value) => value !== undefined), {
+    message: "Nothing to save.",
+  });

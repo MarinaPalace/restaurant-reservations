@@ -6,10 +6,22 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, Badge, EmptyState } from "@/components/ui/feedback";
 import { Field, Input } from "@/components/ui/field";
+import { cx } from "@/components/ui/utils";
 import { KitchenReport } from "@/app/admin/kitchen-report";
 import { formatLongDate, isPastDateKey, isValidDateKey, startOfMonth } from "@/lib/date";
 import { canGuestBookDate, getBookingDeadline } from "@/lib/reservation-policy";
 import { toRestaurantDatePayload } from "@/lib/restaurant-date-form";
+import {
+  EVENING_FEATURES,
+  EVENING_FEATURE_DESCRIPTIONS,
+  EVENING_FEATURE_LABELS,
+  hasOverrides,
+  type EveningDefaults,
+  type EveningFeature,
+  type EveningOverrides,
+} from "@/lib/evening-features";
+import { EVENING_FEATURE_PERMISSIONS } from "@/lib/auth/permissions";
+import { FLOOR_PLAN_MODES, FLOOR_PLAN_MODE_LABELS, type FloorPlanMode } from "@/lib/floor-plan";
 import { compareRoomNumbers } from "@/lib/room";
 import {
   menuKindOf,
@@ -50,6 +62,7 @@ export function AdminDateManager({
   permissions,
   /** Which clock every time on these screens is quoted on. */
   initialTimeZone,
+  initialEveningDefaults,
   /**
    * Set when the configured zone disagrees with the server's own clock, which
    * would mislabel every time by the difference. Worked out on the server,
@@ -64,6 +77,8 @@ export function AdminDateManager({
   /** What the signed-in account may do; the API enforces the same list. */
   permissions: StaffPermission[];
   initialTimeZone: TimeZone;
+  /** What the restaurant does on an evening that does not say otherwise. */
+  initialEveningDefaults: EveningDefaults;
   clockMismatch: string | null;
 }) {
   const [timeZone, setTimeZone] = useState<TimeZone>(initialTimeZone);
@@ -224,6 +239,48 @@ export function AdminDateManager({
       tone: entry.remainingSeats > 0 ? "positive" : "default",
       premium: entry.premium,
     };
+  };
+
+  const can = (permission: StaffPermission) => permissions.includes(permission);
+
+  /**
+   * The restaurant-wide half, held here so the per-evening controls can say
+   * what "Follow the restaurant" currently means. Saved on its own, the moment
+   * it is changed — a half-edited evening should not have to be saved to change
+   * what the restaurant normally does.
+   */
+  const [eveningDefaults, setEveningDefaults] = useState(initialEveningDefaults);
+  const [savingDefaults, setSavingDefaults] = useState(false);
+
+  const saveEveningDefault = async (patch: Partial<EveningDefaults>) => {
+    const previous = eveningDefaults;
+    setEveningDefaults({ ...previous, ...patch });
+    setSavingDefaults(true);
+
+    try {
+      const response = await fetch("/api/admin/evening-defaults", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      const body = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        // Put the previous answer back, so the control never shows a policy
+        // that was not stored.
+        setEveningDefaults(previous);
+        setError(body?.error ?? "Unable to save the setting.");
+        return;
+      }
+
+      setEveningDefaults(body);
+      setError("");
+    } catch {
+      setEveningDefaults(previous);
+      setError("Unable to save the setting.");
+    } finally {
+      setSavingDefaults(false);
+    }
   };
 
   const patchSelected = (patch: Partial<RestaurantDateAvailability>) => {
@@ -719,11 +776,32 @@ export function AdminDateManager({
                     )}
                   </Field>
 
+                  {/*
+                    What this evening does differently — `lib/evening-features.ts`.
+
+                    Grouped with the cutoff above because they are the same
+                    kind of decision: things that are true of this night and not
+                    of the restaurant. Every switch starts on "Follow the
+                    restaurant", which is what every evening already says, so an
+                    evening nobody touches here is the evening it always was.
+                  */}
+                  <EveningSwitches
+                    overrides={selectedEntry.features}
+                    defaults={eveningDefaults}
+                    can={can}
+                    savingDefaults={savingDefaults}
+                    onChange={(features) => patchSelected({ features })}
+                    onChangeDefault={saveEveningDefault}
+                  />
+
                   <div className="flex flex-wrap gap-2">
                     <Badge tone={selectedEntry.isOpen ? "success" : "info"}>
                       {selectedEntry.isOpen ? `${selectedEntry.remainingSeats} free seats` : "Closed"}
                     </Badge>
                     <Badge tone="info">{selectedEntry.reservedSeats} reserved</Badge>
+                    {hasOverrides(selectedEntry.features) ? (
+                      <Badge tone="warning">This evening only</Badge>
+                    ) : null}
                   </div>
 
                   <Button className="w-full" onClick={saveDate} loading={saving} loadingLabel="Saving…">
@@ -765,6 +843,161 @@ export function AdminDateManager({
         permissions={permissions}
         loading={loadingDay}
       />
+    </div>
+  );
+}
+
+/**
+ * The switches one evening may set for itself, and the restaurant-wide answer
+ * each of them inherits — `lib/evening-features.ts`.
+ *
+ * Both grains on one card, deliberately. Every one of these is **three-way**,
+ * and the third state is the default: "Follow the restaurant" is what every
+ * evening already says, and it is not the same as "off". An evening pinned to
+ * today's default would stop following the setting the moment somebody changed
+ * it, which is the bug the stored shape exists to make impossible — so the
+ * control has to be able to say it too, rather than offering a checkbox and
+ * quietly picking one. Naming what it currently resolves to, right on the
+ * button, is what stops "follow the restaurant" being a state nobody can read.
+ *
+ * The restaurant-wide half saves the moment it is pressed; the evening's half
+ * saves with the rest of the date. They are different acts on different things,
+ * and a half-edited evening should not have to be saved to change what the
+ * restaurant normally does — the same split the floor-plan screen makes between
+ * the plan and the policy.
+ *
+ * A switch the account may not change is shown, disabled, rather than hidden:
+ * whoever runs the calendar should be able to see that an evening is running a
+ * different policy even when they cannot be the one to change it. The routes
+ * are the gate either way (rule 2.5).
+ */
+function EveningSwitches({
+  overrides,
+  defaults,
+  can,
+  savingDefaults,
+  onChange,
+  onChangeDefault,
+}: {
+  overrides: EveningOverrides | undefined;
+  defaults: EveningDefaults;
+  can: (permission: StaffPermission) => boolean;
+  savingDefaults: boolean;
+  onChange: (features: EveningOverrides) => void;
+  onChangeDefault: (patch: Partial<EveningDefaults>) => void;
+}) {
+  const set = (feature: EveningFeature, value: FloorPlanMode | boolean | undefined) => {
+    const next = { ...overrides };
+
+    if (value === undefined) {
+      delete next[feature];
+    } else if (feature === "tableSelection") {
+      next.tableSelection = value as FloorPlanMode;
+    } else {
+      next[feature] = value as boolean;
+    }
+
+    onChange(next);
+  };
+
+  /**
+   * Table selection is the one with three real answers of its own; the other
+   * two are a plain yes or no. Used for both grains, so the restaurant-wide
+   * control and the evening's own cannot come to offer different things.
+   */
+  const answersFor = (feature: EveningFeature): Array<{ label: string; value: FloorPlanMode | boolean }> =>
+    feature === "tableSelection"
+      ? FLOOR_PLAN_MODES.map((mode) => ({ label: FLOOR_PLAN_MODE_LABELS[mode], value: mode }))
+      : [
+          { label: "On", value: true },
+          { label: "Off", value: false },
+        ];
+
+  const nameOf = (feature: EveningFeature, value: FloorPlanMode | boolean) =>
+    answersFor(feature).find((answer) => answer.value === value)?.label ?? String(value);
+
+  return (
+    <div className="rounded-control border border-line bg-surface-muted p-4">
+      <p className="text-sm font-semibold text-ink">What is switched on</p>
+      <p className="mt-1 text-sm text-ink-subtle">
+        Leave an evening on &ldquo;Follow the restaurant&rdquo; and it behaves like every other. Change one and only
+        this date changes &mdash; which is how something new gets tried on a single night, on a date nobody else can
+        see, before anybody booking tonight is affected.
+      </p>
+
+      <div className="mt-4 space-y-5">
+        {EVENING_FEATURES.map((feature) => {
+          const editable = can(EVENING_FEATURE_PERMISSIONS[feature]);
+          const value = overrides?.[feature];
+          const inherited = defaults[feature];
+
+          const choices: Array<{ label: string; value: FloorPlanMode | boolean | undefined }> = [
+            // Named with what it currently resolves to, so "follow the
+            // restaurant" is never a state somebody has to go and look up.
+            { label: `Follow the restaurant (${nameOf(feature, inherited)})`, value: undefined },
+            ...answersFor(feature),
+          ];
+
+          return (
+            <div key={feature}>
+              <p className="text-sm font-medium text-ink">{EVENING_FEATURE_LABELS[feature]}</p>
+              <p className="mb-2 text-sm text-ink-subtle">
+                {EVENING_FEATURE_DESCRIPTIONS[feature]}
+                {editable ? "" : " Your account cannot change this one."}
+              </p>
+
+              <div className="flex flex-wrap gap-1.5">
+                {choices.map((choice) => {
+                  const chosen = value === choice.value;
+
+                  return (
+                    <button
+                      key={String(choice.value)}
+                      type="button"
+                      disabled={!editable}
+                      aria-pressed={chosen}
+                      onClick={() => set(feature, choice.value)}
+                      className={cx(
+                        "min-h-9 rounded-control border px-3 py-1 text-sm font-medium transition-colors disabled:opacity-60",
+                        chosen
+                          ? "border-accent bg-accent-soft text-ink"
+                          : "border-line-strong bg-surface text-ink-muted hover:border-accent",
+                      )}
+                    >
+                      {choice.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* The restaurant-wide answer, changed here and saved at once.
+                  Every evening that has not said otherwise moves with it. */}
+              {editable ? (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <span className="text-xs text-ink-subtle">Every other evening:</span>
+                  {answersFor(feature).map((answer) => (
+                    <button
+                      key={String(answer.value)}
+                      type="button"
+                      disabled={savingDefaults}
+                      aria-pressed={inherited === answer.value}
+                      onClick={() => onChangeDefault({ [feature]: answer.value } as Partial<EveningDefaults>)}
+                      className={cx(
+                        "min-h-7 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors disabled:opacity-60",
+                        inherited === answer.value
+                          ? "border-accent bg-accent-soft text-ink"
+                          : "border-line bg-surface text-ink-subtle hover:border-accent",
+                      )}
+                    >
+                      {answer.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

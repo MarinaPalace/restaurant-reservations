@@ -3,6 +3,8 @@ import { cancelReservation, getReservationsByPassKey } from "@/lib/services/rese
 import { getPassKeyByCode, releasePassKey } from "@/lib/services/pass-keys";
 import { recordAuditEntry } from "@/lib/services/audit-log";
 import { canGuestModify } from "@/lib/reservation-policy";
+import { getRestaurantDate } from "@/lib/services/restaurant";
+import { getEveningFeatures } from "@/lib/services/settings";
 import { manageReservationSchema } from "@/lib/validation/booking";
 
 const NOT_FOUND = { error: "We could not find a reservation for that pass-key." };
@@ -53,7 +55,11 @@ export async function POST(request: Request) {
       );
     }
 
-    const check = canGuestModify(reservation);
+    // The evening may send its guests to reception instead — checked here and
+    // not only by hiding the button (rule 2.5).
+    const evening = await getEveningFeatures(await getRestaurantDate(reservation.date));
+
+    const check = canGuestModify(reservation, new Date(), evening.selfService);
     if (!check.allowed) {
       return NextResponse.json({ error: check.reason, code: "CHANGES_CLOSED" }, { status: 409 });
     }

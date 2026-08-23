@@ -445,3 +445,230 @@ export function passKeyFunnel(
     { label: "Dinners booked", value: dinners, hint: "Tables actually taken" },
   ];
 }
+
+/* ------------------------------------------------------------------ *
+ * Coefficients: what the system does that staff would otherwise do
+ * ------------------------------------------------------------------ */
+
+/**
+ * A ratio, with the two numbers it came out of.
+ *
+ * The counts are not decoration. "68%" over four bookings and "68%" over four
+ * hundred are different facts, and a screen showing only the percentage cannot
+ * tell them apart — the same argument `attendanceCoverage` already makes for
+ * never quoting a no-show rate on its own.
+ */
+export type Coefficient = {
+  key: string;
+  label: string;
+  /** The ratio, or **null when there is nothing to divide by** — never 0. */
+  value: number | null;
+  /** How to read `value`: a percentage, a multiple, a rate, or hours. */
+  unit: "percent" | "ratio" | "per-key" | "hours";
+  part: number;
+  whole: number;
+  /** What the two numbers are, for the line under the figure. */
+  partLabel: string;
+  wholeLabel: string;
+  hint: string;
+};
+
+export type KeyCohort = {
+  /** Keys issued inside the range. Everything below is a slice of these. */
+  issued: number;
+  /** Spent at least once. */
+  used: number;
+  /** Expired without ever being spent — the guest was offered dinner and let it lapse. */
+  wastedExpired: number;
+  /**
+   * Never spent, and their stay has not ended yet.
+   *
+   * **Excluded from the waste denominator**, and this is the whole reason this
+   * field exists. A key issued yesterday with a week to run has not been
+   * wasted; counting it as one would make waste look worst on the most recent
+   * range and best on the oldest, which is an artefact of the calendar rather
+   * than anything about the restaurant.
+   */
+  stillOpen: number;
+  /** Withdrawn by staff. Neither used nor wasted; somebody decided. */
+  revoked: number;
+  /** Dinners booked by the cohort, however many each key was worth. */
+  dinners: number;
+};
+
+/**
+ * Pass-keys issued in the range, sorted into what became of them.
+ *
+ * Counted over keys **issued** in the range rather than dinners eaten in it, so
+ * the numbers describe one cohort — the same choice `passKeyFunnel` makes, and
+ * for the same reason: a key issued in March against a dinner booked in April
+ * is a ratio of two unrelated things.
+ */
+export function keyCohort(
+  keys: readonly {
+    issuedAt?: string;
+    usedCount?: number;
+    expiresOn?: string;
+    status?: string;
+    reservationNumbers?: string[];
+  }[],
+  range: DateRange,
+  today: string,
+): KeyCohort {
+  const issued = keys.filter((key) => key.issuedAt && isWithin(key.issuedAt.slice(0, 10), range));
+  const unused = issued.filter((key) => (key.usedCount ?? 0) === 0);
+  const revoked = unused.filter((key) => key.status === "revoked");
+  const live = unused.filter((key) => key.status !== "revoked");
+
+  return {
+    issued: issued.length,
+    used: issued.filter((key) => (key.usedCount ?? 0) > 0).length,
+    // A key with no expiry never lapses, so it is never waste — it is still
+    // open, indefinitely, which is what "no expiry" means.
+    wastedExpired: live.filter((key) => key.expiresOn !== undefined && key.expiresOn < today).length,
+    stillOpen: live.filter((key) => key.expiresOn === undefined || key.expiresOn >= today).length,
+    revoked: revoked.length,
+    dinners: issued.reduce((sum, key) => sum + (key.reservationNumbers?.length ?? 0), 0),
+  };
+}
+
+/** How long a booking taken by hand is assumed to occupy somebody. */
+export const DEFAULT_MINUTES_PER_MANUAL_BOOKING = 6;
+
+/**
+ * How much of the work the system is actually taking off the desk.
+ *
+ * Every one of these is a ratio between something that happened by itself and
+ * something a member of staff would otherwise have done. They answer one
+ * question — *is this thing earning its keep?* — which no single count on this
+ * page does.
+ *
+ * Two rules from the top of this module decide the arithmetic:
+ *
+ * - **Unknown is not zero.** A range with no bookings has no self-service rate;
+ *   a cohort of keys that has not expired yet has no waste rate. Both come back
+ *   null and the screen says so, rather than reporting a confident 0%.
+ * - **Cancelled bookings count as bookings.** Somebody was booked in, and the
+ *   work of taking that booking happened whether or not they later cancelled.
+ *   Filtering them out would flatter the guest side, because a guest who books
+ *   and cancels online has saved reception *two* jobs, not none.
+ */
+export function coefficients(
+  reservations: readonly ReservationRecord[],
+  keys: readonly {
+    issuedAt?: string;
+    usedCount?: number;
+    expiresOn?: string;
+    status?: string;
+    reservationNumbers?: string[];
+  }[],
+  range: DateRange,
+  options: { today: string; minutesPerManualBooking?: number },
+): { coefficients: Coefficient[]; cohort: KeyCohort } {
+  const cohort = keyCohort(keys, range, options.today);
+  const minutes = Math.max(0, options.minutesPerManualBooking ?? DEFAULT_MINUTES_PER_MANUAL_BOOKING);
+
+  /**
+   * A booking a guest made for themselves carries the key it was made with.
+   * One taken at the desk or over the telephone does not — which makes this the
+   * one field that already separates the two, with nothing new to record.
+   */
+  const byGuest = reservations.filter((reservation) => Boolean(reservation.passKeyId));
+  const byStaff = reservations.filter((reservation) => !reservation.passKeyId);
+
+  const cancellations = reservations.filter((reservation) => reservation.cancellation);
+  const cancelledByGuest = cancellations.filter((reservation) => reservation.cancellation?.actorKind === "guest");
+
+  /** Keys whose story has finished: spent, or lapsed. */
+  const settled = cohort.used + cohort.wastedExpired;
+
+  /**
+   * One guest action is one interaction reception did not have — a booking
+   * taken, or a cancellation processed. Deliberately not covers or seats: the
+   * work is per conversation, not per person at the table.
+   */
+  const savedActions = byGuest.length + cancelledByGuest.length;
+
+  const list: Coefficient[] = [
+    {
+      key: "self-service",
+      label: "Booked by guests",
+      value: percent(byGuest.length, reservations.length),
+      unit: "percent",
+      part: byGuest.length,
+      whole: reservations.length,
+      partLabel: "with a pass-key",
+      wholeLabel: "bookings taken",
+      hint: "The share of the evening's bookings that nobody at the desk had to type in.",
+    },
+    {
+      key: "guest-per-staff",
+      label: "Guest bookings per staff booking",
+      // A ratio, not a percentage: "three guests book themselves in for every
+      // one reception takes" is the sentence a manager actually says.
+      value: byStaff.length > 0 ? Math.round((byGuest.length / byStaff.length) * 100) / 100 : null,
+      unit: "ratio",
+      part: byGuest.length,
+      whole: byStaff.length,
+      partLabel: "by guests",
+      wholeLabel: "by staff",
+      hint: "How many bookings arrive on their own for each one taken by hand. Null when staff took none.",
+    },
+    {
+      key: "key-waste",
+      label: "Keys that lapsed unused",
+      value: percent(cohort.wastedExpired, settled),
+      unit: "percent",
+      part: cohort.wastedExpired,
+      whole: settled,
+      partLabel: "expired with no booking",
+      wholeLabel: "keys whose stay has ended",
+      hint:
+        `Of the keys issued in this period that are now settled. ` +
+        `${cohort.stillOpen} more ${cohort.stillOpen === 1 ? "is" : "are"} still open and not counted either way — ` +
+        "a key with time left on it has not been wasted yet.",
+    },
+    {
+      key: "dinners-per-key",
+      label: "Dinners per key issued",
+      value:
+        cohort.issued > 0 ? Math.round((cohort.dinners / cohort.issued) * 100) / 100 : null,
+      unit: "per-key",
+      part: cohort.dinners,
+      whole: cohort.issued,
+      partLabel: "dinners booked",
+      wholeLabel: "keys issued",
+      hint: "What a key is worth on average. A multi-use key can be worth more than one.",
+    },
+    {
+      key: "guest-cancellations",
+      label: "Cancelled by the guest",
+      value: percent(cancelledByGuest.length, cancellations.length),
+      unit: "percent",
+      part: cancelledByGuest.length,
+      whole: cancellations.length,
+      partLabel: "cancelled themselves",
+      wholeLabel: "cancellations",
+      hint: "The share of cancellations that did not arrive as a telephone call to the desk.",
+    },
+    {
+      key: "time-saved",
+      label: "Desk time not spent",
+      /**
+       * The one figure on this page that is an **estimate rather than a
+       * measurement**, and it is labelled as one everywhere it appears. The
+       * count of guest actions is real; the minutes each would have taken is an
+       * assumption, and it is the caller's to set.
+       */
+      value: Math.round((savedActions * minutes) / 6) / 10,
+      unit: "hours",
+      part: savedActions,
+      whole: minutes,
+      partLabel: "guest bookings and cancellations",
+      wholeLabel: "minutes assumed for each",
+      hint: `An estimate, not a measurement: ${savedActions} guest actions at ${minutes} minutes of somebody's time each.`,
+    },
+  ];
+
+  return { coefficients: list, cohort };
+}

@@ -185,3 +185,49 @@ added to the schema and forgotten on the wire — caught `features` and now carr
 `tsc`, `eslint`, `next build` and the full suite (786 tests) are clean. **Not driven against a
 running server**: the 403s per switch, the audit lines and the guest-facing 409s are exercised by the
 tests and by reading, not by a browser.
+
+---
+
+## 11. The editor, made compact
+
+The panel had a paragraph under every control. Each was worth writing and none was worth reading
+twice, and together they turned something reception opens dozens of times a day into something that
+has to be scrolled.
+
+**Explanation that is only needed the first time moved behind a tip** — `components/ui/tooltip.tsx`.
+A number that changes stayed on the screen: "8 taken" under the seat count, and the cutoff still
+spells itself out as "guests may book until 15:00, then reception only", because that is derived from
+two other fields and is the whole point of the control.
+
+The tip shows on **hover and focus, and is never a click to pin**. A pinned tooltip needs dismissing,
+which means a click-outside listener, an Escape handler, and a way of being left open over the
+control it describes. Hover plus focus covers every input with none of that: a pointer hovers, a
+keyboard tabs, and a touch tap focuses — which is why the trigger is a real `<button>` and not a
+styled span. `aria-describedby` ties the text to the control, so a screen reader reads it as part of
+the field rather than as a stray paragraph.
+
+`Field`, `Input` and `Select` gained a `compact` variant. A guest fills a booking form once and wants
+room to breathe; reception opens this forty times a day and wants the whole evening on one screen.
+
+### Advanced, and when it refuses to fold
+
+The cutoff and the feature switches are set on the rare evening that wants them and never touched
+again, so making everybody scroll past them is a cost paid daily for a decision taken once. They are
+folded away — **but the fold opens by itself whenever the evening has anything to say**, meaning a
+cutoff above zero or any override of its own.
+
+Hiding a setting that is not at its default is how somebody comes to wonder why one Thursday behaves
+differently from every other and finds nothing on the screen to explain it. Folded has to mean
+"nothing unusual here", or the fold is a lie. The header says what is inside it either way.
+
+### Two grains, one list
+
+The three switches can be set for this evening or for every other one, and they are now the same list
+with a tab above it rather than two stacked lists. Showing them apart meant repeating every label and
+every explanation, and hid the thing actually worth understanding: that an evening inherits until it
+says otherwise.
+
+Each is a `<select>` rather than a row of buttons, because "Follow the restaurant (Staff only)" is a
+phrase, and four of those wrapped across a narrow panel is most of its height. The inherited answer
+is still named on the option, so "follow the restaurant" is never a state somebody has to go and look
+up — §3 of this note, unchanged.

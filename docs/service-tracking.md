@@ -319,3 +319,76 @@ real evening.
 
 Steps 8 onwards — service times, delay flags, anything resembling a report — only if somebody asks
 after using it for a season.
+
+---
+
+## 11. Three ways to look at one evening
+
+The board began as a list, which is the right shape for a phone and the wrong one for two of the
+questions it gets asked. So there are three views over the same data, chosen with a switch in the
+header and remembered on the device.
+
+**They are the same taps.** Every control is written once, in `board-row.tsx`, and handed to whichever
+view is on screen as a `BoardActions` object. The optimistic paint, the sequential save and the
+per-row rollback all stay with the board. A view is only ever a way of *arranging* the same actions,
+which is what stops three layouts becoming three subtly different boards.
+
+### Restaurant — the plan, coloured
+
+Draws the floor plan with tonight laid over it: table label, the rooms on it, the party size, and a
+colour for how far along it is. `docs/floor-plan.md` is the drawing; this is the drawing with the
+evening on it.
+
+"Table 12" is a name somebody has to translate into a place, and every list makes them do that
+translation on each glance. Drawn, the answer is where it is. It is also the only view that can
+answer *which part of the room is behind* — obvious the moment colour is laid over a plan, invisible
+in table-number order.
+
+The two are joined on the table's **label**, the same string that becomes a booking's `tableNumber`
+(§3 of the floor-plan note). Which means this view is only as good as that matching, so it says so
+out loud rather than dropping what it cannot place:
+
+- A drawn table with nobody on it is a free table, and is drawn empty.
+- **A booking whose table is not on the plan is listed underneath**, never omitted — no table number
+  assigned, or a number nobody has drawn. A board that quietly loses a table is worse than no board,
+  and the honest failure is also what tells somebody to go and label them.
+
+Selecting a table shows its ordinary row beneath the plan. The plan says where and how far along;
+the row is where it is marked.
+
+It always draws **every** table, even with "hide finished" on. Hiding a finished table on a plan
+saves no scroll and draws it exactly like a free one — a worse lie than the row it saved. So the
+filter is not offered in this view at all.
+
+Nothing is drawn until somebody has drawn the room, and the empty state says that and links to the
+designer rather than showing a blank rectangle.
+
+### List — one table at a time
+
+Unchanged, and still the default. The most depth per table: notes, extras, every plate with its own
+tick and its own time. Best on a phone, and best when walking to a particular table.
+
+### Sheet — the grid the paper always was
+
+Tables down one side, courses across the top, a tick where they meet. Somebody who has run a service
+off that page for years can read it without being taught anything, which is the whole argument for
+it: it is the shape of the thing it replaces.
+
+Reading a column answers "what is the room waiting on"; reading a row answers "where has table 7 got
+to". Neither is a scroll. The table number column is sticky, so it stays readable while the courses
+scroll past — which is what makes it a sheet rather than a wide list.
+
+A cell is the same tap as the list's course chip in less space. `2/4` shows a part-sent course, which
+happens when plates went out one at a time from the per-guest view: the grid can show that state
+honestly even though it cannot create it. Opening a table from the sheet hands it to the list, which
+is where the per-guest plates live, rather than growing a second implementation of them.
+
+**A table that has not sat down has no cells**, only its Seated button — the same gate the list
+enforces, and for the same reason: a grid of live-looking cells above an empty chair is exactly the
+mis-tap that hiding them avoids.
+
+### What did not change
+
+Rule 2.14 holds in all three. Row order is fixed for the life of the screen, filtering hides but never
+reorders, and the plan is drawn where the tables actually are. The polling, the wake lock, the
+per-row error and the sequential save are untouched — they belong to the board, not to a view.

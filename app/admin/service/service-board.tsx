@@ -9,6 +9,10 @@ import { cx } from "@/components/ui/utils";
 import { createSequentialSaver } from "@/lib/sequential-save";
 import { boardSummary, outstandingPlates, type BoardPlate, type BoardTable } from "@/lib/service-board";
 import { formatLongDate } from "@/lib/date";
+import type { FloorPlan } from "@/lib/floor-plan";
+import { TableRow, isFinished, type BoardActions, type RowState } from "@/app/admin/service/board-row";
+import { BoardGrid } from "@/app/admin/service/board-grid";
+import { BoardRoom } from "@/app/admin/service/board-room";
 
 /**
  * The service board.
@@ -49,15 +53,46 @@ import { formatLongDate } from "@/lib/date";
 // See docs/performance.md §3.2.
 const POLL_MS = 20000;
 
-type RowState = { pending: number; error: string | null };
+/**
+ * Which of the three ways of looking at the evening is on screen.
+ *
+ * They are the same data and the same taps — see `board-row.tsx` — and they
+ * differ only in what they make easy to see:
+ *
+ * - `room` draws the plan, so a table is found by *where it is* rather than by
+ *   translating a number into a place. It is also the only one that can show
+ *   which part of the room is behind.
+ * - `list` is one table at a time, in depth: notes, extras, every plate. Best
+ *   on a phone and best when walking to a table.
+ * - `sheet` is the grid the paper always was — tables down, courses across —
+ *   which is the shape somebody moving off paper already knows how to read, and
+ *   the one that answers "what is the whole room waiting on" in a glance.
+ *
+ * Kept on the device rather than in the address. Whoever is at the pass has one
+ * way of working and wants it back after the tablet locks; nobody wants to send
+ * somebody else a link to *their* preferred view of tonight.
+ */
+const VIEWS = ["room", "list", "sheet"] as const;
+type BoardView = (typeof VIEWS)[number];
+
+const VIEW_LABELS: Record<BoardView, string> = {
+  room: "Restaurant",
+  list: "List",
+  sheet: "Sheet",
+};
+
+const VIEW_STORAGE_KEY = "service-board-view";
 
 export function ServiceBoard({
   initialTables,
+  plan,
   date,
   isToday,
   canRecord,
 }: {
   initialTables: BoardTable[];
+  /** The room as staff drew it. Empty until somebody has — the room view says so. */
+  plan: FloorPlan;
   date: string;
   isToday: boolean;
   /** The route enforces this too (rule 2.5); this only avoids offering a control that would fail. */
@@ -86,6 +121,35 @@ export function ServiceBoard({
    */
   const [hideDone, setHideDone] = useState(false);
   const [notice, setNotice] = useState("");
+
+  /**
+   * Starts on the list, then takes the device's remembered choice.
+   *
+   * Read after mount rather than during render: the server has no localStorage,
+   * and reading it while rendering is the hydration mismatch this codebase has
+   * already been bitten by on the confirmation screen. One frame of the list is
+   * cheaper than a board that renders twice.
+   */
+  const [view, setView] = useState<BoardView>("list");
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(VIEW_STORAGE_KEY);
+    if (saved && (VIEWS as readonly string[]).includes(saved)) {
+      setView(saved as BoardView);
+    }
+  }, []);
+
+  const chooseView = (next: BoardView) => {
+    setView(next);
+    try {
+      window.localStorage.setItem(VIEW_STORAGE_KEY, next);
+    } catch {
+      // A tablet with storage disabled still gets the view, just not next time.
+    }
+  };
+
+  /** Which table the room view is showing in full, beneath the plan. */
+  const [openKey, setOpenKey] = useState<string | null>(null);
 
   /** Rows with a mark still in flight. A poll must leave these alone. */
   const inFlight = useRef(new Set<string>());
@@ -362,6 +426,16 @@ export function ServiceBoard({
     }
   };
 
+  /**
+   * Every tap the board offers, in one object.
+   *
+   * Handed to whichever view is on screen rather than reimplemented in each.
+   * The optimistic paint, the sequential save and the per-row rollback all live
+   * here, so a view is only ever a way of *arranging* the same actions — which
+   * is what stops three layouts becoming three subtly different boards.
+   */
+  const actions: BoardActions = { seat, noShow, clearAttendance, toggleCourse, togglePlate };
+
   const summary = useMemo(() => boardSummary(tables), [tables]);
   const outstanding = useMemo(() => outstandingPlates(tables), [tables]);
 
@@ -370,16 +444,15 @@ export function ServiceBoard({
    * because a neighbour was finished is a row somebody mis-taps.
    */
   const visible = useMemo(
-    () =>
-      hideDone
-        ? tables.filter(
-            (table) =>
-              table.attendance !== "no-show" &&
-              !(table.attendance === "seated" && table.courses.every((course) => course.outstanding === 0)),
-          )
-        : tables,
+    () => (hideDone ? tables.filter((table) => table.attendance !== "no-show" && !isFinished(table)) : tables),
     [hideDone, tables],
   );
+
+  /**
+   * Looked up on every render rather than held in state, so the open table is
+   * the *current* one after a poll rather than a copy taken when it was tapped.
+   */
+  const openTable = openKey ? (tables.find((table) => table.key === openKey) ?? null) : null;
 
   return (
     <div className="space-y-4">
@@ -391,6 +464,27 @@ export function ServiceBoard({
           description={`${summary.seated} of ${summary.tables} tables seated · ${summary.guestsSeated} of ${summary.guestsExpected} guests · ${summary.finished} finished`}
           actions={
             <div className="flex flex-wrap items-center gap-2">
+              {/*
+                Three ways of looking at one evening. Large targets and always
+                in the same place, because it is pressed with a thumb while
+                holding something in the other hand.
+              */}
+              <div className="inline-flex rounded-control border border-line-strong p-0.5" role="group" aria-label="View">
+                {VIEWS.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    aria-pressed={view === option}
+                    onClick={() => chooseView(option)}
+                    className={cx(
+                      "min-h-10 rounded-[calc(var(--radius-control)-2px)] px-3 text-sm font-semibold transition-colors",
+                      view === option ? "bg-accent-soft text-accent-ink" : "text-ink-muted hover:text-ink",
+                    )}
+                  >
+                    {VIEW_LABELS[option]}
+                  </button>
+                ))}
+              </div>
               <ButtonLink href="/admin">Dashboard</ButtonLink>
               {canRecord && summary.waiting > 0 ? (
                 <Button variant="secondary" onClick={closeEvening} loading={closing} loadingLabel="Marking…">
@@ -430,7 +524,12 @@ export function ServiceBoard({
           </p>
         ) : null}
 
-        {summary.tables > 0 ? (
+        {/*
+            Fewer rows is the most valuable thing on a phone, but only where
+            there are rows: the plan draws the whole room by definition, so the
+            control is not offered there rather than being offered and ignored.
+          */}
+        {summary.tables > 0 && view !== "room" ? (
           <label className="mt-3 flex min-h-11 items-center gap-2 text-sm font-medium text-ink">
             <input
               type="checkbox"
@@ -468,242 +567,67 @@ export function ServiceBoard({
             action={<ButtonLink href="/admin">Back to the calendar</ButtonLink>}
           />
         </Card>
-      ) : (
+      ) : view === "list" ? (
         <div className="space-y-2 sm:space-y-3">
-          {visible.map((table) => {
-            const row = rows[table.key];
-            const seated = table.attendance === "seated";
+          {visible.map((table) => (
+            <TableRow
+              key={table.key}
+              table={table}
+              row={rows[table.key]}
+              canRecord={canRecord}
+              expanded={Boolean(expanded[table.key])}
+              onExpand={() => setExpanded((current) => ({ ...current, [table.key]: !current[table.key] }))}
+              actions={actions}
+            />
+          ))}
+        </div>
+      ) : view === "sheet" ? (
+        <BoardGrid
+          tables={visible}
+          rows={rows}
+          canRecord={canRecord}
+          actions={actions}
+          onOpen={(table) => {
+            // The sheet has no room for per-guest plates, so opening a table
+            // hands it to the view that does rather than growing a second
+            // implementation of the same thing.
+            setExpanded((current) => ({ ...current, [table.key]: true }));
+            chooseView("list");
+          }}
+        />
+      ) : (
+        <div className="space-y-3">
+          {/*
+            Every table, never the filtered list. Hiding a finished table on a
+            plan does not save a scroll — it draws it exactly like a free one,
+            which is a worse lie than the row it saved.
+          */}
+          <BoardRoom plan={plan} tables={tables} selectedKey={openKey} onSelect={setOpenKey} />
 
-            return (
-              <Card
-                key={table.key}
-                as="section"
-                className={cx(
-                  "p-3 transition-colors sm:p-4",
-                  table.attendance === "no-show" && "opacity-60",
-                  seated && "border-gold/40",
-                )}
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="flex flex-wrap items-baseline gap-2">
-                      <span className="text-lg font-semibold text-ink sm:text-xl">
-                        {table.table ? `Table ${table.table}` : "No table yet"}
-                      </span>
-                      <span className="text-xs text-ink-muted sm:text-sm">
-                        {table.rooms.join(" + ")} · {table.guests} {table.guests === 1 ? "guest" : "guests"}
-                      </span>
-                    </p>
-
-                    {table.notes.length > 0 ? (
-                      <p className="mt-1 text-sm font-medium text-danger">{table.notes.join(" · ")}</p>
-                    ) : null}
-                    {table.extras.length > 0 ? (
-                      <p className="mt-0.5 text-sm font-medium text-accent-ink">+ {table.extras.join(", ")}</p>
-                    ) : null}
-                    {table.attendanceMixed ? (
-                      <p className="mt-0.5 text-xs text-ink-subtle">
-                        The rooms on this table are marked differently.
-                      </p>
-                    ) : null}
-                  </div>
-
-                  {/* The gate. Big, because it is pressed while walking. */}
-                  {canRecord ? (
-                    <div className="flex shrink-0 flex-wrap items-center gap-2">
-                      {table.attendance === null ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => seat(table)}
-                            className="min-h-12 rounded-control bg-primary px-5 text-base font-semibold text-primary-fg transition-colors hover:bg-primary-hover sm:min-h-14 sm:px-6"
-                          >
-                            Seated
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => noShow(table)}
-                            className="min-h-12 rounded-control border border-line-strong px-3 text-sm font-medium text-ink-muted hover:border-danger hover:text-danger sm:min-h-14 sm:px-4"
-                          >
-                            No-show
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => clearAttendance(table)}
-                          className={cx(
-                            "min-h-12 rounded-control border px-4 text-sm font-semibold transition-colors sm:min-h-14 sm:px-5",
-                            seated
-                              ? "border-gold bg-accent-soft text-accent-ink"
-                              : "border-line-strong text-ink-muted",
-                          )}
-                        >
-                          {seated ? "✓ Seated" : "No-show"}
-                          <span className="ml-2 text-xs font-normal opacity-70">undo</span>
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="text-sm font-medium text-ink-muted">
-                      {table.attendance === "seated" ? "Seated" : table.attendance === "no-show" ? "No-show" : "Waiting"}
-                    </span>
-                  )}
-                </div>
-
-                {/*
-                  Courses appear only once the table is seated: a table that has
-                  not sat down cannot have been served, and offering the cells
-                  first invites exactly that error.
-                */}
-                {seated ? (
-                  <div className="mt-3 border-t border-line pt-3">
-                    {/*
-                      A grid on a phone, where a 160px-wide cell means one per
-                      row and six courses fill the screen; flowing chips from
-                      `sm` up, where there is room for their natural width.
-                    */}
-                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
-                      {table.courses.map((course) => {
-                        const done = course.outstanding === 0;
-
-                        return (
-                          <button
-                            key={course.courseId}
-                            type="button"
-                            disabled={!canRecord}
-                            onClick={() => toggleCourse(table, course.courseId, !done)}
-                            aria-pressed={done}
-                            className={cx(
-                              "min-h-14 rounded-control border px-3 py-2 text-left transition-colors sm:min-h-16 sm:min-w-40 sm:px-4",
-                              done
-                                ? "border-success/40 bg-success-soft"
-                                : course.served > 0
-                                  ? "border-gold/50 bg-accent-soft"
-                                  : "border-line-strong bg-surface hover:border-accent",
-                              !canRecord && "cursor-default",
-                            )}
-                          >
-                            <span
-                              className={cx(
-                                "block truncate text-sm font-semibold",
-                                done ? "text-success" : "text-ink",
-                              )}
-                            >
-                              {done ? "✓ " : ""}
-                              {course.courseName}
-                              {!done && course.served > 0 ? (
-                                <span className="ml-1 font-normal text-ink-muted">
-                                  {course.served}/{course.plates.length}
-                                </span>
-                              ) : null}
-                            </span>
-
-                            {/*
-                              Which dishes, not just how many. "2 Amuse Bouche"
-                              does not tell a waiter what to carry; "2 x Salmon,
-                              1 x Veloute" does.
-                            */}
-                            <span className="mt-0.5 block truncate text-xs text-ink-muted">
-                              {done && course.servedAt
-                                ? new Intl.DateTimeFormat("en-GB", {
-                                    hour: "2-digit",
-                                    minute: "2-digit",
-                                    hour12: false,
-                                  }).format(new Date(course.servedAt))
-                                : course.summary
-                                    .map((entry) => `${entry.count} × ${entry.optionName}`)
-                                    .join(" · ")}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    {/*
-                      Per guest, on demand. An allergy note says "guest 2 is
-                      allergic to gluten", so the board has to be able to say
-                      what guest 2 is actually eating — and to send that one
-                      plate out separately from the rest of the course.
-                    */}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setExpanded((current) => ({ ...current, [table.key]: !current[table.key] }))
-                      }
-                      className="mt-2 min-h-11 text-sm font-medium text-accent-ink underline underline-offset-4"
-                      aria-expanded={Boolean(expanded[table.key])}
-                    >
-                      {expanded[table.key] ? "Hide each guest" : "Show what each guest chose"}
-                    </button>
-
-                    {expanded[table.key] ? (
-                      <div className="mt-2 space-y-3">
-                        {table.courses.map((course) => (
-                          <div key={course.courseId}>
-                            <p className="text-xs font-semibold uppercase tracking-wide text-ink-subtle">
-                              {course.courseName}
-                            </p>
-                            <div className="mt-1 grid grid-cols-2 gap-1.5 lg:grid-cols-3">
-                              {course.plates.map((plate) => {
-                                const out = Boolean(plate.servedAt);
-
-                                return (
-                                  <button
-                                    key={`${plate.reservationNumber}-${plate.guestIndex}`}
-                                    type="button"
-                                    disabled={!canRecord}
-                                    aria-pressed={out}
-                                    onClick={() => togglePlate(table, course.courseId, plate, !out)}
-                                    className={cx(
-                                      "flex min-h-12 items-center justify-between gap-3 rounded-control border px-3 py-2 text-left transition-colors",
-                                      out
-                                        ? "border-success/40 bg-success-soft"
-                                        : "border-line bg-surface hover:border-accent",
-                                      !canRecord && "cursor-default",
-                                    )}
-                                  >
-                                    <span className="min-w-0">
-                                      <span className="block text-xs text-ink-subtle">{plate.label}</span>
-                                      <span
-                                        className={cx(
-                                          "block truncate text-sm font-medium",
-                                          out ? "text-success" : "text-ink",
-                                        )}
-                                      >
-                                        {out ? "✓ " : ""}
-                                        {plate.optionName}
-                                      </span>
-                                    </span>
-                                    {out && plate.servedAt ? (
-                                      <span className="shrink-0 text-xs tabular-nums text-ink-muted">
-                                        {new Intl.DateTimeFormat("en-GB", {
-                                          hour: "2-digit",
-                                          minute: "2-digit",
-                                          hour12: false,
-                                        }).format(new Date(plate.servedAt))}
-                                      </span>
-                                    ) : null}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {/* The failure belongs to its row, never to the page. */}
-                {row?.error ? (
-                  <p className="mt-3 text-sm font-medium text-danger" role="alert">
-                    {row.error} — tap again to retry.
-                  </p>
-                ) : null}
-              </Card>
-            );
-          })}
+          {/*
+            The selected table's ordinary row, under the plan. The plan says
+            where and how far along; this is where it is actually marked, and it
+            is the same component the list uses so a tap cannot mean two things.
+          */}
+          {openTable ? (
+            <Card as="section" className="border-accent p-3 sm:p-4">
+              <TableRow
+                bare
+                table={openTable}
+                row={rows[openTable.key]}
+                canRecord={canRecord}
+                expanded={Boolean(expanded[openTable.key])}
+                onExpand={() =>
+                  setExpanded((current) => ({ ...current, [openTable.key]: !current[openTable.key] }))
+                }
+                actions={actions}
+              />
+            </Card>
+          ) : (
+            <p className="rounded-control border border-dashed border-line-strong p-4 text-center text-sm text-ink-subtle">
+              Tap a table to seat it or send a course.
+            </p>
+          )}
         </div>
       )}
     </div>

@@ -7,6 +7,7 @@ import { hasPermission } from "@/lib/auth/permissions";
 import { getReservationsByDate } from "@/lib/services/reservations";
 import { getFullMenuCatalog } from "@/lib/services/restaurant";
 import { buildBoard } from "@/lib/service-board";
+import { getFloorPlan } from "@/lib/services/settings";
 import { isValidDateKey, todayKey } from "@/lib/date";
 import { menuKindOf } from "@/types/booking";
 
@@ -47,7 +48,13 @@ export default async function ServicePage({ searchParams }: PageProps<"/admin/se
   // One evening only. `getReservationsByDate` walks the `date` index rather than
   // loading the whole collection to filter it in JS — the board is re-read on a
   // poll, so this is the read that matters most. See docs/performance.md §3.1.
-  const [evening, menu] = await Promise.all([getReservationsByDate(date), getFullMenuCatalog()]);
+  const [evening, menu, plan] = await Promise.all([
+    getReservationsByDate(date),
+    getFullMenuCatalog(),
+    // The room as staff drew it, for the restaurant view. Read here with the
+    // rest so the poll costs one round of queries rather than two.
+    getFloorPlan(),
+  ]);
 
   /**
    * Dishes are named from the everyday catalogue unless this evening is served
@@ -62,6 +69,7 @@ export default async function ServicePage({ searchParams }: PageProps<"/admin/se
     <PageShell width="xl" headerHref="/admin" showLanguage={false}>
       <ServiceBoard
         initialTables={buildBoard(evening, courses)}
+        plan={plan}
         date={date}
         isToday={date === todayKey()}
         canRecord={canRecord}

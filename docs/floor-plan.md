@@ -693,3 +693,93 @@ thing worse than an extra label is a progress bar that goes backwards.
   a table reception has already given away on paper. It is a real gap and the next thing to close.
 - **Changing a table from the manage screen** (§8.3) is not built. A guest who wants a different
   table telephones, as they did before.
+
+---
+
+## 18. The picker was cut off, and now it moves
+
+### The fault, measured rather than guessed
+
+Driven in a real headless Chrome at 390 x 844 — a phone — with a hall of 1400 x 900 cm and four
+tables:
+
+| | Before | After |
+| --- | --- | --- |
+| The drawing | 352 px wide inside a 324 px card | fits the card |
+| Table 2, at the far wall | drawn at x 366–386, **outside** the card | inside, and pickable |
+| Reaching it | scroll the card sideways — impossible with a finger | drag, pinch, buttons, keys, or the list |
+
+The plan was `w-full min-w-[22rem]` inside a wrapper with `overflow-x-auto`. On a phone the
+`min-w` wins: the drawing is forced wider than the card it sits in, and the far part of the room is
+outside it. In principle that wrapper scrolls. In practice the SVG carries `touch-none` — which is
+right, it is what stops the page scrolling under a drag on the plan — so a finger on the drawing
+scrolls nothing at all, and the only scrollable strip left is the two pixels of padding around it.
+Nothing on screen said there was more room to the right, either.
+
+So: a table in the far half of the room could be seen by nobody on a phone and picked by nobody at
+all. A booking flow that did not work.
+
+The guess in the backlog — a viewBox sized to something other than the plan — was close but not
+what it was. The viewBox was `0 0 zone.width zone.height` and the drawing genuinely fits inside it:
+every read normalises through `clampPosition`, so nothing on a plan ever sits outside its hall. The
+fault was one layer up, in CSS.
+
+### The extent comes from the drawing
+
+`lib/floor-plan-viewport.ts` is the arithmetic, pure and tested: `planBounds` unions the hall
+rectangle with the **rotated** footprint of every table and every feature, and adds 20 cm of margin
+so a table flush against a wall does not read as clipped.
+
+The rotation matters even though today it can never push past the wall. `clampPosition` bounds the
+rotated footprint (§13), so a 160 cm window stood on end is stored at `x = -70` with its glass
+exactly on the wall — its *stored* rectangle is outside the hall while its *drawn* one is not.
+Anything that measured the stored rectangle would be wrong, and anything that trusted the hall's
+own numbers would be wrong the moment a plan arrived from somewhere that did not clamp. The extent
+is read off the drawing so neither can happen.
+
+**The hall is always included**, even when the furniture sits well inside it — fitting to the
+furniture alone would make the plan a different shape every evening as tables come and go, which is
+rule 2.14 by another route.
+
+The box on screen is shaped like the plan rather than given a height of its own. A fixed height
+letterboxed a wide room inside deep empty bands — 322 x 416 for a room half again as wide as it is
+deep — and since zooming and panning never change the ratio, one `aspect-ratio` holds at every
+magnification.
+
+### Fit first, then move
+
+The plan opens fitted: the whole room, however small that has to be. Nobody should have to move
+anything to discover that a table exists. After that it can be moved around — drag or wheel on a
+pointer, drag or pinch on glass, and `+` / `−` / **Fit** buttons beside the plan, because
+gesture-only is not enough for a laptop with no wheel. The plan takes focus and answers the arrow
+keys, `+`, `−` and `0`; a table reached by tabbing is panned into the frame, since tabbing to
+something that cannot be seen is the same fault as the clipping, only quieter. Zoom stops at the
+fitted plan on the way out and at 8× on the way in, and the view is clamped to the plan, so it
+cannot be dragged off the side of the room.
+
+A drag over a table pans the room and does **not** choose it: four pixels of movement suppresses
+the tap, so a thumb on glass never books a table it was only sliding past.
+
+### The list is the other half of the fix
+
+Under the plan, every table in the zone as plain rows — label, seats, and the reason when it cannot
+be had — selecting exactly the same table. Free tables first and **smallest first**: the guest who
+does not mind wants the one that fits, and offering a party of two the four-top costs the
+restaurant a table it could have sold twice.
+
+This is the accessible path, the small-screen path, and the path for anybody who does not want to
+study a floor plan. It is also insurance: a drawing that fails can no longer take the step down
+with it.
+
+### Smaller things, while it was open
+
+- An unavailable table says **why** when tapped — "already taken", "seats 2, which is not enough for
+  your party" — instead of ignoring the finger. A control that does nothing when pressed reads as a
+  broken screen.
+- It is crossed through as well as greyed. Tone alone is not a difference everybody receives.
+- The chosen table is drawn with a heavier outline, and its label is repeated in words above the
+  buttons: a table number on a drawing is something to remember, in the summary it is something to
+  read.
+- **"Any table" is untouched** and still one tap, beside Continue.
+
+Seat accounting and the claim rules were not touched. This was a viewport and an input problem.

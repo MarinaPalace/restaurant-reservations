@@ -118,7 +118,19 @@ the note beside this one sets out what it costs and when to do it.
 
 ## 3. The guest's table picker is cut off — fix first
 
-**Status: next up. Raised 2026-08-23. Highest priority of the three below.**
+**Status: done, 2026-08-24. `docs/floor-plan.md` §18 records what it turned out to be.**
+
+The cause was not the one guessed at below. The viewBox was right and the drawing fits inside it —
+every read normalises through `clampPosition`, so nothing ever sits outside its hall. The fault was
+CSS: `min-w-[22rem]` forced the drawing wider than the card on a phone, and `touch-none` meant a
+finger could not scroll the wrapper to the rest of it. Measured in a real browser at 390 px, the
+table at the far wall was drawn outside the card entirely.
+
+The plan now opens fitted, is shaped like the room, and zooms and pans by gesture, by button and by
+key; the extent comes from the drawing (`lib/floor-plan-viewport.ts`, pure and tested). The list
+beside it picks the same tables.
+
+The original entry is kept below, because what was asked for is how to tell whether it was done.
 
 ### The fault
 
@@ -264,7 +276,25 @@ Entries carry the actor and the reservation number, so a booking's history is on
 - **Append-only.** Nothing edits or deletes an entry — not a redaction tool, not a cleanup script. If
   retention is ever needed it is a decision to make deliberately, in this doc, first.
 
+---
+
+## 6. The header spills off the side of a phone
+
+**Status: found while measuring item 3, not fixed. Raised 2026-08-24.**
+
+Driving any page at 390 px wide, the document scrolls sideways: the language and theme controls in
+the site header are laid out at x 169–402 inside a 390 px viewport, so the last theme button is
+half off the screen and the whole page can be dragged left. Reproduced on `/booking` and
+`/booking/table`, and it has nothing to do with either — it is `components/site-header.tsx`.
+
+It was left alone deliberately: item 3 was a booking flow that did not work, and widening its
+commit into the chrome of every page would have made both harder to review. It is small, it is
+visible on every page a guest sees, and the measurement is written down here so nobody has to find
+it twice.
+
+---
+
 ### Order for tomorrow
 
-Item 3 first (a broken booking flow beats everything), then item 4 part one and item 5 together —
-they share the permission question, and item 4's lock needs item 5's entries to be worth anything.
+Item 3 is done. Next is item 4 part one and item 5 together — they share the permission question,
+and item 4's lock needs item 5's entries to be worth anything.

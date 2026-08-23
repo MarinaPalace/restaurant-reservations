@@ -95,6 +95,26 @@ export const CHAIR_SIZE = 42;
 export const CHAIR_GAP = 8;
 export const MAX_CHAIRS_PER_TABLE = 24;
 
+/**
+ * The sides of a table chairs may be drawn on.
+ *
+ * Sides of the **table**, not of the room: they are named before the table's
+ * rotation is applied, so they turn with it. Push a table against the right
+ * wall and turn it, and the side you cleared stays the side you cleared.
+ *
+ * Absent means all four, which is the normal case and exactly what every table
+ * drawn before this existed gets — so no plan changes by being read again.
+ */
+export const CHAIR_SIDES = ["top", "right", "bottom", "left"] as const;
+export type ChairSide = (typeof CHAIR_SIDES)[number];
+
+export const CHAIR_SIDE_LABELS: Record<ChairSide, string> = {
+  top: "Top",
+  right: "Right",
+  bottom: "Bottom",
+  left: "Left",
+};
+
 /** What the rotation control steps by. Free entry is allowed in between. */
 export const ROTATION_STEP = 15;
 
@@ -153,6 +173,18 @@ export type FloorTable = Placed & {
    * stays the truth for booking; this is only what is drawn.
    */
   chairCount?: number;
+  /**
+   * Which sides of the table the chairs go on.
+   *
+   * Absent means all four. It is set when the room says otherwise: a table
+   * pushed against a wall is laid on three sides, a banquette seats one side
+   * only, two tables pushed together are not laid where they meet.
+   *
+   * The chairs stay **derived** — this says which sides are available, and the
+   * count is still shared out between them from the seat count. There is still
+   * no such thing as a chair somebody placed by hand and could leave behind.
+   */
+  chairSides?: ChairSide[];
   /** Window, quiet, by the music. Nothing reads these yet (§8.4). */
   tags?: string[];
 };
@@ -249,18 +281,63 @@ export function clampSize(width: number, height: number, zone: ZoneSize = DEFAUL
 }
 
 /**
+ * How much floor something actually covers once it has been turned.
+ *
+ * A window 160 x 20 laid flat covers 160 x 20. Stand it on end against a side
+ * wall and it covers 20 x 160 — the same object, a different footprint. This is
+ * the axis-aligned box around the rotated shape, and it is what has to fit in
+ * the hall, because it is what a tape measure would find.
+ */
+export function rotatedExtent(
+  size: { width: number; height: number },
+  rotation = 0,
+): { width: number; height: number } {
+  const radians = (rotation * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(radians));
+  const sin = Math.abs(Math.sin(radians));
+
+  return {
+    width: size.width * cos + size.height * sin,
+    height: size.width * sin + size.height * cos,
+  };
+}
+
+/**
  * Keeps something inside its zone whatever the designer was asked to do.
  *
  * The far edge is reachable: something 120 wide in a 1400 zone may sit at
  * exactly 1280, flush against the wall. There is no dead band at the end.
+ *
+ * **Rotation counts.** Everything is drawn turned about the centre of its
+ * unrotated box, so the stored `x`/`y` is not where the shape appears once it
+ * has been turned. Clamping the unrotated box was a real bug: a 160-long
+ * window stood on end against the right wall could get no closer than 70 cm to
+ * it — half the difference between its length and its depth — and a longer
+ * window was held further out still. The bound is the **rotated** footprint,
+ * which is why `x` may legitimately come back negative: a window standing on
+ * end at `x = -70` has its glass exactly on the wall.
  */
 export function clampPosition(
-  placed: Pick<Placed, "x" | "y" | "width" | "height">,
+  placed: Pick<Placed, "x" | "y" | "width" | "height"> & { rotation?: number },
   zone: ZoneSize = DEFAULT_ZONE,
 ): { x: number; y: number } {
+  const extent = rotatedExtent(placed, placed.rotation ?? 0);
+
+  // Half the difference between what it covers and what it stores: zero for
+  // anything square to the room, so nothing unrotated moves by a millimetre.
+  const overhangX = (extent.width - placed.width) / 2;
+  const overhangY = (extent.height - placed.height) / 2;
+
+  const minX = overhangX;
+  const minY = overhangY;
+  // Something too big for the hall pins to the near wall rather than going
+  // somewhere nonsensical — the same answer the unrotated case always gave.
+  const maxX = Math.max(minX, zone.width - placed.width - overhangX);
+  const maxY = Math.max(minY, zone.height - placed.height - overhangY);
+
   return {
-    x: clamp(snap(placed.x), 0, Math.max(0, zone.width - placed.width)),
-    y: clamp(snap(placed.y), 0, Math.max(0, zone.height - placed.height)),
+    x: clamp(snap(placed.x), minX, maxX),
+    y: clamp(snap(placed.y), minY, maxY),
   };
 }
 
@@ -293,19 +370,77 @@ export function zoneArea(zone: ZoneSize): number {
  * ------------------------------------------------------------------ */
 
 /**
- * Where the chairs go, worked out from the seat count and the shape.
+ * The sides chairs may go on, as a list that always says something usable.
+ *
+ * Absent, empty or unrecognisable all read as **all four sides** — the same
+ * lenient direction as `active` and `chairs`, and for the same reason: a plan
+ * that cannot be understood should draw an ordinary table, not a bare one.
+ * Turning chairs off entirely is what the `chairs` switch is for.
+ */
+export function chairSidesOf(table: { chairSides?: ChairSide[] }): ChairSide[] {
+  const chosen = Array.isArray(table.chairSides)
+    ? CHAIR_SIDES.filter((side) => table.chairSides!.includes(side))
+    : [];
+
+  return chosen.length > 0 ? chosen : [...CHAIR_SIDES];
+}
+
+/**
+ * `total` shared out between weighted places, as whole chairs.
+ *
+ * Largest remainder, ties going to the earlier place — which is why callers
+ * order the sides top, bottom, left, right: an odd chair lands on a long side,
+ * and an exact tie is split across facing sides rather than adjacent ones. A
+ * square laid for six comes out two, two, one, one rather than crowding one
+ * side and leaving another bare.
+ */
+function share(total: number, weights: number[]): number[] {
+  const sum = weights.reduce((running, weight) => running + weight, 0);
+
+  if (total <= 0 || sum <= 0) {
+    return weights.map(() => 0);
+  }
+
+  const exact = weights.map((weight) => (total * weight) / sum);
+  const counts = exact.map((value) => Math.floor(value));
+  let left = total - counts.reduce((running, count) => running + count, 0);
+
+  const byRemainder = exact
+    .map((value, index) => ({ index, remainder: value - Math.floor(value) }))
+    .sort((a, b) => b.remainder - a.remainder || a.index - b.index);
+
+  for (const place of byRemainder) {
+    if (left <= 0) break;
+    counts[place.index] += 1;
+    left -= 1;
+  }
+
+  return counts;
+}
+
+/**
+ * Where the chairs go, worked out from the seat count, the shape and the sides.
  *
  * Derived rather than stored, which is the whole point: chairs cannot be left
  * behind when a table moves, cannot be forgotten when it is duplicated, and
  * cannot disagree with the number of people the table seats. Change the seats
  * and the chairs follow.
  *
+ * `chairSides` narrows *where* they may go without making them placeable: a
+ * table against a wall is laid on three sides, a banquette on one. The count is
+ * still shared out, just between fewer sides — so a four-top laid on two sides
+ * puts two on each rather than dropping two chairs on the floor.
+ *
  * Positions are in the table's own coordinates, before its rotation is applied,
  * so the caller draws them inside the same transform as the table and they turn
- * with it.
+ * with it. That is also why the sides are the table's own: clear the side
+ * facing the wall, turn the table, and it is still the side facing the wall.
  */
 export function chairPositions(
-  table: Pick<FloorTable, "seats" | "shape" | "width" | "height"> & { chairCount?: number },
+  table: Pick<FloorTable, "seats" | "shape" | "width" | "height"> & {
+    chairCount?: number;
+    chairSides?: ChairSide[];
+  },
 ): Array<{ x: number; y: number; rotation: number }> {
   // Absent means "as many as it seats", which is the normal case.
   const wanted = table.chairCount === undefined ? table.seats : table.chairCount;
@@ -317,67 +452,116 @@ export function chairPositions(
 
   const halfChair = CHAIR_SIZE / 2;
   const out = CHAIR_SIZE / 2 + CHAIR_GAP;
+  const sides = chairSidesOf(table);
+  const allRound = sides.length === CHAIR_SIDES.length;
 
   if (table.shape === "round" || table.shape === "oval") {
-    // Evenly around the ellipse, each chair facing the middle.
     const rx = table.width / 2 + out;
     const ry = table.height / 2 + out;
 
-    return Array.from({ length: seats }, (_, index) => {
-      const angle = (index / seats) * Math.PI * 2 - Math.PI / 2;
+    const at = (degrees: number) => {
+      const angle = (degrees * Math.PI) / 180;
       return {
         x: table.width / 2 + Math.cos(angle) * rx - halfChair,
         y: table.height / 2 + Math.sin(angle) * ry - halfChair,
-        rotation: (angle * 180) / Math.PI + 90,
+        rotation: degrees + 90,
       };
-    });
+    };
+
+    if (allRound) {
+      // Evenly around the ellipse, each chair facing the middle. Untouched by
+      // the sides work, so every round table already drawn is drawn the same.
+      return Array.from({ length: seats }, (_, index) => at((index / seats) * 360 - 90));
+    }
+
+    /**
+     * Part of the way round, then. Each side owns the quarter of the circle
+     * facing it — top is the 90° centred on straight up — and sides next to
+     * each other make one arc rather than two, so chairs across "top and
+     * right" flow round the corner instead of bunching at the middle of each.
+     */
+    const order: ChairSide[] = ["top", "right", "bottom", "left"];
+    const on = order.map((side) => sides.includes(side));
+    // At least one side is off here, so there is a gap to start the sweep
+    // after and no run can wrap round onto itself.
+    const first = on.findIndex((enabled, index) => enabled && !on[(index + order.length - 1) % order.length]);
+
+    const arcs: Array<{ start: number; span: number }> = [];
+    let running = false;
+
+    for (let step = 0; step < order.length; step += 1) {
+      const index = (first + step) % order.length;
+
+      if (!on[index]) {
+        running = false;
+        continue;
+      }
+
+      if (running) {
+        arcs[arcs.length - 1].span += 90;
+      } else {
+        // -135 is where the top side's quarter begins, a corner of the table.
+        arcs.push({ start: -135 + index * 90, span: 90 });
+        running = true;
+      }
+    }
+
+    const counts = share(seats, arcs.map((arc) => arc.span));
+
+    return arcs.flatMap((arc, index) =>
+      // Half a step in from each end, so an arc of three sits evenly across it
+      // rather than with a chair pinned to the corner it stops at.
+      Array.from({ length: counts[index] }, (_, seat) => at(arc.start + ((seat + 0.5) / counts[index]) * arc.span)),
+    );
   }
 
   /**
    * Rectangles seat people along their sides, and the long sides take more —
-   * which is how anybody actually lays a table up. Split proportionally, then
-   * space each side's chairs evenly along it.
+   * which is how anybody actually lays a table up. Shared out by side length,
+   * then spaced evenly along each side.
+   *
+   * Ordered top, bottom, left, right so that a tie goes to a facing pair.
    */
-  const perimeter = 2 * (table.width + table.height);
-  let top = Math.round((seats * table.width) / perimeter);
-  let bottom = Math.round((seats * table.width) / perimeter);
-  let left = Math.round((seats * table.height) / perimeter);
-  let right = seats - top - bottom - left;
-
-  // Rounding can leave the last side short or over; give or take from the top.
-  if (right < 0) {
-    top += right;
-    right = 0;
-  }
-  if (top < 0) {
-    bottom += top;
-    top = 0;
-  }
-  if (bottom < 0) {
-    left += bottom;
-    bottom = 0;
-  }
-  if (left < 0) {
-    left = 0;
-  }
+  const order: ChairSide[] = ["top", "bottom", "left", "right"];
+  const laid = order.filter((side) => sides.includes(side));
+  const counts = share(
+    seats,
+    laid.map((side) => (side === "top" || side === "bottom" ? table.width : table.height)),
+  );
 
   const along = (count: number, length: number) =>
     Array.from({ length: count }, (_, index) => ((index + 1) / (count + 1)) * length);
 
-  return [
-    ...along(top, table.width).map((position) => ({ x: position - halfChair, y: -out - halfChair, rotation: 180 })),
-    ...along(bottom, table.width).map((position) => ({
-      x: position - halfChair,
-      y: table.height + out - halfChair,
-      rotation: 0,
-    })),
-    ...along(left, table.height).map((position) => ({ x: -out - halfChair, y: position - halfChair, rotation: 90 })),
-    ...along(right, table.height).map((position) => ({
-      x: table.width + out - halfChair,
-      y: position - halfChair,
-      rotation: 270,
-    })),
-  ];
+  return laid.flatMap((side, index) => {
+    const count = counts[index];
+
+    switch (side) {
+      case "top":
+        return along(count, table.width).map((position) => ({
+          x: position - halfChair,
+          y: -out - halfChair,
+          rotation: 180,
+        }));
+      case "bottom":
+        return along(count, table.width).map((position) => ({
+          x: position - halfChair,
+          y: table.height + out - halfChair,
+          rotation: 0,
+        }));
+      case "left":
+        return along(count, table.height).map((position) => ({
+          x: -out - halfChair,
+          y: position - halfChair,
+          rotation: 90,
+        }));
+      default:
+        return along(count, table.height).map((position) => ({
+          x: table.width + out - halfChair,
+          y: position - halfChair,
+          rotation: 270,
+        }));
+    }
+  });
 }
 
 /**
@@ -571,14 +755,13 @@ function toPlaced(
     value.height === undefined ? fallback.height : asNumber(value.height),
     zone,
   );
-  const position = clampPosition({ x: asNumber(value.x), y: asNumber(value.y), ...size }, zone);
+  // Whole degrees, wrapped into a single turn. -90 is 270, 370 is 10. Read
+  // before the position, because how far something has been turned is part of
+  // how much floor it covers and so part of where it is allowed to stand.
+  const rotation = ((Math.round(asNumber(value.rotation)) % 360) + 360) % 360;
+  const position = clampPosition({ x: asNumber(value.x), y: asNumber(value.y), ...size, rotation }, zone);
 
-  return {
-    ...position,
-    ...size,
-    // Whole degrees, wrapped into a single turn. -90 is 270, 370 is 10.
-    rotation: ((Math.round(asNumber(value.rotation)) % 360) + 360) % 360,
-  };
+  return { ...position, ...size, rotation };
 }
 
 function toFloorTable(value: unknown, zone: ZoneSize): FloorTable | null {
@@ -604,6 +787,7 @@ function toFloorTable(value: unknown, zone: ZoneSize): FloorTable | null {
       table.chairCount === undefined || table.chairCount === null
         ? undefined
         : Math.min(Math.max(Math.round(asNumber(table.chairCount)), 0), MAX_CHAIRS_PER_TABLE),
+    chairSides: toChairSides(table.chairSides),
     tags: Array.isArray(table.tags)
       ? [...new Set(table.tags.map((tag) => asText(tag, 24)).filter(Boolean))].slice(0, 8)
       : undefined,
@@ -632,6 +816,23 @@ function toFloorFeature(value: unknown, zone: ZoneSize): FloorFeature | null {
     kind,
     label: label || undefined,
   };
+}
+
+/**
+ * The stored sides, or nothing at all when they say "all four".
+ *
+ * All four is the absent case, so it is stored as absent however it arrives —
+ * one representation of the ordinary table, and a plan that does not grow a
+ * field for every table that never needed one. Nothing usable also reads as
+ * absent, which is all four: see `chairSidesOf`.
+ */
+function toChairSides(value: unknown): ChairSide[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const kept = CHAIR_SIDES.filter((side) => value.includes(side));
+  return kept.length > 0 && kept.length < CHAIR_SIDES.length ? kept : undefined;
 }
 
 function asNumber(value: unknown): number {

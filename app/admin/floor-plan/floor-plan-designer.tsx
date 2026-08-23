@@ -25,10 +25,13 @@ import {
   MIN_ZONE_SIDE,
   ROTATION_STEP,
   TABLE_SHAPES,
+  CHAIR_SIDES,
+  CHAIR_SIDE_LABELS,
   CHAIR_SIZE,
   CM_PER_M,
   bookableTables,
   chairPositions,
+  chairSidesOf,
   clampPosition,
   clampSize,
   clampZoneSize,
@@ -42,6 +45,7 @@ import {
   newTable,
   newZone,
   zoneArea,
+  type ChairSide,
   type FeatureKind,
   type FloorFeature,
   type FloorPlan,
@@ -79,6 +83,20 @@ const SHAPE_LABELS: Record<TableShape, string> = {
   square: "Square",
   rectangle: "Rectangle",
   oval: "Oval",
+};
+
+/**
+ * Where each side's button sits in the little three-by-three diagram.
+ *
+ * Laid out as the table is laid out rather than as a list of four checkboxes,
+ * because "which side" is a question about a shape in a room and is answered
+ * far faster by pointing at it than by reading the word "left".
+ */
+const CHAIR_SIDE_CELL: Record<ChairSide, string> = {
+  top: "col-start-2 row-start-1",
+  right: "col-start-3 row-start-2",
+  bottom: "col-start-2 row-start-3",
+  left: "col-start-1 row-start-2",
 };
 
 /** Suggested tags, so a floor does not end up with six spellings of "window". */
@@ -215,6 +233,7 @@ export function FloorPlanDesigner({
           y: point.y - active.offsetY,
           width: element.width,
           height: element.height,
+          rotation: element.rotation,
         },
         zoneSize,
       );
@@ -236,7 +255,7 @@ export function FloorPlanDesigner({
       editSelected((current) => ({
         ...current,
         ...size,
-        ...clampPosition({ x: current.x, y: current.y, ...size }, zoneSize),
+        ...clampPosition({ x: current.x, y: current.y, ...size, rotation: current.rotation }, zoneSize),
       }));
     }
   };
@@ -265,7 +284,13 @@ export function FloorPlanDesigner({
     editSelected((current) => ({
       ...current,
       ...clampPosition(
-        { x: element.x + move[0], y: element.y + move[1], width: element.width, height: element.height },
+        {
+          x: element.x + move[0],
+          y: element.y + move[1],
+          width: element.width,
+          height: element.height,
+          rotation: element.rotation,
+        },
         zoneSize,
       ),
     }));
@@ -355,7 +380,13 @@ export function FloorPlanDesigner({
       ...selected,
       id: `f-${Math.random().toString(36).slice(2, 10)}`,
       ...clampPosition(
-        { x: selected.x + GRID * 2, y: selected.y + GRID * 2, width: selected.width, height: selected.height },
+        {
+          x: selected.x + GRID * 2,
+          y: selected.y + GRID * 2,
+          width: selected.width,
+          height: selected.height,
+          rotation: selected.rotation,
+        },
         zoneSize,
       ),
     };
@@ -1194,6 +1225,20 @@ function ElementProperties({
   const table = kind === "table" ? (element as FloorTable) : null;
   const feature = kind === "feature" ? (element as FloorFeature) : null;
   const tags = table?.tags ?? [];
+  const sides = table ? chairSidesOf(table) : [];
+
+  /**
+   * Turns something, then puts it back inside the hall.
+   *
+   * Re-clamped because turning changes how much floor a thing covers: a long
+   * window standing on end against the right wall would otherwise swing out
+   * through it, and a wall set on the diagonal would poke into the street.
+   */
+  const turn = (rotation: number) =>
+    onChange((current) => {
+      const turned = { ...current, rotation: ((Math.round(rotation) % 360) + 360) % 360 };
+      return { ...turned, ...clampPosition(turned, zone) };
+    });
 
   return (
     <div className="flex flex-col gap-4 rounded-control border border-line bg-surface-muted p-5">
@@ -1241,7 +1286,7 @@ function ElementProperties({
                     ...current,
                     shape,
                     ...size,
-                    ...clampPosition({ x: current.x, y: current.y, ...size }, zone),
+                    ...clampPosition({ x: current.x, y: current.y, ...size, rotation: current.rotation }, zone),
                   }));
                 }}
               >
@@ -1283,7 +1328,11 @@ function ElementProperties({
           onCommit={(width) =>
             onChange((current) => {
               const size = clampSize(width, current.height, zone);
-              return { ...current, ...size, ...clampPosition({ x: current.x, y: current.y, ...size }, zone) };
+              return {
+                ...current,
+                ...size,
+                ...clampPosition({ x: current.x, y: current.y, ...size, rotation: current.rotation }, zone),
+              };
             })
           }
         />
@@ -1298,7 +1347,11 @@ function ElementProperties({
           onCommit={(height) =>
             onChange((current) => {
               const size = clampSize(current.width, height, zone);
-              return { ...current, ...size, ...clampPosition({ x: current.x, y: current.y, ...size }, zone) };
+              return {
+                ...current,
+                ...size,
+                ...clampPosition({ x: current.x, y: current.y, ...size, rotation: current.rotation }, zone),
+              };
             })
           }
         />
@@ -1315,7 +1368,7 @@ function ElementProperties({
           max={359}
           step={ROTATION_STEP}
           disabled={!canEdit}
-          onCommit={(rotation) => onChange((current) => ({ ...current, rotation: ((rotation % 360) + 360) % 360 }))}
+          onCommit={turn}
         />
         <input
           type="range"
@@ -1324,7 +1377,7 @@ function ElementProperties({
           step={5}
           disabled={!canEdit}
           value={element.rotation}
-          onChange={(event) => onChange((current) => ({ ...current, rotation: Number(event.target.value) }))}
+          onChange={(event) => turn(Number(event.target.value))}
           className="w-full accent-accent"
           aria-label="Rotation in degrees"
         />
@@ -1334,7 +1387,7 @@ function ElementProperties({
               key={angle}
               type="button"
               disabled={!canEdit}
-              onClick={() => onChange((current) => ({ ...current, rotation: angle }))}
+              onClick={() => turn(angle)}
               className={cx(
                 "min-h-8 rounded-control border px-2 py-1 text-xs font-semibold tabular-nums transition-colors disabled:opacity-60",
                 element.rotation === angle
@@ -1390,6 +1443,63 @@ function ElementProperties({
                   Match the seat count again
                 </button>
               ) : null}
+
+              {/* Which sides they go on. Sides of the table, not of the room:
+                  clear the side facing the wall and it stays cleared when the
+                  table is turned. The chairs are still shared out from the
+                  seat count — this only says where there is room for them. */}
+              <div>
+                <p className="text-sm font-medium text-ink-muted">Chairs on</p>
+                <p className="mb-2 text-sm text-ink-subtle">
+                  Sides of the table itself, so they turn with it. A table against a wall is laid on three sides; a
+                  banquette on one.
+                </p>
+                <div className="grid w-44 grid-cols-3 grid-rows-3 gap-1">
+                  {CHAIR_SIDES.map((side) => {
+                    const laid = sides.includes(side);
+                    return (
+                      <button
+                        key={side}
+                        type="button"
+                        aria-pressed={laid}
+                        // The last side standing cannot be cleared: a table
+                        // with chairs on no side would draw none while still
+                        // claiming to have them. "Draw chairs" is that switch.
+                        disabled={!canEdit || (laid && sides.length === 1)}
+                        onClick={() =>
+                          onChange((current) => {
+                            const held = chairSidesOf(current as unknown as FloorTable);
+                            const next = laid
+                              ? held.filter((entry) => entry !== side)
+                              : CHAIR_SIDES.filter((entry) => held.includes(entry) || entry === side);
+
+                            if (next.length === 0) return current;
+
+                            // All four is stored as absent: one shape for the
+                            // ordinary table, whichever way it was arrived at.
+                            return {
+                              ...current,
+                              chairSides: next.length === CHAIR_SIDES.length ? undefined : next,
+                            };
+                          })
+                        }
+                        className={cx(
+                          CHAIR_SIDE_CELL[side],
+                          "min-h-9 rounded-control border px-2 py-1 text-xs font-semibold transition-colors disabled:opacity-60",
+                          laid
+                            ? "border-accent bg-accent-soft text-ink"
+                            : "border-line-strong bg-surface text-ink-subtle hover:border-accent",
+                        )}
+                      >
+                        {CHAIR_SIDE_LABELS[side]}
+                      </button>
+                    );
+                  })}
+                  <div className="col-start-2 row-start-2 flex items-center justify-center rounded-control border border-dashed border-line-strong text-[11px] font-medium text-ink-subtle">
+                    {table.chairCount ?? table.seats}
+                  </div>
+                </div>
+              </div>
             </>
           ) : null}
 

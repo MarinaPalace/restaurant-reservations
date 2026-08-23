@@ -10,8 +10,12 @@ import {
   MAX_ZONE_SIDE,
   MIN_SIZE,
   MIN_ZONE_SIDE,
+  CHAIR_SIZE,
+  CHAIR_SIDES,
   chairPositions,
+  chairSidesOf,
   clampPosition,
+  rotatedExtent,
   clampSize,
   clampZoneSize,
   formatLength,
@@ -405,6 +409,83 @@ describe("the grid", () => {
   });
 });
 
+/**
+ * Turning something changes how much floor it covers, and the hall has to be
+ * measured against what it covers rather than against what it stores.
+ */
+describe("something that has been turned", () => {
+  const hall = { width: 1400, height: 900 };
+
+  it("covers the floor its rotated footprint covers", () => {
+    expect(rotatedExtent({ width: 160, height: 20 }, 0)).toEqual({ width: 160, height: 20 });
+
+    const upright = rotatedExtent({ width: 160, height: 20 }, 90);
+    expect(upright.width).toBeCloseTo(20);
+    expect(upright.height).toBeCloseTo(160);
+
+    // A quarter turn either way is the same footprint as the other.
+    expect(rotatedExtent({ width: 160, height: 20 }, 270).width).toBeCloseTo(20);
+  });
+
+  /**
+   * The bug this fixes. A 160-long window stood on end against the right wall
+   * could get no closer to it than 70 cm — half the difference between its
+   * length and its depth — because the *unrotated* box was what was clamped.
+   * A longer window was held further out still, which is what staff saw as
+   * "at least a metre of margin I cannot close".
+   */
+  it("lets a window stood on end sit flush against the side wall", () => {
+    const window = { width: 160, height: 20, rotation: 90 };
+    const placed = clampPosition({ x: 99_999, y: 200, ...window }, hall);
+
+    // Where the glass actually is: the centre of the stored box, plus half the
+    // depth it covers once turned.
+    const centre = placed.x + window.width / 2;
+    expect(centre + rotatedExtent(window, 90).width / 2).toBeCloseTo(hall.width);
+
+    // Which means the stored x is legitimately negative at the near wall.
+    const near = clampPosition({ x: -99_999, y: 200, ...window }, hall);
+    expect(near.x + window.width / 2 - rotatedExtent(window, 90).width / 2).toBeCloseTo(0);
+    expect(near.x).toBeLessThan(0);
+  });
+
+  it("holds a thing set on the diagonal inside the walls", () => {
+    const wall = { width: 240, height: 20, rotation: 45 };
+    const placed = clampPosition({ x: 99_999, y: 99_999, ...wall }, hall);
+    const extent = rotatedExtent(wall, 45);
+
+    expect(placed.x + wall.width / 2 + extent.width / 2).toBeCloseTo(hall.width);
+    expect(placed.y + wall.height / 2 + extent.height / 2).toBeCloseTo(hall.height);
+  });
+
+  it("leaves anything square to the room exactly where it was", () => {
+    // The whole point: no existing plan moves by a millimetre on being read.
+    expect(clampPosition({ x: 1100, y: 0, width: 300, height: 60, rotation: 0 }, hall)).toEqual({ x: 1100, y: 0 });
+    expect(clampPosition({ x: 99_999, y: 99_999, width: 300, height: 60, rotation: 180 }, hall)).toEqual({
+      x: 1100,
+      y: 840,
+    });
+  });
+
+  it("keeps a turned thing inside the hall on the way in", () => {
+    const plan = toFloorPlan({
+      zones: [
+        {
+          id: "z1",
+          name: "Main",
+          width: 1400,
+          height: 900,
+          tables: [],
+          features: [{ id: "w1", kind: "window", x: 9_999, y: 100, width: 160, height: 20, rotation: 90 }],
+        },
+      ],
+    });
+
+    const glass = plan.zones[0].features[0];
+    expect(glass.x + glass.width / 2 + rotatedExtent(glass, 90).width / 2).toBeCloseTo(1400);
+  });
+});
+
 describe("the hall itself", () => {
   it("holds a zone between an alcove and a banqueting hall", () => {
     expect(clampZoneSize(10, 10)).toEqual({ width: MIN_ZONE_SIDE, height: MIN_ZONE_SIDE });
@@ -507,6 +588,123 @@ describe("chairs", () => {
         chair.x + 42 <= 0 || chair.x >= 70 || chair.y + 42 <= 0 || chair.y >= 70;
       expect(clear).toBe(true);
     }
+  });
+});
+
+/**
+ * Which sides the chairs go on. The chairs stay derived — this narrows where
+ * they may go, and the count is still shared out between what is left.
+ */
+describe("which side the chairs go on", () => {
+  const above = (chairs: Array<{ y: number }>) => chairs.filter((chair) => chair.y + CHAIR_SIZE <= 0).length;
+  const below = (chairs: Array<{ y: number }>, height: number) => chairs.filter((chair) => chair.y >= height).length;
+  const leftOf = (chairs: Array<{ x: number }>) => chairs.filter((chair) => chair.x + CHAIR_SIZE <= 0).length;
+  const rightOf = (chairs: Array<{ x: number }>, width: number) => chairs.filter((chair) => chair.x >= width).length;
+
+  it("takes all four sides when nothing says otherwise", () => {
+    expect(chairSidesOf({})).toEqual([...CHAIR_SIDES]);
+    // Lenient in the same direction as `active` and `chairs`: something
+    // unusable draws an ordinary table rather than a bare one.
+    expect(chairSidesOf({ chairSides: [] })).toEqual([...CHAIR_SIDES]);
+  });
+
+  it("lays a table against a wall on the three sides that are free", () => {
+    const table = { seats: 6, shape: "rectangle" as const, width: 120, height: 70 };
+    const chairs = chairPositions({ ...table, chairSides: ["top", "left", "right"] });
+
+    expect(chairs).toHaveLength(6);
+    // Nothing on the side that is against the wall.
+    expect(below(chairs, table.height)).toBe(0);
+    expect(above(chairs) + leftOf(chairs) + rightOf(chairs, table.width)).toBe(6);
+  });
+
+  /**
+   * The count is shared out, not dropped. A four-top laid on two sides puts
+   * two on each — the chairs that would have gone against the wall are still
+   * chairs, and they are still drawn.
+   */
+  it("shares the chairs out between the sides that are left", () => {
+    const banquette = chairPositions({
+      seats: 4,
+      shape: "rectangle",
+      width: 120,
+      height: 70,
+      chairSides: ["top", "bottom"],
+    });
+
+    expect(banquette).toHaveLength(4);
+    expect(above(banquette)).toBe(2);
+    expect(below(banquette, 70)).toBe(2);
+  });
+
+  it("puts them all on one side when that is the only one laid", () => {
+    const chairs = chairPositions({ seats: 3, shape: "rectangle", width: 120, height: 70, chairSides: ["top"] });
+
+    expect(chairs).toHaveLength(3);
+    expect(above(chairs)).toBe(3);
+  });
+
+  it("draws a round table part of the way round", () => {
+    const table = { seats: 4, shape: "round" as const, width: 70, height: 70 };
+    const half = chairPositions({ ...table, chairSides: ["top", "right"] });
+
+    expect(half).toHaveLength(4);
+
+    /**
+     * Two sides next to each other make one arc rather than two, so the chairs
+     * flow round the corner instead of bunching at the middle of each side.
+     * Top owns the quarter centred on straight up (-90°) and right the quarter
+     * centred on 0°, which together run from -135° to 45° — and nothing may
+     * fall outside that, because that is where the wall is.
+     */
+    for (const chair of half) {
+      const degrees =
+        (Math.atan2(chair.y + CHAIR_SIZE / 2 - table.height / 2, chair.x + CHAIR_SIZE / 2 - table.width / 2) * 180) /
+        Math.PI;
+
+      expect(degrees).toBeGreaterThanOrEqual(-135);
+      expect(degrees).toBeLessThanOrEqual(45);
+    }
+  });
+
+  /**
+   * Two sides that face each other are two arcs, not one, so a round table
+   * laid top and bottom does not quietly fill in the sides between them.
+   */
+  it("keeps facing sides of a round table apart", () => {
+    const chairs = chairPositions({ seats: 4, shape: "round", width: 70, height: 70, chairSides: ["top", "bottom"] });
+
+    expect(chairs).toHaveLength(4);
+    expect(chairs.filter((chair) => chair.y + CHAIR_SIZE / 2 < 35)).toHaveLength(2);
+    expect(chairs.filter((chair) => chair.y + CHAIR_SIZE / 2 > 35)).toHaveLength(2);
+  });
+
+  it("leaves a table with all four sides drawn exactly as it always was", () => {
+    const table = { seats: 5, shape: "round" as const, width: 70, height: 70 };
+
+    expect(chairPositions({ ...table, chairSides: [...CHAIR_SIDES] })).toEqual(chairPositions(table));
+  });
+
+  it("keeps the sides through a save and a read", () => {
+    const plan = toFloorPlan({
+      zones: [
+        {
+          id: "z1",
+          name: "Main",
+          tables: [
+            { id: "t1", label: "1", seats: 4, chairSides: ["top", "nonsense"] },
+            // All four is the absent case, stored as absent however it arrives.
+            { id: "t2", label: "2", seats: 4, chairSides: ["top", "right", "bottom", "left"] },
+            { id: "t3", label: "3", seats: 4, chairSides: [] },
+          ],
+          features: [],
+        },
+      ],
+    });
+
+    expect(plan.zones[0].tables[0].chairSides).toEqual(["top"]);
+    expect(plan.zones[0].tables[1].chairSides).toBeUndefined();
+    expect(plan.zones[0].tables[2].chairSides).toBeUndefined();
   });
 });
 

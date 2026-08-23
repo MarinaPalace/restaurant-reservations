@@ -6,6 +6,7 @@ import { PASS_KEY_LENGTH, normalizePassKey } from "@/lib/pass-key";
 import { isValidRoomNumber, normalizeRoomNumber } from "@/lib/room";
 import { MAX_USES_CAP, MENU_CATALOGS, STAFF_PERMISSIONS } from "@/types/booking";
 import {
+  CHAIR_SIDES,
   FEATURE_KINDS,
   FLOOR_PLAN_MODES,
   MAX_FEATURES_PER_ZONE,
@@ -535,6 +536,7 @@ export const floorTableSchema = z.object({
   active: z.boolean(),
   chairs: z.boolean().optional(),
   chairCount: z.number().int().min(0).max(24).optional(),
+  chairSides: z.array(z.enum(CHAIR_SIDES)).max(CHAIR_SIDES.length).optional(),
   tags: z.array(z.string().trim().max(24)).max(8).optional(),
 });
 

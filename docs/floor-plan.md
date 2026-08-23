@@ -514,3 +514,80 @@ suite are clean. **This one was not driven against a running server** — unlike
 
 Nothing here goes near seat accounting. §9 step 3 — the table claim — still does, and §2 still says
 write the concurrency test first.
+
+---
+
+## 16. Which side the chairs go on, and the wall you could not reach
+
+Two things from drawing a real room with §15.
+
+### The margin at the side wall was a rotation bug
+
+A window pushed against the right-hand wall stopped short of it and would not close the gap — around
+a metre for a window of any useful length. It was not a clamping rule and not the pointer maths that
+§13 fixed. It was this:
+
+Everything is drawn **turned about the centre of its own unrotated box**, but `clampPosition` bounded
+that unrotated box. Lay a window down and it is 160 × 20; stand it on end against a side wall and it
+still *stores* 160 × 20 while *covering* 20 × 160. The clamp held its stored 160 of width inside the
+hall, so the glass — 20 deep — came to rest half the difference short of the wall:
+
+| Window, stood on end | Old gap at the wall | Now |
+| --- | --- | --- |
+| 160 cm | 70 cm | flush |
+| 240 cm | 110 cm | flush |
+| 300 cm | 140 cm | flush |
+
+`rotatedExtent` gives the axis-aligned box around the turned shape — what a tape measure would find
+— and that is what is now held inside the hall. The consequence worth knowing about is that **`x`
+and `y` may legitimately be negative**: a 160-long window standing on end with its glass exactly on
+the left-hand wall stores `x = -70`. That is not a thing escaping the room; it is the corner of a box
+that is no longer where the shape is.
+
+Turning something now **re-clamps it**, too. Otherwise a window flush to the right wall would swing
+out through it the moment it was rotated, and a wall set on the diagonal would poke into the street.
+Anything square to the room is untouched to the millimetre: the overhang is zero at 0°, 90°, 180° and
+270°, so no existing plan moves by being read.
+
+### Chairs go on the sides you say
+
+`chairSides` — any of top, right, bottom, left; absent means all four. A table against a wall is laid
+on three sides, a banquette on one, and two tables pushed together are not laid where they meet.
+
+They are **sides of the table, not of the room**: named before rotation, drawn inside the table's
+transform, so clearing the side that faces the wall keeps facing the wall when the table is turned.
+
+The chairs stay **derived** (§13). This says where there is room for them; the count still comes from
+the seat count and is still shared out — a four-top laid on two sides puts two on each rather than
+dropping two chairs on the floor. Round and oval tables take arcs instead of sides: each side owns
+the quarter of the circle facing it, and **sides next to each other make one arc**, so chairs across
+"top and right" flow round the corner rather than bunching at the middle of each. Facing sides stay
+two arcs, so a round table laid top and bottom does not quietly fill in the sides between them.
+
+All four sides is stored as *absent*, however it is arrived at — one representation of the ordinary
+table, and no field grown on every table that never needed one. Empty or unrecognisable reads as all
+four, the same lenient direction as `active` and `chairs` (§11): a plan nobody can parse should draw
+an ordinary table, not a bare one. Turning chairs off entirely is what the `chairs` switch is for,
+which is why the picker will not let the last side be cleared.
+
+The control is a three-by-three diagram with the chair count in the middle, rather than four
+checkboxes. "Which side" is a question about a shape in a room, and is answered faster by pointing at
+it than by reading the word "left".
+
+### One visible change to tables already drawn
+
+Sharing the chairs out is now largest-remainder over the sides in the order top, bottom, left, right,
+which reproduces the old arithmetic **exactly** for every rectangle. Only *square* tables at an exact
+tie differ, and both differences are fixes: a square seating six was drawn 2 / 2 / 2 / 0 — one side
+bare — and is now 2 / 2 / 1 / 1; a square seating five moves its odd chair from the right to the top.
+Chairs are a drawing, not seat accounting, so nothing downstream reads this.
+
+### What was verified
+
+Unit tests over `rotatedExtent`, over a window on end reaching both side walls, over a diagonal wall
+held inside both walls, over the unrotated case being unchanged to the millimetre, and over the
+turned position surviving a save and a read. For the chairs: the three-sided table, the banquette,
+the single side, the round arc and its bounds, facing sides staying apart, all-four being identical
+to what `chairPositions` drew before, and the sides surviving a round trip including nonsense and
+the empty list. `tsc`, `eslint` and the full suite (756 tests) are clean. **Not driven against a
+running server.**

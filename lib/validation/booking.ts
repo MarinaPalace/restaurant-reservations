@@ -234,10 +234,20 @@ export const serviceMarkSchema = z
     guestIndex: z.number().int().min(0).max(MAX_GUESTS_PER_RESERVATION - 1).optional(),
     /** Which booking's guest, when a shared table is marked plate by plate. */
     reservationNumber: z.string().trim().max(40).optional(),
+    /**
+     * A note staff leave on the booking. Never shown to a guest.
+     *
+     * An empty string is how the board clears one, so it is a real value here
+     * rather than something to reject — `.max` without `.min`.
+     */
+    staffNote: z.string().trim().max(500).optional(),
   })
-  .refine((row) => row.attendance !== undefined || row.courseId !== undefined, {
-    message: "Nothing to mark.",
-  })
+  .refine(
+    (row) => row.attendance !== undefined || row.courseId !== undefined || row.staffNote !== undefined,
+    {
+      message: "Nothing to mark.",
+    },
+  )
   .refine((row) => row.courseId === undefined || row.served !== undefined, {
     message: "Say whether the course has been served.",
     path: ["served"],

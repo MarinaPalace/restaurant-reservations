@@ -336,6 +336,21 @@ export type ReservationRecord = {
   /** Allergies or anything else the kitchen should know. */
   notes?: string;
   /**
+   * What staff want to remember about this booking. **Never shown to guests.**
+   *
+   * A different thing from `notes`, which the guest wrote and the kitchen acts
+   * on. This is written *about* the booking by whoever is on the floor — "asked
+   * for the window next time", "celebrating an anniversary", "was unhappy with
+   * the wine" — and some of it would be mortifying to send to the person it is
+   * about.
+   *
+   * Which is why it is not enough for the guest screens not to render it: every
+   * guest-facing route strips it through `toGuestReservation`, because a guest
+   * can open the network tab and a screen is not a boundary. See
+   * `lib/guest-reservation.ts`.
+   */
+  staffNote?: string;
+  /**
    * Rooms dining together share this id. It is the reservation number of
    * whoever booked first, so guests can read it out to each other.
    */

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { cx } from "@/components/ui/utils";
 import type { BoardPlate, BoardTable } from "@/lib/service-board";
@@ -23,6 +24,8 @@ export type BoardActions = {
   clearAttendance: (table: BoardTable) => void;
   toggleCourse: (table: BoardTable, courseId: string, served: boolean) => void;
   togglePlate: (table: BoardTable, courseId: string, plate: BoardPlate, served: boolean) => void;
+  /** The staff-only note on one booking. Empty clears it. */
+  setStaffNote: (table: BoardTable, reservationNumber: string, note: string) => void;
 };
 
 export const clockOf = (iso: string) =>
@@ -171,10 +174,12 @@ export function TableRow({
                   </span>
 
                   {/*
-                    Which dishes, not just how many. "2 Amuse Bouche" does not
-                    tell a waiter what to carry; "2 x Salmon, 1 x Veloute" does.
+                    Which dishes and how many of each, never truncated. A chip
+                    reading "2 × Salmon · 1 × Velo…" has lost the thing it was
+                    for: a waiter cannot carry a dish whose name ran off the
+                    edge. It wraps and the chip grows instead.
                   */}
-                  <span className="mt-0.5 block truncate text-xs text-ink-muted">
+                  <span className="mt-0.5 block text-xs leading-tight text-ink-muted">
                     {done && course.servedAt
                       ? clockOf(course.servedAt)
                       : course.summary.map((entry) => `${entry.count} × ${entry.optionName}`).join(" · ")}
@@ -245,6 +250,27 @@ export function TableRow({
         </div>
       ) : null}
 
+      {/*
+        What staff want to remember, and the guest never sees. Per booking,
+        because a shared table's note belongs to the room that earned it — and
+        follows that room if the table is rearranged.
+
+        Outside the `seated` gate on purpose: "asked for the window next time"
+        is worth writing down about a table that never turned up, and about one
+        that has not arrived yet.
+      */}
+      <div className="mt-3 space-y-1.5 border-t border-line pt-3">
+        {table.bookings.map((booking) => (
+          <StaffNote
+            key={booking.reservationNumber}
+            booking={booking}
+            showRoom={table.bookings.length > 1}
+            canRecord={canRecord}
+            onSave={(reservationNumber, note) => actions.setStaffNote(table, reservationNumber, note)}
+          />
+        ))}
+      </div>
+
       {/* The failure belongs to its row, never to the page. */}
       {row?.error ? (
         <p className="mt-3 text-sm font-medium text-danger" role="alert">
@@ -252,5 +278,84 @@ export function TableRow({
         </p>
       ) : null}
     </Wrapper>
+  );
+}
+
+/**
+ * The note staff leave on a booking. Never shown to a guest.
+ *
+ * ## Saved on blur, not on every keystroke
+ *
+ * A note is typed, not tapped. Firing a write per character would put dozens of
+ * requests behind one sentence and make the sequential saver the only thing
+ * standing between the board and a queue it cannot drain — so it commits when
+ * the field is left, or on Ctrl/Cmd-Enter for somebody who wants to be sure.
+ *
+ * Escape abandons the edit and puts back what was stored, which is the same
+ * contract the date editor's number fields follow.
+ *
+ * ## What is typed wins over what arrives
+ *
+ * The board polls every twenty seconds and re-renders from the server. A field
+ * being typed into must not be overwritten by that, so the draft is held here
+ * and the stored value is only read while nobody is editing — `draft === null`
+ * meaning "nobody is typing", the same trick as `NumberField`.
+ */
+function StaffNote({
+  booking,
+  showRoom,
+  canRecord,
+  onSave,
+}: {
+  booking: { reservationNumber: string; room: string; staffNote?: string };
+  showRoom: boolean;
+  canRecord: boolean;
+  onSave: (reservationNumber: string, note: string) => void;
+}) {
+  const stored = booking.staffNote ?? "";
+  const [draft, setDraft] = useState<string | null>(null);
+  const value = draft ?? stored;
+
+  const commit = () => {
+    if (draft === null) return;
+    setDraft(null);
+    if (draft.trim() !== stored.trim()) {
+      onSave(booking.reservationNumber, draft.trim());
+    }
+  };
+
+  if (!canRecord) {
+    return stored ? (
+      <p className="text-sm text-ink">
+        {showRoom ? <span className="text-ink-subtle">{booking.room}: </span> : null}
+        {stored}
+      </p>
+    ) : null;
+  }
+
+  return (
+    <label className="block">
+      {showRoom ? <span className="mb-1 block text-xs text-ink-subtle">{booking.room}</span> : null}
+      <textarea
+        value={value}
+        rows={value ? 2 : 1}
+        maxLength={500}
+        placeholder="Note for staff — never shown to the guest"
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setDraft(null);
+            event.currentTarget.blur();
+          }
+          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault();
+            event.currentTarget.blur();
+          }
+        }}
+        className="w-full resize-y rounded-control border border-line bg-surface px-2.5 py-1.5 text-sm text-ink outline-none transition placeholder:text-ink-subtle focus:border-accent"
+      />
+    </label>
   );
 }

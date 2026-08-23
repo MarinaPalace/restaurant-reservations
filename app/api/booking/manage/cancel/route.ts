@@ -6,6 +6,7 @@ import { canGuestModify } from "@/lib/reservation-policy";
 import { getRestaurantDate } from "@/lib/services/restaurant";
 import { getEveningFeatures } from "@/lib/services/settings";
 import { manageReservationSchema } from "@/lib/validation/booking";
+import { toGuestReservation } from "@/lib/guest-reservation";
 
 const NOT_FOUND = { error: "We could not find a reservation for that pass-key." };
 
@@ -88,7 +89,7 @@ export async function POST(request: Request) {
       summary: `Guest cancelled their reservation for ${reservation.date}.`,
     });
 
-    return NextResponse.json({ reservation: cancelled });
+    return NextResponse.json({ reservation: toGuestReservation(cancelled) });
   } catch (error) {
     console.error("[booking] failed to cancel reservation", error);
     return NextResponse.json({ error: "Unable to cancel reservation." }, { status: 500 });

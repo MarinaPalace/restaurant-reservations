@@ -5,6 +5,7 @@ import { getPromoCatalog, getRestaurantDate, priceOfPromoOption } from "@/lib/se
 import { getEveningFeatures } from "@/lib/services/settings";
 import { updateAddOnsSchema } from "@/lib/validation/booking";
 import { checkRateLimit, clientKeyFrom } from "@/lib/rate-limit";
+import { toGuestReservation } from "@/lib/guest-reservation";
 import type { ReservationAddOn } from "@/types/booking";
 
 /**
@@ -155,7 +156,7 @@ export async function POST(request: Request) {
     const updated = await updateReservationAddOns(reservation.reservationNumber, addOns);
 
     return updated
-      ? NextResponse.json({ reservation: updated })
+      ? NextResponse.json({ reservation: toGuestReservation(updated) })
       : NextResponse.json({ error: "We could not find that reservation." }, { status: 404 });
   } catch (error) {
     console.error("[booking] failed to save promotions", error);

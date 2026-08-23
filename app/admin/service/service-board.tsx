@@ -434,7 +434,27 @@ export function ServiceBoard({
    * here, so a view is only ever a way of *arranging* the same actions — which
    * is what stops three layouts becoming three subtly different boards.
    */
-  const actions: BoardActions = { seat, noShow, clearAttendance, toggleCourse, togglePlate };
+  /**
+   * The staff-only note on one booking of a table.
+   *
+   * Written against that one booking rather than the table, because that is
+   * where it lives — but the row it reports against is the table's, so a failed
+   * save appears on the row somebody was typing in.
+   */
+  const setStaffNote = (table: BoardTable, reservationNumber: string, note: string) =>
+    mark(
+      { ...table, reservationNumbers: [reservationNumber] },
+      { staffNote: note },
+      (current) => ({
+        ...current,
+        bookings: current.bookings.map((booking) =>
+          booking.reservationNumber === reservationNumber ? { ...booking, staffNote: note || undefined } : booking,
+        ),
+      }),
+      table.key,
+    );
+
+  const actions: BoardActions = { seat, noShow, clearAttendance, toggleCourse, togglePlate, setStaffNote };
 
   const summary = useMemo(() => boardSummary(tables), [tables]);
   const outstanding = useMemo(() => outstandingPlates(tables), [tables]);

@@ -151,6 +151,16 @@ export function BoardGrid({
                       + {table.extras.join(", ")}
                     </span>
                   ) : null}
+                  {/* Read-only here: the sheet is for ticking, and typing a
+                      sentence belongs in the view with room for it. */}
+                  {table.bookings.some((booking) => booking.staffNote) ? (
+                    <span className="mt-0.5 block text-xs italic text-ink-muted">
+                      {table.bookings
+                        .filter((booking) => booking.staffNote)
+                        .map((booking) => booking.staffNote)
+                        .join(" · ")}
+                    </span>
+                  ) : null}
                   {row?.error ? (
                     <span className="mt-0.5 block text-xs font-medium text-danger" role="alert">
                       {row.error}
@@ -230,13 +240,31 @@ export function BoardGrid({
                           !canRecord && "cursor-default",
                         )}
                       >
-                        <span className="text-sm font-semibold tabular-nums">
+                        <span className="flex items-baseline justify-center gap-1 text-sm font-semibold tabular-nums">
                           {done ? "✓" : part ? `${course.served}/${course.plates.length}` : course.plates.length}
+                          {done && course.servedAt ? (
+                            <span className="text-[10px] font-normal text-ink-muted">{clockOf(course.servedAt)}</span>
+                          ) : null}
                         </span>
-                        <span className="truncate text-[10px] leading-tight text-ink-muted">
-                          {done && course.servedAt
-                            ? clockOf(course.servedAt)
-                            : course.summary.map((entry) => entry.optionName).join(", ")}
+
+                        {/*
+                          One line per dish, with its count. This is the whole
+                          reason the sheet exists: "4 Amuse Bouche" tells a
+                          kitchen nothing it can plate, and the previous single
+                          truncated line lost both the counts and, on a narrow
+                          column, most of the names with them.
+
+                          Never truncated. The cell grows and the sheet scrolls
+                          sideways, which is what a sheet does -- a dish nobody
+                          can read is the same as a dish that is not there.
+                        */}
+                        <span className="mt-0.5 block space-y-px text-[11px] leading-tight text-ink-muted">
+                          {course.summary.map((entry) => (
+                            <span key={entry.optionName} className="block whitespace-nowrap">
+                              <span className="font-semibold tabular-nums text-ink">{entry.count}</span>{" "}
+                              {entry.optionName}
+                            </span>
+                          ))}
                         </span>
                       </button>
                     </td>

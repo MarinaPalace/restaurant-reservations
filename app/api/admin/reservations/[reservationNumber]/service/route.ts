@@ -6,6 +6,7 @@ import {
   setReservationAttendance,
   setReservationCourseServedForGuests,
   setReservationGuestServed,
+  setReservationStaffNote,
 } from "@/lib/services/reservations";
 import { NONE_OPTION_ID } from "@/lib/menu-selection";
 import { serviceMarkSchema } from "@/lib/validation/booking";
@@ -62,6 +63,30 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ re
      */
     if (existing.status !== "confirmed") {
       return NextResponse.json({ error: "That booking is cancelled." }, { status: 409 });
+    }
+
+    /**
+     * ---- the staff note: kept, not audited ----
+     *
+     * Guarded by `service:record` like the rest of this route, and that is a
+     * deliberate choice rather than an oversight. The note is an observation
+     * made on the floor during service by whoever is standing at the table —
+     * "asked for the window next time", "celebrating an anniversary". Putting
+     * it behind `reservations:edit` would mean the waiter who has the
+     * observation cannot record it and has to find somebody who can, which is
+     * how it ends up on a scrap of paper instead.
+     *
+     * Not audited, for the same reason a course going out is not: it is a note,
+     * it is visible on the booking, and it would bury the log it shares with
+     * cancellations and refunds. What it *is* is permanent, which is why the
+     * guest routes strip it rather than the screens hiding it.
+     */
+    if (parsed.data.staffNote !== undefined) {
+      const updated = await setReservationStaffNote(reservationNumber, parsed.data.staffNote);
+
+      return updated
+        ? NextResponse.json({ reservation: updated })
+        : NextResponse.json({ error: "Reservation not found." }, { status: 404 });
     }
 
     /* ---- attendance: permanent, audited ---- */

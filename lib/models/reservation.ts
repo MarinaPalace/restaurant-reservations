@@ -105,6 +105,12 @@ const reservationSchema = new Schema(
     time: { type: String },
     endTime: { type: String },
     notes: { type: String },
+    /**
+     * Staff-only. Absent on every booking written before it existed, and
+     * stripped from every guest response by `toGuestReservation` rather than
+     * by any screen.
+     */
+    staffNote: { type: String },
     // Shared by rooms dining together; indexed so a group loads in one query.
     tableGroupId: { type: String, index: true },
     tableNumber: { type: String },

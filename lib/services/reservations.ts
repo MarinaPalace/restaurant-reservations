@@ -21,6 +21,7 @@ import {
   updateLocalReservationSelections,
   updateLocalReservationAddOns,
   updateLocalReservationAttendance,
+  updateLocalReservationStaffNote,
   updateLocalReservationCourseServed,
   updateLocalReservationGuestServed,
   updateLocalReservationCourseGuests,
@@ -98,6 +99,7 @@ type MongoReservationDocument = {
   time?: unknown;
   endTime?: unknown;
   notes?: unknown;
+  staffNote?: unknown;
   tableGroupId?: unknown;
   tableNumber?: unknown;
   status?: unknown;
@@ -131,6 +133,7 @@ function toReservationRecord(document: MongoReservationDocument): ReservationRec
     time: document.time ? String(document.time) : undefined,
     endTime: document.endTime ? String(document.endTime) : undefined,
     notes: document.notes ? String(document.notes) : undefined,
+    staffNote: document.staffNote ? String(document.staffNote) : undefined,
     tableGroupId: document.tableGroupId ? String(document.tableGroupId) : undefined,
     tableNumber: document.tableNumber ? String(document.tableNumber) : undefined,
     status: document.status === "cancelled" ? "cancelled" : "confirmed",
@@ -689,6 +692,37 @@ export async function updateReservationAddOns(
  * standing for "no-show" — undoing a mis-tap must not leave a different claim
  * behind.
  */
+/**
+ * The note staff leave on a booking. Never shown to a guest.
+ *
+ * An empty note **unsets** the field rather than storing "", so "nobody has
+ * written anything" has one representation and a cleared note leaves nothing
+ * behind on the document.
+ *
+ * One key, last write wins — the same shape as the attendance mark beside it.
+ * Two people typing a note on the same booking is not a race worth a
+ * transaction; the later one is the one that meant it.
+ */
+export async function setReservationStaffNote(
+  reservationNumber: string,
+  note: string,
+): Promise<ReservationRecord | null> {
+  const trimmed = note.trim();
+
+  if (!isMongoConfigured()) {
+    return updateLocalReservationStaffNote(reservationNumber, trimmed);
+  }
+
+  await connectToDatabase();
+  const updated = await ReservationModel.findOneAndUpdate(
+    { reservationNumber },
+    trimmed ? { $set: { staffNote: trimmed } } : { $unset: { staffNote: "" } },
+    { returnDocument: "after" },
+  ).lean();
+
+  return updated ? toReservationRecord(updated as MongoReservationDocument) : null;
+}
+
 export async function setReservationAttendance(
   reservationNumber: string,
   attendance: ReservationAttendance | null,

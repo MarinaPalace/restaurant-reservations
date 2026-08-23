@@ -13,6 +13,7 @@ import {
   releasePassKey,
 } from "@/lib/services/pass-keys";
 import { recordAuditEntry } from "@/lib/services/audit-log";
+import { toGuestReservation } from "@/lib/guest-reservation";
 import { checkRateLimit, clientKeyFrom } from "@/lib/rate-limit";
 import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
 import { BOOKING_MESSAGES, validateReservationRequest } from "@/lib/services/booking-rules";
@@ -156,7 +157,7 @@ export async function POST(request: Request) {
       summary: `Invited guest booked ${reservation.guestCount} seat(s) for ${reservation.date}.`,
     });
 
-    return NextResponse.json({ reservation }, { status: 201 });
+    return NextResponse.json({ reservation: toGuestReservation(reservation) }, { status: 201 });
   } catch (error) {
     if (claimedKeyId && claimedReservationNumber) {
       await releasePassKey(claimedKeyId, claimedReservationNumber).catch((releaseError) => {

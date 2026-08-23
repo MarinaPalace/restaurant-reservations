@@ -12,6 +12,7 @@ import { canGuestModify } from "@/lib/reservation-policy";
 import { canonicalizeSelections } from "@/lib/menu-selection";
 import { manageReservationSchema, updateSelectionsSchema } from "@/lib/validation/booking";
 import { checkRateLimit, clientKeyFrom } from "@/lib/rate-limit";
+import { toGuestReservation } from "@/lib/guest-reservation";
 import type { ReservationRecord } from "@/types/booking";
 
 /**
@@ -125,7 +126,10 @@ export async function POST(request: Request) {
         const check = canGuestModify(reservation, new Date(), evening?.selfService ?? true);
 
         return {
-          reservation,
+          // Stripped of anything only staff may see — a note reception wrote
+          // about this guest must not travel to the guest (rule 2.5's habit:
+          // the boundary is the route, never the screen).
+          reservation: toGuestReservation(reservation),
           // Lets the guest's screen explain why the buttons are unavailable.
           canModify: check.allowed,
           modificationDeadline: check.deadline.toISOString(),
@@ -221,7 +225,7 @@ export async function PATCH(request: Request) {
       summary: "Guest changed their menu choices.",
     });
 
-    return NextResponse.json({ reservation: updated });
+    return NextResponse.json({ reservation: toGuestReservation(updated) });
   } catch (error) {
     console.error("[booking] failed to update reservation", error);
     return NextResponse.json({ error: "Unable to update this reservation." }, { status: 500 });

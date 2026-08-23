@@ -18,6 +18,7 @@ import {
   releasePassKey,
 } from "@/lib/services/pass-keys";
 import { recordAuditEntry } from "@/lib/services/audit-log";
+import { toGuestReservation } from "@/lib/guest-reservation";
 import { createReservationSchema } from "@/lib/validation/booking";
 import { describeContactProblem, normalizeContact } from "@/lib/contact";
 import { canonicalizeSelections } from "@/lib/menu-selection";
@@ -204,7 +205,7 @@ export async function POST(request: Request) {
       summary: `Booked ${reservation.guestCount} guest(s) for ${reservation.date} with a pass-key.`,
     });
 
-    return NextResponse.json({ reservation }, { status: 201 });
+    return NextResponse.json({ reservation: toGuestReservation(reservation) }, { status: 201 });
   } catch (error) {
     // The booking failed after the key was spent, so give it back — otherwise
     // the guest is locked out by a failure that was not theirs.

@@ -19,7 +19,11 @@ import {
   coefficients,
   coversTrend,
   dishPopularity,
+  eveningLines,
   keyCohort,
+  leadTimeBuckets,
+  sourceTrend,
+  weekdayPattern,
   partySizes,
   passKeyFunnel,
   promotionLines,
@@ -728,5 +732,242 @@ describe("what the system did that staff would otherwise have done", () => {
       const list = coefficients(guestActions, [], range, { today }).coefficients;
       expect(find(list, "time-saved").whole).toBe(DEFAULT_MINUTES_PER_MANUAL_BOOKING);
     });
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * The week's own shape, and how far ahead people book
+ * ------------------------------------------------------------------ */
+
+describe("the shape of the week", () => {
+  const evening = (date: string, capacity: number, isOpen = true): RestaurantDateAvailability => ({
+    date,
+    isOpen,
+    capacity,
+    reservedSeats: 0,
+    remainingSeats: capacity,
+  });
+
+  const booking = (date: string, guests: number, over: Partial<ReservationRecord> = {}): ReservationRecord =>
+    ({
+      reservationNumber: `R${date}-${guests}-${Math.random().toString(36).slice(2, 6)}`,
+      roomNumber: "101",
+      guestCount: guests,
+      date,
+      selections: [],
+      status: "confirmed",
+      ...over,
+    }) as ReservationRecord;
+
+  /**
+   * 2026-03-02 is a Monday. Rule 2.1: the weekday comes from the local
+   * calendar string, never from a UTC instant.
+   */
+  it("counts the week from Monday, off the local date", () => {
+    const lines = weekdayPattern([], [evening("2026-03-02", 40)]);
+
+    expect(lines[0].name).toBe("Monday");
+    expect(lines[0].eveningsOpen).toBe(1);
+    expect(lines[6].name).toBe("Sunday");
+    expect(lines[6].eveningsOpen).toBe(0);
+  });
+
+  /**
+   * The reason this is averaged rather than totalled: a month with five
+   * Saturdays and four Mondays would otherwise report Saturday as busier by
+   * arithmetic alone.
+   */
+  it("averages per evening open rather than totalling", () => {
+    const lines = weekdayPattern(
+      [booking("2026-03-02", 20), booking("2026-03-09", 10), booking("2026-03-03", 30)],
+      [evening("2026-03-02", 40), evening("2026-03-09", 40), evening("2026-03-03", 40)],
+    );
+
+    // Monday: 30 covers across two evenings.
+    expect(lines[0].covers).toBe(30);
+    expect(lines[0].averageCovers).toBe(15);
+    // Tuesday: 30 across one. The bigger total is the quieter night.
+    expect(lines[1].averageCovers).toBe(30);
+  });
+
+  it("has no average for a day that never opened", () => {
+    const lines = weekdayPattern([], [evening("2026-03-02", 40)]);
+
+    // Not zero: nothing was offered, so nothing can be said.
+    expect(lines[2].averageCovers).toBeNull();
+    expect(lines[2].occupancy).toBeNull();
+  });
+
+  it("ignores closed evenings and cancelled bookings", () => {
+    const lines = weekdayPattern(
+      [booking("2026-03-02", 20, { status: "cancelled" }), booking("2026-03-03", 10)],
+      [evening("2026-03-02", 40), evening("2026-03-03", 40, false)],
+    );
+
+    expect(lines[0].covers).toBe(0);
+    // Tuesday was closed, so its capacity is not offered and its booking is
+    // not counted against a night that was never open.
+    expect(lines[1].eveningsOpen).toBe(0);
+    expect(lines[1].covers).toBe(0);
+  });
+});
+
+describe("how far ahead people book", () => {
+  const sitting = (reservation: { date: string }) => {
+    const [year, month, day] = reservation.date.split("-").map(Number);
+    return new Date(year, month - 1, day, 19, 0, 0);
+  };
+
+  const booked = (createdAt: string | undefined, date = "2026-03-20"): ReservationRecord =>
+    ({
+      reservationNumber: `R${Math.random().toString(36).slice(2, 8)}`,
+      roomNumber: "101",
+      guestCount: 2,
+      date,
+      selections: [],
+      status: "confirmed",
+      createdAt,
+    }) as ReservationRecord;
+
+  it("sorts bookings into buckets by how much notice they gave", () => {
+    const { buckets } = leadTimeBuckets(
+      [
+        booked(new Date(2026, 2, 20, 12, 0, 0).toISOString()),
+        booked(new Date(2026, 2, 19, 12, 0, 0).toISOString()),
+        booked(new Date(2026, 2, 17, 12, 0, 0).toISOString()),
+        booked(new Date(2026, 1, 1, 12, 0, 0).toISOString()),
+      ],
+      sitting,
+    );
+
+    const of = (key: string) => buckets.find((bucket) => bucket.key === key)!.bookings;
+
+    expect(of("same-day")).toBe(1);
+    expect(of("1-day")).toBe(1);
+    expect(of("2-3-days")).toBe(1);
+    expect(of("over-month")).toBe(1);
+  });
+
+  /**
+   * Unknown is not zero. A booking with no `createdAt` has no lead time, and
+   * counting it as "same day" would invent the exact pressure this measures.
+   */
+  it("leaves a booking with no record of when it was taken out of the count", () => {
+    const { buckets, counted, unknown } = leadTimeBuckets([booked(undefined), booked(undefined)], sitting);
+
+    expect(counted).toBe(0);
+    expect(unknown).toBe(2);
+    expect(buckets.every((bucket) => bucket.bookings === 0)).toBe(true);
+  });
+
+  it("treats a booking taken after the sitting as same day, not as negative notice", () => {
+    // A staff correction typed up the next morning. It is not evidence that
+    // anybody books a day late.
+    const { buckets } = leadTimeBuckets([booked(new Date(2026, 2, 21, 9, 0, 0).toISOString())], sitting);
+
+    expect(buckets.find((bucket) => bucket.key === "same-day")!.bookings).toBe(1);
+  });
+});
+
+describe("what the covers are made of", () => {
+  const range: DateRange = { from: "2026-03-01", to: "2026-03-03" };
+
+  const booking = (date: string, passKeyId?: string): ReservationRecord =>
+    ({
+      reservationNumber: `R${Math.random().toString(36).slice(2, 8)}`,
+      roomNumber: "101",
+      guestCount: 2,
+      date,
+      selections: [],
+      status: "confirmed",
+      passKeyId,
+    }) as ReservationRecord;
+
+  it("splits each bucket into guest and staff bookings", () => {
+    const points = sourceTrend(
+      [booking("2026-03-01", "k1"), booking("2026-03-01"), booking("2026-03-02", "k2")],
+      range,
+      "day",
+    );
+
+    expect(points).toHaveLength(3);
+    expect(points[0].parts).toEqual([1, 1]);
+    expect(points[1].parts).toEqual([1, 0]);
+    // A day with nothing is a zero, not a gap: the axis is the period.
+    expect(points[2].parts).toEqual([0, 0]);
+  });
+
+  it("counts a cancelled booking, because taking it was still work", () => {
+    const points = sourceTrend(
+      [{ ...booking("2026-03-01", "k1"), status: "cancelled" } as ReservationRecord],
+      range,
+      "day",
+    );
+
+    expect(points[0].parts).toEqual([1, 0]);
+  });
+});
+
+describe("one evening, opened from a chart", () => {
+  const line = (over: Partial<RestaurantDateAvailability> = {}): RestaurantDateAvailability => ({
+    date: "2026-03-04",
+    isOpen: true,
+    capacity: 40,
+    reservedSeats: 0,
+    remainingSeats: 40,
+    ...over,
+  });
+
+  const booking = (over: Partial<ReservationRecord> = {}): ReservationRecord =>
+    ({
+      reservationNumber: `R${Math.random().toString(36).slice(2, 8)}`,
+      roomNumber: "101",
+      guestCount: 2,
+      date: "2026-03-04",
+      selections: [],
+      status: "confirmed",
+      ...over,
+    }) as ReservationRecord;
+
+  it("folds one line per evening in the calendar", () => {
+    const [evening] = eveningLines(
+      [
+        booking({ guestCount: 4, passKeyId: "k1" }),
+        booking({ guestCount: 2 }),
+        booking({ guestCount: 2, status: "cancelled" }),
+      ],
+      [line()],
+    );
+
+    expect(evening.covers).toBe(6);
+    expect(evening.bookings).toBe(3);
+    expect(evening.cancelled).toBe(1);
+    expect(evening.byGuest).toBe(1);
+    expect(evening.occupancy).toBe(15);
+  });
+
+  /**
+   * `docs/service-tracking.md` §7 — a night nobody marked is not a night
+   * without no-shows, so the count keeps the denominator that qualifies it.
+   */
+  it("keeps the no-show count beside how much was actually recorded", () => {
+    const [evening] = eveningLines(
+      [
+        booking({ attendance: { status: "seated", at: "2026-03-04T19:00:00.000Z", byName: "R" } }),
+        booking({ attendance: { status: "no-show", at: "2026-03-04T21:00:00.000Z", byName: "R" } }),
+        booking(),
+      ],
+      [line()],
+    );
+
+    expect(evening.noShows).toBe(1);
+    expect(evening.seated).toBe(1);
+    // Three bookings, two of them marked. The third is unknown, not present.
+    expect(evening.attendanceRecorded).toBe(2);
+  });
+
+  it("has no occupancy for an evening that was closed", () => {
+    const [evening] = eveningLines([], [line({ isOpen: false })]);
+    expect(evening.occupancy).toBeNull();
   });
 });

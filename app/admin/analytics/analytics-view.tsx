@@ -7,12 +7,12 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/feedback";
 import { Field, Input } from "@/components/ui/field";
-import { BarList, ColumnChart, Funnel, Meter, StatTile } from "@/components/charts";
+import { BarList, ColumnChart, Funnel, Meter, StackedColumns, StatTile, TrendChart } from "@/components/charts";
 import { cx } from "@/components/ui/utils";
 import { formatPrice, type Currency } from "@/lib/money";
 import { shortTimeZoneLabel } from "@/lib/timezone";
 import { formatBookedAt } from "@/lib/reservation-order";
-import { formatLongDate } from "@/lib/date";
+import { formatLongDate, formatShortDate } from "@/lib/date";
 import {
   RANGE_PRESETS,
   RANGE_PRESET_LABELS,
@@ -25,7 +25,10 @@ import {
 import type {
   CancellationLine,
   Coefficient,
+  EveningLine,
   FunnelStage,
+  LeadBucket,
+  WeekdayLine,
   Popularity,
   PartySize,
   PromotionLine,
@@ -62,7 +65,21 @@ export type AnalyticsData = {
   funnel: FunnelStage[];
   coefficients: Coefficient[];
   minutesPerManualBooking: number;
+  weekdays: WeekdayLine[];
+  leadTime: { buckets: LeadBucket[]; counted: number; unknown: number };
+  source: Array<{ key: string; label: string; parts: number[] }>;
+  evenings: EveningLine[];
+  previousCovers: Trend[];
 };
+
+const TABS = [
+  { key: "overview" as const, label: "Overview" },
+  { key: "guests" as const, label: "Guests" },
+  { key: "kitchen" as const, label: "Kitchen" },
+  { key: "keys" as const, label: "Pass-keys" },
+];
+
+type Tab = (typeof TABS)[number]["key"];
 
 function Section({
   title,
@@ -101,6 +118,26 @@ export function AnalyticsView({
   const [from, setFrom] = useState(data.range.from);
   const [to, setTo] = useState(data.range.to);
   const [showTable, setShowTable] = useState(false);
+  const [tab, setTab] = useState<Tab>("overview");
+  /**
+   * Whether every chart carries the previous period beside it.
+   *
+   * Off by default. The stat tiles already show the direction of travel, and a
+   * second line on every chart when nobody asked for one is the difference
+   * between a chart that answers a question and one that has to be studied.
+   */
+  const [compare, setCompare] = useState(false);
+  /** The evening a chart was clicked on, shown in full beneath it. */
+  const [openDate, setOpenDate] = useState<string | null>(null);
+
+  const openEvening = data.evenings.find((evening) => evening.date === openDate) ?? null;
+
+  /**
+   * A bucket key maps to an evening only when the bucket *is* one evening.
+   * Clicking a week would otherwise open whichever day happened to name it,
+   * which is a worse answer than not opening anything.
+   */
+  const openBucket = data.bucket === "day" ? (key: string) => setOpenDate(key) : undefined;
 
   const { totals, previousTotals } = data;
   const money = (amount: number) => formatPrice(amount, currency, "en-GB");
@@ -218,6 +255,26 @@ export function AnalyticsView({
           </div>
         </div>
 
+        {/*
+          Off by default. The stat tiles already carry the direction of travel,
+          and a second line on every chart nobody asked for is the difference
+          between a chart that answers a question and one that has to be
+          studied. The period it compares against is named, because "previous"
+          is ambiguous the moment somebody types a custom range.
+        */}
+        <label className="mt-3 flex min-h-11 items-center gap-2 text-sm font-medium text-ink" data-print="hide">
+          <input
+            type="checkbox"
+            className="size-5 accent-[var(--primary)]"
+            checked={compare}
+            onChange={(event) => setCompare(event.target.checked)}
+          />
+          Compare with the previous period
+          <span className="text-xs font-normal tabular-nums text-ink-subtle">
+            ({formatShortDate(data.comparison.from)} — {formatShortDate(data.comparison.to)})
+          </span>
+        </label>
+
         <p className="mt-3 text-xs text-ink-subtle">
           Times are {shortTimeZoneLabel(timeZone)}. Covers count confirmed bookings; occupancy counts only
           evenings that were open.
@@ -234,6 +291,42 @@ export function AnalyticsView({
         </Card>
       ) : (
         <>
+          {/*
+            Four audiences, four tabs.
+
+            The page had grown to one column of everything, which meant the
+            kitchen scrolled past occupancy and the owner scrolled past dish
+            counts. Splitting it is not decoration: each of these is read by a
+            different person for a different decision, and the one thing they
+            share is the period, which is why the range picker stays above.
+
+            State rather than the address, unlike the range: which tab somebody
+            is on is not a thing they send to anybody, and the period is.
+          */}
+          <div
+            role="group"
+            aria-label="Section"
+            className="flex flex-wrap gap-1 rounded-control border border-line-strong p-1"
+            data-print="hide"
+          >
+            {TABS.map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                aria-pressed={tab === option.key}
+                onClick={() => setTab(option.key)}
+                className={cx(
+                  "min-h-10 flex-1 rounded-[calc(var(--radius-control)-3px)] px-3 text-sm font-semibold transition-colors",
+                  tab === option.key ? "bg-accent-soft text-accent-ink" : "text-ink-muted hover:text-ink",
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
+          {tab === "overview" ? (
+            <>
           {/* The one hero figure, then the supporting tiles. */}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             <StatTile
@@ -299,9 +392,37 @@ export function AnalyticsView({
             title="Covers over time"
             description={
               data.bucket === "day"
-                ? "Guests served each evening, against the seats offered."
-                : `Guests served per ${data.bucket}, against the seats offered.`
+                ? "Guests served each evening. Click a point to open that evening."
+                : `Guests served per ${data.bucket}.`
             }
+          >
+            {/*
+              A line rather than the columns this used to be. Covers are one
+              continuous thing read for their direction; thirty columns is a
+              picket fence in which no trend is visible at all.
+            */}
+            <TrendChart
+              points={data.covers.map((point, index) => ({
+                key: point.key,
+                label: formatBucket(point.key, data.bucket),
+                value: point.value,
+                // Paired by position, not by date: a comparison is two
+                // different stretches of calendar by definition.
+                previous: compare ? data.previousCovers[index]?.value : undefined,
+              }))}
+              label="Covers"
+              comparisonLabel={compare ? "Previous period" : undefined}
+              onSelect={openBucket}
+            />
+          </Section>
+
+          {/* The evening a point was clicked on. Folded on the server with
+              everything else, so opening one costs no round trip. */}
+          {openEvening ? <EveningPanel evening={openEvening} onClose={() => setOpenDate(null)} /> : null}
+
+          <Section
+            title="Seats offered against seats taken"
+            description="The same two numbers, side by side rather than one behind the other."
           >
             <ColumnChart
               points={data.covers.map((point, index) => ({
@@ -316,108 +437,86 @@ export function AnalyticsView({
           </Section>
 
           <div className="grid gap-5 lg:grid-cols-2">
-            <Section title="What guests ate" description="Every dish chosen on a confirmed booking, by course.">
+            <Section
+              title="The shape of the week"
+              description="Averaged per evening open, so a month with five Saturdays does not report Saturday as busier by arithmetic alone."
+            >
               <BarList
-                rows={data.dishes.map((dish) => ({
-                  id: dish.optionId,
-                  label: dish.optionName,
-                  sublabel: dish.courseName,
-                  value: dish.count,
+                rows={data.weekdays.map((line) => ({
+                  id: String(line.weekday),
+                  label: line.name,
+                  sublabel:
+                    line.eveningsOpen === 0
+                      ? "never open"
+                      : `${line.eveningsOpen} evening${line.eveningsOpen === 1 ? "" : "s"}${
+                          line.occupancy === null ? "" : ` · ${line.occupancy}% full`
+                        }`,
+                  value: line.averageCovers ?? 0,
+                  display: line.averageCovers === null ? "—" : String(line.averageCovers),
                 }))}
-                valueLabel="chosen"
+                valueLabel="covers an evening"
               />
-
-              {data.declines.length > 0 ? (
-                <div className="mt-5 border-t border-line pt-4">
-                  <h3 className="text-sm font-semibold text-ink">Courses declined</h3>
-                  <p className="mt-0.5 text-xs text-ink-muted">
-                    &ldquo;No thank you&rdquo; is a real choice, and never a plate.
-                  </p>
-                  <ul className="mt-2 space-y-1 text-sm">
-                    {data.declines.map((decline) => (
-                      <li key={decline.courseId} className="flex justify-between gap-3">
-                        <span className="text-ink-muted">{decline.courseName}</span>
-                        <span className="font-semibold tabular-nums text-ink">{decline.count}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
             </Section>
 
-            <div className="space-y-5">
-              <Section title="Promotions" description="Taken on the confirmation screen, and what they earned.">
-                <Meter
-                  label="Take-up"
-                  value={totals.promotionTakeUp}
-                  hint={`of ${totals.bookings} confirmed bookings took at least one`}
-                />
-                <div className="mt-5">
-                  <BarList
-                    rows={data.promotions.map((line) => ({
-                      id: line.optionId,
-                      label: line.optionName,
-                      sublabel: line.courseName,
-                      value: line.revenue,
-                      display: `${money(line.revenue)} · ${line.count}×`,
-                    }))}
-                    valueLabel="revenue"
-                  />
-                </div>
-              </Section>
-
-              <Section
-                title="Pass-keys"
-                description="One cohort: keys issued in this period, and what became of them."
-              >
-                <Funnel stages={data.funnel} />
-              </Section>
-            </div>
+            <Section
+              title="Who took the booking"
+              description="The total is on the chart above; this is what it is made of. A flat month that quietly moved to self-service is a real change, and is invisible in the total."
+            >
+              <StackedColumns
+                points={data.source}
+                series={["Booked by guests", "Taken by staff"]}
+                onSelect={openBucket}
+              />
+            </Section>
           </div>
 
-          <Section
-            title="What the system is doing for you"
-            description="Each of these is something that happened by itself against something a member of staff would otherwise have done by hand."
-          >
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {data.coefficients.map((coefficient) => (
-                <CoefficientTile key={coefficient.key} coefficient={coefficient} />
-              ))}
+          {/* Nothing on this page is reachable only as a chart. */}
+          <Card as="section" className="p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-ink">The numbers, as a table</h2>
+                <p className="mt-0.5 text-sm text-ink-muted">
+                  Every chart above, as text — for a screen reader, or to paste into an email.
+                </p>
+              </div>
+              <Button variant="secondary" onClick={() => setShowTable((current) => !current)} data-print="hide">
+                {showTable ? "Hide" : "Show"}
+              </Button>
             </div>
 
-            {/*
-              The one assumption on the page, put where the figure that rests
-              on it is read rather than buried in a settings screen. It lives in
-              the address, like the date range does, so a particular reading can
-              be sent to somebody else and come back saying the same thing.
-            */}
-            <form className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4" method="get">
-              {preset ? <input type="hidden" name="range" value={preset} /> : null}
-              {isCustom ? (
-                <>
-                  <input type="hidden" name="from" value={data.range.from} />
-                  <input type="hidden" name="to" value={data.range.to} />
-                </>
-              ) : null}
-              <label className="text-sm text-ink-muted" htmlFor="minutes-per-booking">
-                A booking taken by hand costs
-              </label>
-              <input
-                id="minutes-per-booking"
-                name="minutes"
-                type="number"
-                min={0}
-                max={120}
-                defaultValue={data.minutesPerManualBooking}
-                className="h-9 w-20 rounded-control border border-line-strong bg-surface px-2 text-sm tabular-nums text-ink"
-              />
-              <span className="text-sm text-ink-muted">minutes of somebody&rsquo;s time.</span>
-              <Button type="submit" variant="secondary">
-                Apply
-              </Button>
-            </form>
-          </Section>
+            {showTable ? (
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full border-collapse text-left text-sm">
+                  <caption className="sr-only">Covers and seats offered per period</caption>
+                  <thead className="bg-surface-sunken text-ink-muted">
+                    <tr>
+                      <th scope="col" className="px-3 py-2 font-semibold">Period</th>
+                      <th scope="col" className="px-3 py-2 text-right font-semibold">Covers</th>
+                      <th scope="col" className="px-3 py-2 text-right font-semibold">Seats offered</th>
+                      <th scope="col" className="px-3 py-2 text-right font-semibold">Occupancy</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tableRows.map((row) => (
+                      <tr key={row.key} className="border-t border-line">
+                        <td className="px-3 py-2">{row.label}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{row.covers}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{row.capacity || "—"}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {row.capacity > 0 ? `${Math.round((row.covers / row.capacity) * 100)}%` : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+          </Card>
+            </>
+          ) : null}
 
+          {tab === "guests" ? (
+            <>
           <div className="grid gap-5 lg:grid-cols-2">
             <Section title="Party sizes" description="How many people a booking is usually for.">
               <BarList
@@ -467,50 +566,135 @@ export function AnalyticsView({
                 </ul>
               )}
             </Section>
+
+            <Section
+              title="How far ahead people book"
+              description="The figure the booking cutoff should be set from, rather than guessed at."
+            >
+              <BarList
+                rows={data.leadTime.buckets.map((bucket) => ({
+                  id: bucket.key,
+                  label: bucket.label,
+                  value: bucket.bookings,
+                }))}
+                valueLabel="bookings"
+              />
+              <p className="mt-3 text-xs text-ink-subtle">
+                {data.leadTime.counted} booking{data.leadTime.counted === 1 ? "" : "s"} counted.
+                {data.leadTime.unknown > 0
+                  ? ` ${data.leadTime.unknown} had no record of when ${data.leadTime.unknown === 1 ? "it was" : "they were"} taken and ${data.leadTime.unknown === 1 ? "is" : "are"} left out — unknown is not the same as same-day.`
+                  : ""}
+              </p>
+            </Section>
           </div>
+            </>
+          ) : null}
 
-          {/* Nothing on this page is reachable only as a chart. */}
-          <Card as="section" className="p-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold text-ink">The numbers, as a table</h2>
-                <p className="mt-0.5 text-sm text-ink-muted">
-                  Every chart above, as text — for a screen reader, or to paste into an email.
+          {tab === "kitchen" ? (
+            <div className="grid gap-5 lg:grid-cols-2">
+          <Section title="What guests ate" description="Every dish chosen on a confirmed booking, by course.">
+            <BarList
+              rows={data.dishes.map((dish) => ({
+                id: dish.optionId,
+                label: dish.optionName,
+                sublabel: dish.courseName,
+                value: dish.count,
+              }))}
+              valueLabel="chosen"
+            />
+
+            {data.declines.length > 0 ? (
+              <div className="mt-5 border-t border-line pt-4">
+                <h3 className="text-sm font-semibold text-ink">Courses declined</h3>
+                <p className="mt-0.5 text-xs text-ink-muted">
+                  &ldquo;No thank you&rdquo; is a real choice, and never a plate.
                 </p>
-              </div>
-              <Button variant="secondary" onClick={() => setShowTable((current) => !current)} data-print="hide">
-                {showTable ? "Hide" : "Show"}
-              </Button>
-            </div>
-
-            {showTable ? (
-              <div className="mt-4 overflow-x-auto">
-                <table className="min-w-full border-collapse text-left text-sm">
-                  <caption className="sr-only">Covers and seats offered per period</caption>
-                  <thead className="bg-surface-sunken text-ink-muted">
-                    <tr>
-                      <th scope="col" className="px-3 py-2 font-semibold">Period</th>
-                      <th scope="col" className="px-3 py-2 text-right font-semibold">Covers</th>
-                      <th scope="col" className="px-3 py-2 text-right font-semibold">Seats offered</th>
-                      <th scope="col" className="px-3 py-2 text-right font-semibold">Occupancy</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {tableRows.map((row) => (
-                      <tr key={row.key} className="border-t border-line">
-                        <td className="px-3 py-2">{row.label}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{row.covers}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{row.capacity || "—"}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {row.capacity > 0 ? `${Math.round((row.covers / row.capacity) * 100)}%` : "—"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <ul className="mt-2 space-y-1 text-sm">
+                  {data.declines.map((decline) => (
+                    <li key={decline.courseId} className="flex justify-between gap-3">
+                      <span className="text-ink-muted">{decline.courseName}</span>
+                      <span className="font-semibold tabular-nums text-ink">{decline.count}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
             ) : null}
-          </Card>
+          </Section>
+<Section title="Promotions" description="Taken on the confirmation screen, and what they earned.">
+            <Meter
+              label="Take-up"
+              value={totals.promotionTakeUp}
+              hint={`of ${totals.bookings} confirmed bookings took at least one`}
+            />
+            <div className="mt-5">
+              <BarList
+                rows={data.promotions.map((line) => ({
+                  id: line.optionId,
+                  label: line.optionName,
+                  sublabel: line.courseName,
+                  value: line.revenue,
+                  display: `${money(line.revenue)} · ${line.count}×`,
+                }))}
+                valueLabel="revenue"
+              />
+            </div>
+          </Section>
+            </div>
+          ) : null}
+
+          {tab === "keys" ? (
+            <>
+          <Section
+            title="Pass-keys"
+            description="One cohort: keys issued in this period, and what became of them."
+          >
+            <Funnel stages={data.funnel} />
+          </Section>
+
+          <Section
+            title="What the system is doing for you"
+            description="Each of these is something that happened by itself against something a member of staff would otherwise have done by hand."
+          >
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {data.coefficients.map((coefficient) => (
+                <CoefficientTile key={coefficient.key} coefficient={coefficient} />
+              ))}
+            </div>
+
+            {/*
+              The one assumption on the page, put where the figure that rests
+              on it is read rather than buried in a settings screen. It lives in
+              the address, like the date range does, so a particular reading can
+              be sent to somebody else and come back saying the same thing.
+            */}
+            <form className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4" method="get">
+              {preset ? <input type="hidden" name="range" value={preset} /> : null}
+              {isCustom ? (
+                <>
+                  <input type="hidden" name="from" value={data.range.from} />
+                  <input type="hidden" name="to" value={data.range.to} />
+                </>
+              ) : null}
+              <label className="text-sm text-ink-muted" htmlFor="minutes-per-booking">
+                A booking taken by hand costs
+              </label>
+              <input
+                id="minutes-per-booking"
+                name="minutes"
+                type="number"
+                min={0}
+                max={120}
+                defaultValue={data.minutesPerManualBooking}
+                className="h-9 w-20 rounded-control border border-line-strong bg-surface px-2 text-sm tabular-nums text-ink"
+              />
+              <span className="text-sm text-ink-muted">minutes of somebody&rsquo;s time.</span>
+              <Button type="submit" variant="secondary">
+                Apply
+              </Button>
+            </form>
+          </Section>
+            </>
+          ) : null}
         </>
       )}
     </div>
@@ -553,5 +737,88 @@ function CoefficientTile({ coefficient }: { coefficient: Coefficient }) {
       </p>
       <p className="mt-2 text-sm text-ink-subtle">{coefficient.hint}</p>
     </div>
+  );
+}
+
+/**
+ * One evening, opened from a chart.
+ *
+ * ## Why the numbers are already here
+ *
+ * Folded on the server with everything else rather than fetched on the click.
+ * A month is a few dozen rows and the bookings are already in memory; a round
+ * trip per click would make a chart feel like a page, and the whole point of
+ * clicking a bar is that it answers immediately.
+ *
+ * ## It only opens where a bar *is* an evening
+ *
+ * Weekly and monthly buckets have no drill-down at all. Clicking a week would
+ * otherwise open whichever day happened to name the bucket, which is a worse
+ * answer than not opening anything.
+ *
+ * ## The no-show count keeps its denominator
+ *
+ * `docs/service-tracking.md` §7: a night nobody marked is not a night without
+ * no-shows. So the figure is always shown as "2 of 14 recorded" rather than as
+ * a rate, and an evening with nothing recorded says so instead of showing zero.
+ */
+function EveningPanel({ evening, onClose }: { evening: EveningLine; onClose: () => void }) {
+  const figures: { label: string; value: string; hint?: string }[] = [
+    { label: "Covers", value: String(evening.covers), hint: `of ${evening.capacity} seats` },
+    { label: "Occupancy", value: evening.occupancy === null ? "—" : `${evening.occupancy}%` },
+    {
+      label: "Bookings",
+      value: String(evening.bookings),
+      hint: evening.cancelled > 0 ? `${evening.cancelled} cancelled` : undefined,
+    },
+    {
+      label: "Booked by guests",
+      value: evening.bookings > 0 ? `${Math.round((evening.byGuest / evening.bookings) * 100)}%` : "—",
+      hint: `${evening.byGuest} of ${evening.bookings}`,
+    },
+    {
+      label: "No-shows",
+      value: evening.attendanceRecorded > 0 ? String(evening.noShows) : "—",
+      hint:
+        evening.attendanceRecorded > 0
+          ? `of ${evening.attendanceRecorded} recorded`
+          : "nothing was recorded that evening",
+    },
+  ];
+
+  return (
+    <Card as="section" className="border-accent p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="eyebrow">The evening</p>
+          <h2 className="mt-1 text-lg font-semibold text-ink">
+            <time dateTime={evening.date}>{formatLongDate(evening.date)}</time>
+          </h2>
+          <p className="mt-0.5 text-sm text-ink-muted">
+            {evening.isOpen ? "Open" : "Closed"}
+            {evening.premium ? " · invitation only" : ""}
+            {evening.promotionRevenue > 0 ? " · promotions taken" : ""}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2" data-print="hide">
+          {/* Straight to the board for that date, which is the screen somebody
+              actually wants after asking why an evening looks odd. */}
+          <ButtonLink href={`/admin/service?date=${evening.date}`}>Open the service board</ButtonLink>
+          <Button variant="secondary" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      </div>
+
+      <dl className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        {figures.map((figure) => (
+          <div key={figure.label} className="rounded-control border border-line bg-surface-muted p-3">
+            <dt className="text-xs font-medium text-ink-muted">{figure.label}</dt>
+            <dd className="mt-0.5 text-xl font-semibold tabular-nums text-ink">{figure.value}</dd>
+            {figure.hint ? <p className="mt-0.5 text-xs text-ink-subtle">{figure.hint}</p> : null}
+          </div>
+        ))}
+      </dl>
+    </Card>
   );
 }

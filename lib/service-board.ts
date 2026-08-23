@@ -59,6 +59,18 @@ export type BoardTable = {
   /** The bookings behind this table; a mark writes to all of them. */
   reservationNumbers: string[];
   /**
+   * Each booking on the table, with the staff note somebody has left on it.
+   *
+   * Per **booking** rather than per table, because that is where the note is
+   * stored and where it has to be written back. A shared table has several, and
+   * "402 asked for the window" belongs to 402 rather than to whoever they were
+   * seated with — which also means it follows them if the table is rearranged.
+   *
+   * The room is carried so a shared table can label whose note is whose; on a
+   * single booking it is redundant and the row does not show it.
+   */
+  bookings: { reservationNumber: string; room: string; staffNote?: string }[];
+  /**
    * The table's attendance, which is the *weakest* of its bookings.
    *
    * A shared table is seated when everybody on it is. If one room is marked
@@ -198,6 +210,11 @@ export function buildBoard(
       guests: members.reduce((sum, reservation) => sum + Math.max(0, reservation.guestCount), 0),
       isShared,
       reservationNumbers: members.map((reservation) => reservation.reservationNumber),
+      bookings: members.map((reservation) => ({
+        reservationNumber: reservation.reservationNumber,
+        room: labelOf(reservation),
+        staffNote: reservation.staffNote,
+      })),
       attendance: unanimous ? statuses[0] : null,
       attendanceMixed: !unanimous,
       courses,

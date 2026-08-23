@@ -424,6 +424,29 @@ export async function updateLocalReservationAddOns(
   });
 }
 
+/** The staff-only note. Empty clears it, so unset has one representation. */
+export async function updateLocalReservationStaffNote(reservationNumber: string, note: string) {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    const index = reservations.findIndex((entry) => entry.reservationNumber === reservationNumber);
+    if (index === -1) {
+      return null;
+    }
+
+    const next = { ...reservations[index], updatedAt: new Date().toISOString() };
+
+    if (note) {
+      next.staffNote = note;
+    } else {
+      delete next.staffNote;
+    }
+
+    reservations[index] = next;
+    await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    return next;
+  });
+}
+
 export async function updateLocalReservationAttendance(
   reservationNumber: string,
   attendance: ReservationRecord["attendance"] | null,

@@ -1,7 +1,15 @@
 import { NONE_OPTION_ID } from "@/lib/menu-selection";
 import { sumFinalPrices, sumListPrices, toCents } from "@/lib/money";
 import { leadTimeHours } from "@/lib/reservation-order";
-import { bucketFor, bucketKeyOf, bucketsIn, isWithin, type Bucket, type DateRange } from "@/lib/analytics/range";
+import {
+  bucketFor,
+  bucketKeyOf,
+  bucketsIn,
+  formatBucket,
+  isWithin,
+  type Bucket,
+  type DateRange,
+} from "@/lib/analytics/range";
 import type { MenuCourse, ReservationRecord, RestaurantDateAvailability } from "@/types/booking";
 
 /**
@@ -671,4 +679,232 @@ export function coefficients(
   ];
 
   return { coefficients: list, cohort };
+}
+
+/* ------------------------------------------------------------------ *
+ * Shape over time, and shape over the week
+ * ------------------------------------------------------------------ */
+
+export type WeekdayLine = {
+  /** 0 = Monday, the week as a restaurant counts it. */
+  weekday: number;
+  name: string;
+  eveningsOpen: number;
+  covers: number;
+  seatsOffered: number;
+  /** Covers per evening open, or null when it never opened on that day. */
+  averageCovers: number | null;
+  occupancy: number | null;
+};
+
+const WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+/**
+ * The week's own shape — the pattern a date-ordered chart cannot show.
+ *
+ * "Covers fell in March" and "Tuesdays are always empty" are different facts
+ * with different answers, and only the second one tells anybody which evening
+ * to stop opening. A column per day of the month buries it: the same Tuesday
+ * appears four times, thirty days apart.
+ *
+ * **Averaged per evening open, not totalled.** A month with five Saturdays and
+ * four Mondays would otherwise report Saturday as busier by arithmetic alone.
+ * Rule 2.1 throughout: the weekday comes from the local calendar string, never
+ * from a UTC instant.
+ */
+export function weekdayPattern(
+  reservations: readonly ReservationRecord[],
+  dates: readonly RestaurantDateAvailability[],
+): WeekdayLine[] {
+  const lines = WEEKDAY_NAMES.map((name, weekday) => ({
+    weekday,
+    name,
+    eveningsOpen: 0,
+    covers: 0,
+    seatsOffered: 0,
+    averageCovers: null as number | null,
+    occupancy: null as number | null,
+  }));
+
+  /** Monday-first, from a local date string. `getDay()` counts Sunday as 0. */
+  const indexOf = (date: string) => {
+    const [year, month, day] = date.split("-").map(Number);
+    return (new Date(year, month - 1, day).getDay() + 6) % 7;
+  };
+
+  for (const date of dates) {
+    if (!date.isOpen) {
+      continue;
+    }
+
+    const line = lines[indexOf(date.date)];
+    line.eveningsOpen += 1;
+    line.seatsOffered += Math.max(0, date.capacity);
+  }
+
+  const open = new Set(dates.filter((date) => date.isOpen).map((date) => date.date));
+
+  for (const reservation of reservations) {
+    // Only evenings that were actually open, so covers and the seats they sat
+    // in are counted over the same nights.
+    if (isConfirmed(reservation) && open.has(reservation.date)) {
+      lines[indexOf(reservation.date)].covers += Math.max(0, reservation.guestCount);
+    }
+  }
+
+  for (const line of lines) {
+    line.averageCovers =
+      line.eveningsOpen > 0 ? Math.round((line.covers / line.eveningsOpen) * 10) / 10 : null;
+    line.occupancy = percent(line.covers, line.seatsOffered);
+  }
+
+  return lines;
+}
+
+/**
+ * How far ahead people actually book.
+ *
+ * `docs/analytics.md` §2 says the booking cutoff is currently set from a guess.
+ * This is the number that replaces it: if nine in ten bookings arrive more than
+ * a day out, a four-hour cutoff costs almost nothing, and if a third arrive on
+ * the day it costs a third of the evening.
+ *
+ * Buckets rather than a mean, because the distribution is the point and has a
+ * long tail — somebody always books three months ahead. A booking with no
+ * `createdAt` has **no lead time and is not counted**: unknown is not zero, and
+ * counting it as "same day" would invent the exact pressure this measures.
+ */
+export type LeadBucket = { key: string; label: string; bookings: number };
+
+const LEAD_BUCKETS: { key: string; label: string; upToHours: number }[] = [
+  { key: "same-day", label: "Same day", upToHours: 24 },
+  { key: "1-day", label: "1 day ahead", upToHours: 48 },
+  { key: "2-3-days", label: "2–3 days", upToHours: 24 * 4 },
+  { key: "4-7-days", label: "4–7 days", upToHours: 24 * 8 },
+  { key: "1-2-weeks", label: "1–2 weeks", upToHours: 24 * 15 },
+  { key: "2-4-weeks", label: "2–4 weeks", upToHours: 24 * 29 },
+  { key: "over-month", label: "A month or more", upToHours: Number.POSITIVE_INFINITY },
+];
+
+export function leadTimeBuckets(
+  reservations: readonly ReservationRecord[],
+  sittingOf: (reservation: ReservationRecord) => Date | null,
+): { buckets: LeadBucket[]; counted: number; unknown: number } {
+  const buckets = LEAD_BUCKETS.map((bucket) => ({ key: bucket.key, label: bucket.label, bookings: 0 }));
+  let counted = 0;
+  let unknown = 0;
+
+  for (const reservation of reservations) {
+    const hours = leadTimeHours(reservation.createdAt, sittingOf(reservation));
+
+    if (hours === null) {
+      unknown += 1;
+      continue;
+    }
+
+    // Booked after the sitting began is a staff correction, not a lead time.
+    const index = LEAD_BUCKETS.findIndex((bucket) => Math.max(0, hours) < bucket.upToHours);
+    buckets[index === -1 ? buckets.length - 1 : index].bookings += 1;
+    counted += 1;
+  }
+
+  return { buckets, counted, unknown };
+}
+
+/**
+ * Each bucket split into who took the booking.
+ *
+ * The total is already on the covers chart; this says what it is *made of*. A
+ * flat month that quietly moved from reception to self-service is a real change
+ * and is invisible in the total.
+ *
+ * Every booking taken counts, cancelled or not — the work of taking it happened
+ * either way, which is the same rule the coefficients follow.
+ */
+export function sourceTrend(
+  reservations: readonly ReservationRecord[],
+  range: DateRange,
+  bucket: Bucket,
+): Array<{ key: string; label: string; parts: number[] }> {
+  const byGuest = new Map<string, number>();
+  const byStaff = new Map<string, number>();
+
+  for (const reservation of reservations) {
+    const key = bucketKeyOf(reservation.date, bucket);
+    const target = reservation.passKeyId ? byGuest : byStaff;
+    target.set(key, (target.get(key) ?? 0) + 1);
+  }
+
+  return bucketsIn(range, bucket).map((key) => ({
+    key,
+    label: formatBucket(key, bucket),
+    parts: [byGuest.get(key) ?? 0, byStaff.get(key) ?? 0],
+  }));
+}
+
+/**
+ * One line per evening, for opening a single date from a chart.
+ *
+ * Folded on the server beside everything else rather than fetched when a bar is
+ * clicked: it is a few dozen rows for a month, the reservations are already in
+ * memory, and a second round trip per click would make the chart feel like a
+ * page rather than a chart.
+ *
+ * Only evenings that appear in the calendar. A date with bookings and no row
+ * was never opened, which is a data problem rather than an evening to inspect.
+ */
+export type EveningLine = {
+  date: string;
+  isOpen: boolean;
+  premium: boolean;
+  capacity: number;
+  covers: number;
+  bookings: number;
+  cancelled: number;
+  occupancy: number | null;
+  seated: number;
+  noShows: number;
+  /** Confirmed bookings carrying any attendance mark. Guards the no-show count. */
+  attendanceRecorded: number;
+  promotionRevenue: number;
+  byGuest: number;
+};
+
+export function eveningLines(
+  reservations: readonly ReservationRecord[],
+  dates: readonly RestaurantDateAvailability[],
+): EveningLine[] {
+  const byDate = new Map<string, ReservationRecord[]>();
+
+  for (const reservation of reservations) {
+    byDate.set(reservation.date, [...(byDate.get(reservation.date) ?? []), reservation]);
+  }
+
+  return [...dates]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((date) => {
+      const evening = byDate.get(date.date) ?? [];
+      const confirmed = evening.filter(isConfirmed);
+      const covers = confirmed.reduce((sum, reservation) => sum + Math.max(0, reservation.guestCount), 0);
+      const marked = confirmed.filter((reservation) => reservation.attendance);
+
+      return {
+        date: date.date,
+        isOpen: date.isOpen,
+        premium: Boolean(date.premium),
+        capacity: Math.max(0, date.capacity),
+        covers,
+        bookings: evening.length,
+        cancelled: evening.filter((reservation) => reservation.status === "cancelled").length,
+        occupancy: date.isOpen ? percent(covers, Math.max(0, date.capacity)) : null,
+        seated: marked.filter((reservation) => reservation.attendance?.status === "seated").length,
+        noShows: marked.filter((reservation) => reservation.attendance?.status === "no-show").length,
+        attendanceRecorded: marked.length,
+        promotionRevenue: confirmed.reduce(
+          (sum, reservation) => sum + sumFinalPrices(reservation.addOns ?? []),
+          0,
+        ),
+        byGuest: evening.filter((reservation) => Boolean(reservation.passKeyId)).length,
+      };
+    });
 }

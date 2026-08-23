@@ -113,3 +113,158 @@ the scan authorisation are where a mistake means somebody else's dinner.
 Summarised here so this file is the one list: every stored document and every settings key is
 currently implicitly about *this* restaurant. Adding a second one is a migration, not a feature, and
 the note beside this one sets out what it costs and when to do it.
+
+---
+
+## 3. The guest's table picker is cut off — fix first
+
+**Status: next up. Raised 2026-08-23. Highest priority of the three below.**
+
+### The fault
+
+On `/booking/table` the floor plan is drawn clipped: the plan is larger than the box it sits in, the
+part below and to the right of the fold is simply not there, and there is no way to scroll or pan to
+it. A guest whose table is in the far half of the room cannot pick it at all. This is a booking flow
+that does not work, not a rough edge.
+
+### Where it lives
+
+| File | Its part in this |
+| --- | --- |
+| `app/booking/table/table-picker.tsx` | The guest-facing plan. The clipping is here. |
+| `app/booking/table/page.tsx` | Loads the plan and the availability. |
+| `lib/floor-plan.ts` | Real-world dimensions of zones and tables — the source of the true plan extent. |
+| `lib/floor-plan-availability.ts` | Which tables can still take the party. |
+| `app/admin/floor-plan/floor-plan-designer.tsx` | The designer's own viewport handling — read it before inventing a second one. |
+
+### What to do
+
+1. **Find out why it is clipped before changing anything.** The likely cause is an SVG `viewBox` (or
+   a fixed pixel canvas) sized to something other than the plan's real bounding box, inside a
+   container with `overflow: hidden`. Compute the extent from the zones and tables themselves, never
+   from a constant.
+2. **Fit the whole plan by default.** On open, the entire plan is visible, scaled down as far as it
+   must be. A guest should never have to move anything to see that a table exists.
+3. **Then allow moving around it.** Pinch and drag on touch, wheel and drag on a pointer, plus
+   visible `+` / `−` / *fit* controls — gesture-only is not enough, and the plan must remain usable
+   with the keyboard. On a narrow phone the fitted plan will be small; that is what zoom is for.
+4. **Never let it be the only way to choose.** Beside the plan, a plain list of the available tables
+   — label, zone, seats — that selects the same table. This is also the accessible path, and it is
+   what saves a guest on a small screen.
+
+### While the picker is being touched, make it easier
+
+- Unavailable tables should be *visibly* unavailable and not merely unclickable, with the reason on
+  tap ("seats 2, your party is 4" / "already taken").
+- The selected table wants an unmistakable state, and the chosen table's label repeated in the
+  summary bar so the guest is not asked to remember it.
+- One tap to select, one to confirm. No drag-to-place, ever, in the guest flow.
+- The step is optional (the who-chooses-the-table flag): "let the restaurant seat us" has to stay one
+  obvious tap away, not buried under the plan.
+
+### What must not change
+
+Seat accounting and the claim rules (`lib/services/table-claims.ts`). This is a viewport and input
+problem — the availability logic behind it is already decided and tested.
+
+---
+
+## 4. Show *who* chose the table, and let a table be locked
+
+**Status: planned, not started. Raised 2026-08-23.**
+
+### The gap
+
+The admin day view shows the table number on a booking but not its provenance. Owner, staff and
+guest all write the same field, and once written they are indistinguishable — so nobody knows
+whether a table can be moved freely or whether a guest picked it deliberately and will be upset to
+be moved.
+
+### Part one — mark the source (small, do it with item 3)
+
+Record who set the table and show it.
+
+- `ReservationRecord` gains `tableSource: "owner" | "staff" | "guest"` (additive, rule 2.2) — and
+  probably `tableSetAt`. Every place that writes a table sets it: the guest picker, the admin
+  reservation route, the service board.
+  Files: `lib/models/reservation.ts`, `types/booking.ts`, `lib/services/reservations.ts`,
+  `lib/services/table-claims.ts`.
+- In the admin views the table number is drawn with a **coloured ring** around it — one colour per
+  source. Rings, not fills: the number must stay readable, and the ring is a second channel on top of
+  a badge that already carries meaning.
+- **Colour is never the only signal.** Roughly 1 in 12 men cannot separate a red-green pair, and a
+  screenshot printed in black and white loses colour entirely. Each ring carries a short letter or
+  glyph as well and a tooltip naming the source in words. `components/ui/tooltip.tsx` already exists.
+- Suggested palette, to be checked against the app's own tokens for 3:1 contrast against the card
+  background: **guest — amber/orange**, **staff — blue**, **owner (me) — violet**. Orange for the
+  guest is what was asked for and it is also the right choice: guest picks are the ones staff must
+  think twice about moving, and amber is the established "attention, not error" colour. A ring style
+  — solid / dashed / double — should differ per source too.
+- A legend, once, at the top of the day view. Three colours nobody explains is three colours nobody
+  reads.
+
+### Part two — locking a table (the bigger piece)
+
+A table that has been set can be **locked**, so it cannot be changed by anybody below a given
+permission level. The owner locks; staff below the level see the lock and the reason, and the control
+to change the table is disabled rather than hidden — a disabled control with a reason teaches, a
+hidden one confuses.
+
+Before any code:
+
+1. **Which permission gates it.** `lib/auth/permissions.ts` already carries the scheme. This needs a
+   `reservation:table:lock` (or similar) and a decision on whether the check is "has the permission"
+   or a genuine *level* comparison — the current model is permission-based, and inventing ranks is a
+   bigger change than it looks.
+2. **Enforced in the route, never in the UI** (HANDOVER rule). Hiding the button is presentation; the
+   write path must refuse.
+3. **What a lock survives.** A cancelled and restored booking, a date being re-generated, a table
+   renamed in the designer. State the answer here before it is discovered in production.
+4. **Who can unlock.** Probably only the same level or above, and every lock and unlock is an audit
+   entry (item 5).
+
+---
+
+## 5. Every change to a reservation, in the log
+
+**Status: planned, not started. Raised 2026-08-23.**
+
+### What exists already
+
+The log is built and works: `lib/services/audit-log.ts` with `recordAuditEntry`, the append-only
+`lib/models/audit-entry.ts`, `AuditAction` in `types/booking.ts`, and `app/api/admin/audit/route.ts`.
+Entries carry the actor and the reservation number, so a booking's history is one query.
+
+**Nothing here is a rebuild.** The task is coverage and presentation.
+
+### The work
+
+1. **Audit every write path.** Walk each route that touches a booking and confirm it calls
+   `recordAuditEntry` — `app/api/admin/reservations/**` (update, cancel, restore, delete, add-ons,
+   service/attendance), `app/api/booking/manage/**` (the guest's own edits and cancellation),
+   `app/api/reservations/route.ts`, `app/api/booking/add-ons/route.ts`, and whatever writes the table
+   claim. Every gap gets closed. A written list of paths-to-entries belongs in this doc afterwards.
+2. **Say what changed, not that something changed.** "Updated reservation" is not a log. The summary
+   should name the field, the old value and the new: *"Table 12 → 7"*, *"Party 4 → 6"*. That probably
+   means a small diff helper over the record shape and possibly a structured `changes` field beside
+   `summary` (additive, rule 2.2) so the UI can render it rather than parse prose.
+3. **New actions** for anything the current `AuditAction` union does not cover — table lock/unlock
+   from item 4 among them.
+4. **A history panel on the reservation**, on `app/admin/reservation/[reservationNumber]/page.tsx`:
+   newest first, actor and time on each line. This is where "who moved this table?" actually gets
+   answered — item 4's rings say *who chose*, the log says *what happened since*.
+5. **Visibility is a permission, checked in the route.** Owner sees everything; a staff permission
+   (`audit:read`, to be settled with item 4's permission work) opens it to others. The audit route
+   must gate itself — the log names guests and their bookings, so a leak here is a guest list.
+
+### Two rules that constrain this
+
+- **A failed log write must never fail the action being logged.** `recordAuditEntry` already swallows
+  and reports; keep it that way and do not `await` it into a transaction.
+- **Append-only.** Nothing edits or deletes an entry — not a redaction tool, not a cleanup script. If
+  retention is ever needed it is a decision to make deliberately, in this doc, first.
+
+### Order for tomorrow
+
+Item 3 first (a broken booking flow beats everything), then item 4 part one and item 5 together —
+they share the permission question, and item 4's lock needs item 5's entries to be worth anything.

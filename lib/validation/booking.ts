@@ -168,6 +168,19 @@ export const updateSelectionsSchema = manageReservationSchema.extend({
 });
 
 /**
+ * A guest moving their own booking to another table.
+ *
+ * `tableId` is the plan's own id, never a label: a label is what staff type and
+ * what the sheet shows, and two zones may both have a "1". An empty string is
+ * valid and means "take my table back, seat us wherever" — the same answer as
+ * the "any table" button on the booking flow, which a guest must be able to
+ * change their mind back to.
+ */
+export const changeTableSchema = manageReservationSchema.extend({
+  tableId: z.string().trim().max(64),
+});
+
+/**
  * Promotions taken on the confirmation screen.
  *
  * `reservationNumber` is required here, unlike the schema it extends: a key

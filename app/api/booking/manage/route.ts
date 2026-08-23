@@ -230,6 +230,7 @@ export async function PATCH(request: Request) {
       reservationNumber: reservation.reservationNumber,
       summary: changes.length ? `Guest changed their menu choices: ${summariseChanges(changes)}` : "Guest changed their menu choices.",
       ...(changes.length ? { changes } : {}),
+      version: updated.version,
     });
 
     return NextResponse.json({ reservation: toGuestReservation(updated) });

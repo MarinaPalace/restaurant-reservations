@@ -70,6 +70,20 @@ describe("describeReservationChanges", () => {
     expect(changes[0]?.to).toBe("2 dishes (Salad, Soup)");
   });
 
+  it("counts a dish several guests ordered rather than repeating it", () => {
+    const same = (guestIndex: number) => ({
+      guestIndex,
+      courseId: "c2",
+      courseName: "Main",
+      optionId: "o9",
+      optionName: "Duck Magret",
+    });
+
+    const changes = describeReservationChanges(booking(), booking({ selections: [same(0), same(1), same(2)] }));
+
+    expect(changes[0]?.to).toBe("3 dishes (3× Duck Magret)");
+  });
+
   it("does not report a change when the same dishes come back in another order", () => {
     const dishes = [
       { guestIndex: 0, courseId: "c1", courseName: "Starter", optionId: "o1", optionName: "Soup" },

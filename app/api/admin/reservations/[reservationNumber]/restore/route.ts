@@ -48,6 +48,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ re
       actor: auth.actor,
       reservationNumber: restored.reservationNumber,
       summary: `Restored the cancelled reservation for ${restored.date}.`,
+      version: restored.version,
     });
 
     return NextResponse.json({ reservation: restored });

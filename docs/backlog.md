@@ -306,12 +306,49 @@ it twice.
 
 ---
 
+---
+
+## 7. Table selection should close before the booking does
+
+**Status: asked for, not built. Raised 2026-08-24.**
+
+Guests can now change their own table from the manage screen
+(`docs/floor-plan.md` §20), and it is governed by the same 12-hour deadline as
+every other guest edit — `canGuestModify`. That is the wrong deadline for this
+one thing.
+
+Laying out a room is done before service, and a table moving at 18:55 is a table
+nobody has told the waiter about. What is wanted is a **second, earlier cutoff**
+for choosing a table — a few hours, or the day before — while changing a menu
+choice stays open until the existing one.
+
+Before any code:
+
+1. **Whose setting is it.** A restaurant-wide default with a per-evening
+   override, like the booking cutoff already in `Advanced` on the date editor —
+   or one number for the restaurant? The cutoff it will sit beside is
+   per-evening, which argues for per-evening.
+2. **What it applies to.** Choosing a table on a *new* booking as well as
+   changing one on an existing booking, presumably both — but an evening that
+   still takes bookings after the tables are laid needs an answer for the guest
+   booking at 18:00, and "no table for you" has to read as a normal outcome
+   rather than a failure.
+3. **Staff are never bound by it**, the same as the booking cutoff. Reception
+   moves a table at 18:55 because the guest is standing in front of them.
+
+Where it goes: `app/api/booking/manage/table/route.ts` has the check in one
+place, and `lib/reservation-policy.ts` is where the deadline arithmetic lives.
+
+---
+
 ### Order for tomorrow
 
 Items 3 and 5 are done, and so is item 4 part one. What is left, in the order it is worth doing:
 
-1. **Item 4 part two — locking a table.** The permission question is the whole of it. `audit:read`
+1. **Item 7** — the table-selection cutoff, which is the newest ask and small
+   once the two questions above are answered.
+2. **Item 4 part two — locking a table.** The permission question is the whole of it. `audit:read`
    is now the precedent for adding one; whether locking wants a permission or a genuine rank is
    still open, and the four questions under part two still have to be answered before any code.
-2. **Item 6** — the header spilling off a phone. Small, visible on every page a guest sees.
-3. **Item 1** — the wallet card, whose first step needs no Apple or Google account at all.
+3. **Item 6** — the header spilling off a phone. Small, visible on every page a guest sees.
+4. **Item 1** — the wallet card, whose first step needs no Apple or Google account at all.

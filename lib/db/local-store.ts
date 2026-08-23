@@ -256,6 +256,7 @@ export async function createLocalReservation(input: {
       tableGroupId: input.tableGroupId,
       status: "confirmed",
       passKeyId: input.passKeyId,
+      version: 1,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -296,6 +297,7 @@ export async function cancelLocalReservation(
       ...reservation,
       status: "cancelled",
       cancellation,
+      version: nextVersion(reservation),
       updatedAt: new Date().toISOString(),
     };
     reservations[index] = cancelled;
@@ -358,6 +360,7 @@ export async function restoreLocalReservation(reservationNumber: string): Promis
       // The cancellation is undone, so its snapshot goes with it. The audit
       // log keeps both the cancellation and this restore.
       cancellation: undefined,
+      version: nextVersion(reservation),
       updatedAt: new Date().toISOString(),
     };
 
@@ -399,6 +402,68 @@ export async function setLocalReservationGroup(reservationNumber: string, tableG
 }
 
 /** Sets the table number on a reservation and everyone sharing its table. */
+/**
+ * The version a booking becomes when it is written.
+ *
+ * Counts recorded writes, creation included, and matches what Mongo's
+ * `$inc: { version: 1 }` produces on the other store — including for a booking
+ * written before versions existed, which has no counter and so lands on 1 with
+ * its next write. That looks like a creation and is not one; what makes it
+ * harmless is that the audit entry for that same write carries the same number,
+ * and the pairing of entry to record is the whole job. `types/booking.ts` says
+ * the same thing where the field is declared.
+ */
+function nextVersion(entry: Pick<ReservationRecord, "version">): number {
+  return (entry.version ?? 0) + 1;
+}
+
+/**
+ * The plan table on one booking — id, label and who chose it — or none.
+ *
+ * Only this booking, unlike `setLocalReservationTable`: a guest changing their
+ * own table must not move the party they are sharing with, and the route
+ * refuses the change for a shared booking rather than relying on this.
+ */
+export async function setLocalReservationPlanTable(
+  reservationNumber: string,
+  table: { id: string; label: string; seats: number } | null,
+  source: TableSource,
+): Promise<ReservationRecord | null> {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    const index = reservations.findIndex((entry) => entry.reservationNumber === reservationNumber);
+    if (index === -1) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    const existing = reservations[index];
+
+    reservations[index] = table
+      ? {
+          ...existing,
+          tableId: table.id,
+          tableNumber: table.label,
+          tableSource: source,
+          tableSetAt: now,
+          version: nextVersion(existing),
+          updatedAt: now,
+        }
+      : {
+          ...existing,
+          tableId: undefined,
+          tableNumber: undefined,
+          tableSource: undefined,
+          tableSetAt: undefined,
+          version: nextVersion(existing),
+          updatedAt: now,
+        };
+
+    await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    return reservations[index];
+  });
+}
+
 export async function setLocalReservationTable(
   reservationNumber: string,
   tableNumber: string,
@@ -425,8 +490,15 @@ export async function setLocalReservationTable(
         // Set together or cleared together — a table with no number cannot have
         // been chosen by anybody.
         reservations[index] = tableNumber.trim()
-          ? { ...entry, tableNumber, tableSource: source, tableSetAt: now, updatedAt: now }
-          : { ...entry, tableNumber, tableSource: undefined, tableSetAt: undefined, updatedAt: now };
+          ? { ...entry, tableNumber, tableSource: source, tableSetAt: now, version: nextVersion(entry), updatedAt: now }
+          : {
+              ...entry,
+              tableNumber,
+              tableSource: undefined,
+              tableSetAt: undefined,
+              version: nextVersion(entry),
+              updatedAt: now,
+            };
         updated.push(reservations[index]);
       }
     }
@@ -448,7 +520,12 @@ export async function updateLocalReservationSelections(
       return null;
     }
 
-    reservations[index] = { ...reservations[index], selections, updatedAt: new Date().toISOString() };
+    reservations[index] = {
+      ...reservations[index],
+      selections,
+      version: nextVersion(reservations[index]),
+      updatedAt: new Date().toISOString(),
+    };
     await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
     return reservations[index];
   });
@@ -465,7 +542,12 @@ export async function updateLocalReservationAddOns(
       return null;
     }
 
-    reservations[index] = { ...reservations[index], addOns, updatedAt: new Date().toISOString() };
+    reservations[index] = {
+      ...reservations[index],
+      addOns,
+      version: nextVersion(reservations[index]),
+      updatedAt: new Date().toISOString(),
+    };
     await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
     return reservations[index];
   });
@@ -602,7 +684,11 @@ export async function updateLocalReservationStaffNote(reservationNumber: string,
       return null;
     }
 
-    const next = { ...reservations[index], updatedAt: new Date().toISOString() };
+    const next = {
+      ...reservations[index],
+      version: nextVersion(reservations[index]),
+      updatedAt: new Date().toISOString(),
+    };
 
     if (note) {
       next.staffNote = note;
@@ -627,7 +713,11 @@ export async function updateLocalReservationAttendance(
       return null;
     }
 
-    const next = { ...reservations[index], updatedAt: new Date().toISOString() };
+    const next = {
+      ...reservations[index],
+      version: nextVersion(reservations[index]),
+      updatedAt: new Date().toISOString(),
+    };
     if (attendance) {
       next.attendance = attendance;
     } else {
@@ -673,6 +763,7 @@ export async function updateLocalReservationCourseServed(
     const next: ReservationRecord = {
       ...current,
       service: { ...current.service, servedAt: servedMap },
+      version: nextVersion(current),
       updatedAt: new Date().toISOString(),
     };
 
@@ -717,6 +808,7 @@ export async function updateLocalReservationGuestServed(
     const next: ReservationRecord = {
       ...current,
       service: { ...current.service, servedGuests: byCourse },
+      version: nextVersion(current),
       updatedAt: new Date().toISOString(),
     };
 
@@ -762,6 +854,7 @@ export async function updateLocalReservationCourseGuests(
     const next: ReservationRecord = {
       ...current,
       service: { servedAt: legacy, servedGuests: byCourse },
+      version: nextVersion(current),
       updatedAt: new Date().toISOString(),
     };
 
@@ -924,6 +1017,7 @@ export async function updateLocalReservationDetails(
       // Moving evenings adopts that evening's sitting times.
       time: dateChanged ? targetDate?.serviceTime : existing.time,
       endTime: dateChanged ? targetDate?.serviceEndTime : existing.endTime,
+      version: nextVersion(existing),
       updatedAt: new Date().toISOString(),
     };
 

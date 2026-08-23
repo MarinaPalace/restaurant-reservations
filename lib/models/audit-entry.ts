@@ -28,6 +28,8 @@ const auditEntrySchema = new Schema(
     reservationNumber: { type: String, index: true },
     summary: { type: String, required: true },
     changes: { type: [auditChangeSchema], required: false },
+    /** The version of the record this entry produced. */
+    version: { type: Number },
   },
   { timestamps: true },
 );

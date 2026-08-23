@@ -845,3 +845,77 @@ a plan. It needs a decision about whether the check is a permission or a genuine
 and the current model is permission-based; inventing ranks is a bigger change than it looks. What
 is built here is the half that had to come first: a lock on a table nobody can attribute would say
 nothing about whose decision was being protected.
+
+---
+
+## 20. One viewport, and a table a guest can change
+
+### The same bug, in the other room view
+
+The service board's restaurant view was written the same way the guest picker
+had been: `w-full min-w-[36rem]` inside an `overflow-x-auto` wrapper, with
+`touch-none` on the drawing. Which is the fault of §18 exactly — on a tablet held
+in portrait at the pass, the far half of the room was outside the card and no
+finger could scroll to it. The tables nobody could reach were the tables nobody
+could mark served.
+
+Fixing it twice was not the answer. `components/plan-viewport.tsx` is the
+viewport both views draw through: it fits the whole plan on open, moves under a
+finger, a wheel, three buttons and the arrow keys, clamps to the plan and stops
+at 8×, and shapes its box like the room. What is *on* the floor stays with each
+view, because the guest's picker and the service board mean very different
+things by a colour.
+
+**One trap worth naming.** The first version took a `height` class so a panel
+could size it. An explicit height beats `aspect-ratio` in CSS, so that quietly
+put the letterboxing back — measured on a phone, a 1400 × 900 room came out
+341 px wide and 512 tall, most of it empty. There is no height prop now, only a
+`max-h` for a very deep plan.
+
+### A guest can change their table
+
+Chosen once and never again was the rule, and a guest who wanted a different
+table telephoned reception — the thing this app exists to stop. Everything
+needed was already built, so the change is small: one route, and the picker
+lifted into `components/table-chooser.tsx` so the booking step and the manage
+screen ask the question the same way.
+
+`POST /api/booking/manage/table` checks, in the route and not in the screen:
+
+| Rule | Why |
+| --- | --- |
+| The pass-key authorises it, not the reservation number | Guests read numbers out to share tables (rule 2.5) |
+| The 12-hour cutoff, via `canGuestModify` | The same deadline as every other guest edit |
+| The evening still offers table selection | An evening with it off is one the restaurant seats |
+| The table is resolved from the plan | Rule 2.6 — a request cannot name its own seat count |
+| **Not a shared table** | Moving one booking of a joined party splits it, silently, and only visibly at the door |
+
+Sending no table means "hand it back and seat us", the same answer as the "any
+table" button — except on an evening where the choice is `required`, which is
+required precisely because nobody is doing the seating that night.
+
+**The claim order is the design.** `moveReservationTable` claims the new table
+*before* releasing the old one, so a guest who cannot have table 9 still has
+table 7 when they are told so. Both are briefly held, which costs one table's
+availability for a few milliseconds; releasing first would mean a failure in the
+middle leaves the guest with nothing and somebody else may have taken theirs
+meanwhile. A failed release afterwards is logged, never raised — the guest has
+their new table, and a stale claim on a table that is really free is worth an
+alert and not worth failing a change the guest can see.
+
+### Still to come: a cutoff of its own
+
+Table selection is expected to close **earlier** than the booking does — a day
+or a few hours before service, so the floor can be laid out — while changing a
+menu choice stays open until the 12-hour deadline. That is not built: today both
+close together, on `canGuestModify`. The check lives in one place in that route,
+which is where the second deadline will go. `docs/backlog.md` item 7 carries it.
+
+### And the table is where the guest can see it
+
+It was on the service sheet, in the log, and nowhere the guest could read it.
+Now it is on the confirmation screen beside the party size, and in the calendar
+reminder — the Google link and the `.ics` both — because the reminder is what a
+guest actually opens on the way down, days after the confirmation screen was
+closed. Only when there is one: a line promising a table that does not exist yet
+is worse than no line, because the guest turns up looking for it.

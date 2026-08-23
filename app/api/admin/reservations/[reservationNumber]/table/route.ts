@@ -62,6 +62,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ res
         reservationNumber,
         summary: summariseChanges(changes),
         changes,
+        version: after?.version,
       });
     }
 

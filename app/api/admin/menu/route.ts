@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isDenied, requireStaff } from "@/lib/auth/guard";
 import { recordAuditEntry } from "@/lib/services/audit-log";
 import { getFullMenuCatalog, saveMenuCatalog } from "@/lib/services/restaurant";
+import { bumpMenuVersion } from "@/lib/services/settings";
 import { menuCatalogSchema, saveMenuSchema } from "@/lib/validation/booking";
 import type { MenuCourse } from "@/types/booking";
 
@@ -47,14 +48,16 @@ export async function POST(request: Request) {
 
     const kind = parsed.data.menu ?? "standard";
     const menu = await saveMenuCatalog(courses, kind);
+    const version = await bumpMenuVersion(kind);
 
     await recordAuditEntry({
       action: "menu:save",
       actor: auth.actor,
-      summary: `Saved the ${kind} catalogue: ${menu.length} course(s).`,
+      summary: `Saved the ${kind} catalogue as v${version}: ${menu.length} course(s).`,
+      version,
     });
 
-    return NextResponse.json({ ok: true, menu });
+    return NextResponse.json({ ok: true, menu, version });
   } catch (error) {
     console.error("[admin] failed to save menu", error);
     return NextResponse.json({ error: "Unable to update menu." }, { status: 500 });

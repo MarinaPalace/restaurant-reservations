@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isDenied, requireStaff } from "@/lib/auth/guard";
 import { tableSourceOfUser } from "@/lib/auth/permissions";
+import { describeNewReservation } from "@/lib/reservation-changes";
 import {
   BookingError,
   TableJoinError,
@@ -113,6 +114,8 @@ export async function POST(request: Request) {
       summary:
         `Took a reservation for room ${formatRoomList(reservation.roomNumber, reservation.additionalRooms)}, ` +
         `${reservation.guestCount} guest(s) on ${reservation.date}.`,
+      changes: describeNewReservation(reservation),
+      version: reservation.version,
     });
 
     return NextResponse.json({ reservation }, { status: 201 });

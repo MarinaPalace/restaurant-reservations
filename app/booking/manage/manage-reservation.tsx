@@ -12,6 +12,7 @@ import { NONE_OPTION_ID, NONE_OPTION_NAME } from "@/lib/menu-selection";
 import { useSearchParams } from "next/navigation";
 import { useBookingSession } from "@/hooks/use-booking-session";
 import { useI18n } from "@/components/i18n-provider";
+import { TableChange } from "@/app/booking/manage/table-change";
 import { PromoSummary } from "@/components/promo-summary";
 import { localizeMenuCatalog } from "@/lib/menu-localization";
 import type { Currency } from "@/lib/money";
@@ -487,6 +488,28 @@ export function ManageReservation({
             : undefined
         }
       />
+
+      {/*
+        The table, and changing it. After the dishes because that is the order
+        the guest chose them in, and because most visits to this screen are
+        about the food.
+      */}
+      {!isCancelled ? (
+        <TableChange
+          passKey={normalizePassKey(passKey)}
+          reservation={reservation}
+          canModify={canModify}
+          label={t.common.table}
+          onSaved={(updated) => {
+            setLoaded(replaceEntry(loaded, updated));
+            setNotice(
+              updated.tableNumber
+                ? `Your table is now ${updated.tableNumber}.`
+                : "Your table has been given back — we will seat you.",
+            );
+          }}
+        />
+      ) : null}
 
       {editing ? (
         <div className="mt-6 space-y-5">

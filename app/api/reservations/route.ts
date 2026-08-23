@@ -21,6 +21,7 @@ import {
   releasePassKey,
 } from "@/lib/services/pass-keys";
 import { recordAuditEntry } from "@/lib/services/audit-log";
+import { describeNewReservation } from "@/lib/reservation-changes";
 import { toGuestReservation } from "@/lib/guest-reservation";
 import { createReservationSchema } from "@/lib/validation/booking";
 import { describeContactProblem, normalizeContact } from "@/lib/contact";
@@ -229,6 +230,10 @@ export async function POST(request: Request) {
       actor: { kind: "guest", id: spent.id, name: `Room ${parsed.data.roomNumber}` },
       reservationNumber: reservation.reservationNumber,
       summary: `Booked ${reservation.guestCount} guest(s) for ${reservation.date} with a pass-key.`,
+      // What they actually booked — the dishes and the table included. Without
+      // it the log knew a booking had happened and nothing about what it was.
+      changes: describeNewReservation(reservation),
+      version: reservation.version,
     });
 
     return NextResponse.json({ reservation: toGuestReservation(reservation) }, { status: 201 });

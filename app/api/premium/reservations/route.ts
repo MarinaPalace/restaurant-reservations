@@ -13,6 +13,7 @@ import {
   releasePassKey,
 } from "@/lib/services/pass-keys";
 import { recordAuditEntry } from "@/lib/services/audit-log";
+import { describeNewReservation } from "@/lib/reservation-changes";
 import { toGuestReservation } from "@/lib/guest-reservation";
 import { checkRateLimit, clientKeyFrom } from "@/lib/rate-limit";
 import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
@@ -155,6 +156,8 @@ export async function POST(request: Request) {
       actor: { kind: "guest", id: spent.id, name: parsed.data.guestName },
       reservationNumber: reservation.reservationNumber,
       summary: `Invited guest booked ${reservation.guestCount} seat(s) for ${reservation.date}.`,
+      changes: describeNewReservation(reservation),
+      version: reservation.version,
     });
 
     return NextResponse.json({ reservation: toGuestReservation(reservation) }, { status: 201 });

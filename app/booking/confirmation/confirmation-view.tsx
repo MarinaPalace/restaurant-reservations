@@ -184,6 +184,19 @@ export function ConfirmationView({
             <dt className="text-ink-subtle">{t.common.guests}</dt>
             <dd className="font-semibold text-ink">{reservation.guestCount}</dd>
           </div>
+          {/*
+            The table, when there is one. It is one of the two things a guest
+            has to carry down to dinner — the other is the reservation number —
+            and it was on the service sheet, in the log and nowhere the guest
+            could see it. Absent when the restaurant is doing the seating, which
+            is not the same as an empty line.
+          */}
+          {reservation.tableNumber ? (
+            <div className="flex justify-between gap-3">
+              <dt className="text-ink-subtle">{t.common.table}</dt>
+              <dd className="text-lg font-semibold text-ink">{reservation.tableNumber}</dd>
+            </div>
+          ) : null}
           {reservation.contact ? (
             <div className="flex justify-between gap-3">
               <dt className="text-ink-subtle">{t.confirmation.contactOn}</dt>

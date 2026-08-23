@@ -183,6 +183,7 @@ export async function POST(request: Request) {
         reservationNumber: reservation.reservationNumber,
         summary: summariseChanges(changes),
         changes,
+        version: updated.version,
       });
     }
 

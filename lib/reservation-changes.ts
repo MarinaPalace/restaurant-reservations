@@ -55,9 +55,17 @@ function describeSelections(selections: readonly ReservationSelection[] | undefi
     return "";
   }
 
-  const dishes = [...list]
-    .map((selection) => selection.optionName)
-    .sort((a, b) => a.localeCompare(b))
+  // Counted, not listed twice. A party of six ordering the same main is one
+  // line saying "6× Duck Magret", not the words six times over — and it is the
+  // count the kitchen thinks in anyway.
+  const counts = new Map<string, number>();
+  for (const selection of list) {
+    counts.set(selection.optionName, (counts.get(selection.optionName) ?? 0) + 1);
+  }
+
+  const dishes = [...counts.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, count]) => (count > 1 ? `${count}× ${name}` : name))
     .join(", ");
 
   return `${list.length} ${list.length === 1 ? "dish" : "dishes"} (${dishes})`;
@@ -160,6 +168,20 @@ export function describeReservationChanges(
   }
 
   return changes;
+}
+
+
+/**
+ * Everything a new booking starts life with, in the same shape as a change.
+ *
+ * A create entry used to say the room, the date and the party size and stop —
+ * so the log could not answer "what did they order?" or "which table did they
+ * pick?" about the moment it was taken, which are the two things anybody asks
+ * of a booking after the fact. Diffing against nothing gives every field the
+ * booking arrived with, including the dishes and the table.
+ */
+export function describeNewReservation(created: Partial<ReservationRecord>): ReservationChange[] {
+  return describeReservationChanges({}, created);
 }
 
 /** One change, as a person would say it. */

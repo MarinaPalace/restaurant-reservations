@@ -122,6 +122,17 @@ export default async function ReservationDetailPage({
           as="h1"
           eyebrow="Reservation"
           title={reservation.reservationNumber}
+          /*
+            Which version of this booking you are looking at. Pointless on its
+            own and the whole point beside the history: the last entry names the
+            version it produced, so "is this the record that entry made, or has
+            something happened since?" is answered by reading two numbers.
+          */
+          description={
+            reservation.version
+              ? `Version ${reservation.version}`
+              : "No version recorded — this booking predates version numbers."
+          }
           actions={
             <div className="flex flex-wrap gap-3" data-print="hide">
               <ButtonLink href="/admin">Back to dashboard</ButtonLink>
@@ -451,6 +462,11 @@ export default async function ReservationDetailPage({
                       </ul>
                     ) : null}
                     <p className="mt-1 text-xs text-ink-muted">
+                      {entry.version ? (
+                        <span className="mr-1 rounded bg-surface-sunken px-1.5 py-0.5 font-medium tabular-nums text-ink-muted">
+                          v{entry.version}
+                        </span>
+                      ) : null}
                       {entry.actorName}
                       {entry.actorKind === "guest" ? " (guest)" : entry.actorKind === "system" ? "" : " (staff)"} ·{" "}
                       <time dateTime={entry.at}>{new Date(entry.at).toLocaleString("en-GB")}</time>

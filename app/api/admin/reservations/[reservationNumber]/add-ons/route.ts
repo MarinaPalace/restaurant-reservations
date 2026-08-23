@@ -95,6 +95,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ res
       // Beside the sentence: what was there before, which the sentence cannot
       // say and which is the half that answers "who took the wine off?".
       ...(changes.length ? { changes } : {}),
+      version: updated.version,
     });
 
     return NextResponse.json({ reservation: updated });

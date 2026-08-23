@@ -14,6 +14,7 @@ export const bg: PartialDictionary = {
     guests: "Гости",
     date: "Дата",
     menu: "Меню",
+    table: "Маса",
     skipToContent: "Към основното съдържание",
     language: "Език",
     theme: {

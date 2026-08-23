@@ -5,7 +5,7 @@ import { MenuEditor } from "@/app/admin/menu/menu-editor";
 import { getCurrentStaffUser } from "@/lib/auth/guard";
 import { hasPermission } from "@/lib/auth/permissions";
 import { getMenuCatalogForEditing } from "@/lib/services/restaurant";
-import { getCurrency } from "@/lib/services/settings";
+import { getCurrency, getMenuVersion } from "@/lib/services/settings";
 import { menuCatalogSchema } from "@/lib/validation/booking";
 
 export const metadata: Metadata = { title: "Menu editor" };
@@ -31,9 +31,10 @@ export default async function AdminMenuPage({ searchParams }: PageProps<"/admin/
   const menu = menuCatalogSchema.safeParse(requested).data ?? "standard";
 
   // An empty premium catalogue opens as an unsaved copy of the everyday menu.
-  const [{ courses, isDraft }, currency] = await Promise.all([
+  const [{ courses, isDraft }, currency, version] = await Promise.all([
     getMenuCatalogForEditing(menu),
     getCurrency(),
+    getMenuVersion(menu),
   ]);
 
   return (
@@ -44,6 +45,7 @@ export default async function AdminMenuPage({ searchParams }: PageProps<"/admin/
         menu={menu}
         startedFromCopy={isDraft}
         initialCurrency={currency}
+        initialVersion={version}
       />
     </PageShell>
   );

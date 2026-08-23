@@ -14,6 +14,7 @@ export const ru: PartialDictionary = {
     guests: "Гости",
     date: "Дата",
     menu: "Меню",
+    table: "Столик",
     skipToContent: "Перейти к основному содержимому",
     language: "Язык",
     theme: {

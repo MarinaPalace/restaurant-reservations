@@ -55,6 +55,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ res
         `Cancelled the reservation for ${cancelled.date}` +
         (reason ? ` — ${reason}` : "") +
         ".",
+      version: cancelled.version,
     });
 
     return NextResponse.json(cancelled);

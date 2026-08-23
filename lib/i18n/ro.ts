@@ -14,6 +14,7 @@ export const ro: PartialDictionary = {
     guests: "Invitați",
     date: "Data",
     menu: "Meniu",
+    table: "Masă",
     skipToContent: "Treceți la conținutul principal",
     language: "Limbă",
     theme: {

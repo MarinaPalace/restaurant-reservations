@@ -46,6 +46,8 @@ const FLOOR_PLAN_MODE_KEY = "restaurant.floorPlanMode";
  * bought with nothing.
  */
 const EVENING_TOGGLES_KEY = "restaurant.eveningToggles";
+/** One counter per catalogue: `{ standard: 12, premium: 3, promo: 7 }`. */
+const MENU_VERSION_KEY = "restaurant.menuVersions";
 
 async function readSetting(key: string): Promise<unknown> {
   if (!isMongoConfigured()) {
@@ -224,4 +226,61 @@ export async function getEveningFeatures(
 export async function getTableSelection(): Promise<{ mode: FloorPlanMode; plan: FloorPlan }> {
   const [stored, plan] = await Promise.all([getFloorPlanMode(), getFloorPlan()]);
   return { mode: resolveFloorPlanMode(stored, plan), plan };
+}
+
+/* ------------------------------------------------------------------ *
+ * Menu versions
+ * ------------------------------------------------------------------ */
+
+/**
+ * How many times a catalogue has been saved.
+ *
+ * A booking carries its own `version`; a menu had nothing, so "which menu was
+ * this booking taken against?" could only be answered by the dish names copied
+ * onto the booking — which is a good answer for the kitchen and no answer at
+ * all for "when did the starter change?". The counter is what the audit entry
+ * for `menu:save` now names, so the log reads as a sequence of catalogues
+ * rather than a pile of saves.
+ *
+ * One counter per catalogue, because they are edited separately and a promo
+ * save has nothing to do with the standard menu's history.
+ *
+ * A read-then-write, unlike the booking counter's `$inc`, and that is a
+ * deliberate difference rather than an oversight: the menu itself is already
+ * saved by replacing the whole catalogue, so two people editing at once lose
+ * each other's *courses* long before they lose a version number. If menu saving
+ * ever becomes incremental this has to move with it.
+ */
+export async function getMenuVersions(): Promise<Record<string, number>> {
+  try {
+    const raw = await readSetting(MENU_VERSION_KEY);
+
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, number>) : {};
+  } catch (error) {
+    // A menu must still save if its counter cannot be read.
+    console.error("[settings] failed to read the menu versions", error);
+    return {};
+  }
+}
+
+/** The version this catalogue has now. Absent reads as never saved since counting began. */
+export async function getMenuVersion(menu: string): Promise<number> {
+  const versions = await getMenuVersions();
+  return typeof versions[menu] === "number" ? versions[menu] : 0;
+}
+
+/** Moves a catalogue on one version, and says which it became. */
+export async function bumpMenuVersion(menu: string): Promise<number> {
+  try {
+    const versions = await getMenuVersions();
+    const next = (typeof versions[menu] === "number" ? versions[menu] : 0) + 1;
+
+    await writeSetting(MENU_VERSION_KEY, { ...versions, [menu]: next });
+    return next;
+  } catch (error) {
+    // Never fail a menu save over its own bookkeeping — the same rule the audit
+    // log follows.
+    console.error("[settings] failed to record the menu version", error);
+    return 0;
+  }
 }

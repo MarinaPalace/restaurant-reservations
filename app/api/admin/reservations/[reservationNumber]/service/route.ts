@@ -114,6 +114,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ re
             ? `Seated ${reservationNumber}${attendance.guests !== undefined ? ` (${attendance.guests} of ${existing.guestCount})` : ""}.`
             : `Marked ${reservationNumber} as a no-show.`
           : `Cleared the attendance mark on ${reservationNumber}.`,
+        version: updated.version,
       });
 
       return NextResponse.json({ reservation: updated });

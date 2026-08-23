@@ -21,6 +21,7 @@ import {
   setLocalReservationGroup,
   updateLocalReservationDetails,
   setLocalReservationTable,
+  setLocalReservationPlanTable,
   updateLocalReservationSelections,
   updateLocalReservationAddOns,
   updateLocalReservationAttendance,
@@ -109,6 +110,7 @@ type MongoReservationDocument = {
   tableNumber?: unknown;
   tableSource?: unknown;
   tableSetAt?: unknown;
+  version?: unknown;
   status?: unknown;
   passKeyId?: unknown;
   cancellation?: unknown;
@@ -146,12 +148,42 @@ function toReservationRecord(document: MongoReservationDocument): ReservationRec
     tableNumber: document.tableNumber ? String(document.tableNumber) : undefined,
     tableSource: (document.tableSource as ReservationRecord["tableSource"]) || undefined,
     tableSetAt: document.tableSetAt ? String(document.tableSetAt) : undefined,
+    version: typeof document.version === "number" ? document.version : undefined,
     status: document.status === "cancelled" ? "cancelled" : "confirmed",
     passKeyId: document.passKeyId ? String(document.passKeyId) : undefined,
     cancellation: (document.cancellation as CancellationRecord | undefined) ?? undefined,
     createdAt: document.createdAt ? new Date(document.createdAt as string).toISOString() : undefined,
     updatedAt: document.updatedAt ? new Date(document.updatedAt as string).toISOString() : undefined,
   };
+}
+
+/**
+ * Every write to a booking moves it on one version.
+ *
+ * ## Why a counter at all
+ *
+ * The audit log says what changed; the version says **which booking it changed
+ * to**. Reading a history without one, you can see six entries and still not be
+ * sure whether the record in front of you is the one the last entry produced or
+ * something written since. With it, every entry names the version it made, and
+ * the record names the version it is: "this is v7, and the log's last entry made
+ * v7" is a question anybody can answer at a glance.
+ *
+ * ## $inc, not read-then-write
+ *
+ * Rule 2.7. Two waiters marking different courses on the same table must not
+ * lose each other's bump, and a counter incremented in the same atomic update as
+ * the change it counts cannot drift from it.
+ *
+ * Absent on every booking written before this existed, which reads as "no
+ * version recorded" — never as version 0, and never as 1, because claiming a
+ * booking is untouched when nobody knows is exactly the lie this is meant to
+ * prevent.
+ */
+function bumped(update: Record<string, unknown>): Record<string, unknown> {
+  const existing = (update.$inc as Record<string, number> | undefined) ?? {};
+
+  return { ...update, $inc: { ...existing, version: 1 } };
 }
 
 export class TableJoinError extends Error {
@@ -203,7 +235,7 @@ async function setReservationGroup(reservationNumber: string, tableGroupId: stri
   }
 
   await connectToDatabase();
-  await ReservationModel.updateOne({ reservationNumber }, { $set: { tableGroupId } });
+  await ReservationModel.updateOne({ reservationNumber }, bumped({ $set: { tableGroupId } }));
 }
 
 /**
@@ -234,10 +266,134 @@ export async function assignTableNumber(
     ? { tableNumber, tableSource: source, tableSetAt: new Date().toISOString() }
     : { tableNumber, tableSource: null, tableSetAt: null };
 
-  await ReservationModel.updateMany(filter, { $set: written });
+  await ReservationModel.updateMany(filter, bumped({ $set: written }));
 
   const updated = await ReservationModel.find(filter).lean();
   return updated.map((entry) => toReservationRecord(entry as MongoReservationDocument));
+}
+
+/**
+ * Moves a booking from one plan table to another, claims and all.
+ *
+ * The guest's own table change (`/api/booking/manage/table`) and nothing else
+ * yet. Staff assign by *label* through `assignTableNumber`, which is a
+ * different thing: a label typed at the desk may name a table that is not on
+ * the plan at all, and it moves everybody sharing the table.
+ *
+ * ## The order is the whole design
+ *
+ * 1. **Claim the new table first.** A guest who cannot have table 9 must still
+ *    have table 7 — the one they already hold — when they are told so.
+ * 2. Write the booking.
+ * 3. **Release the old table last**, and only once the write succeeded.
+ *
+ * Claiming before releasing means the two can briefly be held at once, which
+ * costs one table's worth of availability for a few milliseconds. Releasing
+ * first would mean a failure in the middle leaves the guest with no table at
+ * all, and somebody else may have taken theirs in between. One of those is an
+ * inconvenience and the other is a booking nobody can honour.
+ *
+ * A failed release is logged and not raised: the write has happened, the guest
+ * has their new table, and a claim left behind on the old one holds a table
+ * that is really free — worth an alert, never worth failing the change the
+ * guest can see.
+ */
+export async function moveReservationTable(input: {
+  reservationNumber: string;
+  date: string;
+  guests: number;
+  /** The plan table currently held, if any. */
+  fromTableId?: string;
+  /** Where it is going, or `null` to hand the table back and be seated. */
+  to: { id: string; label: string; seats: number } | null;
+  source: TableSource;
+}): Promise<ReservationRecord | null> {
+  if (input.to) {
+    await claimTable({
+      date: input.date,
+      tableId: input.to.id,
+      seats: input.to.seats,
+      guests: input.guests,
+      reservationNumber: input.reservationNumber,
+    });
+  }
+
+  let saved: ReservationRecord | null = null;
+
+  try {
+    saved = await writePlanTable(input.reservationNumber, input.to, input.source);
+  } catch (error) {
+    if (input.to) {
+      await releaseTable({
+        date: input.date,
+        tableId: input.to.id,
+        guests: input.guests,
+        reservationNumber: input.reservationNumber,
+      }).catch((releaseError) => {
+        console.error("[reservations] failed to release a table after a failed move", releaseError);
+      });
+    }
+
+    throw error;
+  }
+
+  if (!saved) {
+    // The booking vanished between being read and being written. Give the new
+    // claim back rather than holding a table for nobody.
+    if (input.to) {
+      await releaseTable({
+        date: input.date,
+        tableId: input.to.id,
+        guests: input.guests,
+        reservationNumber: input.reservationNumber,
+      }).catch(() => {});
+    }
+
+    return null;
+  }
+
+  if (input.fromTableId && input.fromTableId !== input.to?.id) {
+    await releaseTable({
+      date: input.date,
+      tableId: input.fromTableId,
+      guests: input.guests,
+      reservationNumber: input.reservationNumber,
+    }).catch((error) => {
+      console.error("[reservations] failed to release the table a booking moved off", error);
+    });
+  }
+
+  return saved;
+}
+
+/** The write half of a move: the plan table on the booking, and who chose it. */
+async function writePlanTable(
+  reservationNumber: string,
+  table: { id: string; label: string; seats: number } | null,
+  source: TableSource,
+): Promise<ReservationRecord | null> {
+  if (!isMongoConfigured()) {
+    return setLocalReservationPlanTable(reservationNumber, table, source);
+  }
+
+  await connectToDatabase();
+
+  const update = table
+    ? {
+        $set: {
+          tableId: table.id,
+          tableNumber: table.label,
+          tableSource: source,
+          tableSetAt: new Date().toISOString(),
+        },
+      }
+    : { $unset: { tableId: "", tableNumber: "", tableSource: "", tableSetAt: "" } };
+
+  const saved = await ReservationModel.findOneAndUpdate({ reservationNumber }, bumped(update), {
+    returnDocument: "after",
+  }).lean();
+
+  return saved ? toReservationRecord(saved as MongoReservationDocument) : null;
 }
 
 export async function createReservationEntry(input: {
@@ -387,6 +543,9 @@ export async function createReservationEntry(input: {
       tableGroupId,
       status: "confirmed",
       passKeyId: input.passKeyId,
+      // Every booking starts at one, so "no version" can only ever mean a
+      // record written before versions existed.
+      version: 1,
     });
 
     return toReservationRecord(created.toObject() as MongoReservationDocument);
@@ -440,7 +599,7 @@ export async function cancelReservation(
 
   const cancelled = await ReservationModel.findOneAndUpdate(
     { reservationNumber, status: "confirmed" },
-    { $set: { status: "cancelled", ...(cancellation ? { cancellation } : {}) } },
+    bumped({ $set: { status: "cancelled", ...(cancellation ? { cancellation } : {}) } }),
     { returnDocument: "after" },
   ).lean();
 
@@ -591,7 +750,7 @@ export async function restoreReservation(reservationNumber: string): Promise<Res
       { reservationNumber, status: "cancelled" },
       // The cancellation snapshot goes with the cancellation it described.
       // The audit log keeps both the cancellation and this restore.
-      { $set: { status: "confirmed" }, $unset: { cancellation: "" } },
+      bumped({ $set: { status: "confirmed" }, $unset: { cancellation: "" } }),
       { returnDocument: "after" },
     ).lean();
 
@@ -800,7 +959,7 @@ export async function updateReservationDetails(
   try {
     const saved = await ReservationModel.findOneAndUpdate(
       { reservationNumber },
-      { $set: update },
+      bumped({ $set: update }),
       { returnDocument: "after" },
     ).lean();
 
@@ -836,7 +995,7 @@ export async function updateReservationSelections(
   await connectToDatabase();
   const updated = await ReservationModel.findOneAndUpdate(
     { reservationNumber },
-    { $set: { selections } },
+    bumped({ $set: { selections } }),
     { returnDocument: "after" },
   ).lean();
 
@@ -854,7 +1013,7 @@ export async function updateReservationAddOns(
   await connectToDatabase();
   const updated = await ReservationModel.findOneAndUpdate(
     { reservationNumber },
-    { $set: { addOns } },
+    bumped({ $set: { addOns } }),
     { returnDocument: "after" },
   ).lean();
 
@@ -892,7 +1051,7 @@ export async function setReservationStaffNote(
   await connectToDatabase();
   const updated = await ReservationModel.findOneAndUpdate(
     { reservationNumber },
-    trimmed ? { $set: { staffNote: trimmed } } : { $unset: { staffNote: "" } },
+    bumped(trimmed ? { $set: { staffNote: trimmed } } : { $unset: { staffNote: "" } }),
     { returnDocument: "after" },
   ).lean();
 
@@ -910,7 +1069,7 @@ export async function setReservationAttendance(
   await connectToDatabase();
   const updated = await ReservationModel.findOneAndUpdate(
     { reservationNumber },
-    attendance ? { $set: { attendance } } : { $unset: { attendance: "" } },
+    bumped(attendance ? { $set: { attendance } } : { $unset: { attendance: "" } }),
     { returnDocument: "after" },
   ).lean();
 
@@ -949,7 +1108,7 @@ export async function setReservationGuestServed(
   const path = `service.servedGuests.${courseId}.${guestIndex}`;
   const updated = await ReservationModel.findOneAndUpdate(
     { reservationNumber },
-    servedAt ? { $set: { [path]: servedAt } } : { $unset: { [path]: "" } },
+    bumped(servedAt ? { $set: { [path]: servedAt } } : { $unset: { [path]: "" } }),
     { returnDocument: "after" },
   ).lean();
 
@@ -992,7 +1151,7 @@ export async function setReservationCourseServedForGuests(
         },
       };
 
-  const updated = await ReservationModel.findOneAndUpdate({ reservationNumber }, update, {
+  const updated = await ReservationModel.findOneAndUpdate({ reservationNumber }, bumped(update), {
     returnDocument: "after",
   }).lean();
 
@@ -1013,7 +1172,7 @@ export async function setReservationCourseServed(
   const path = `service.servedAt.${courseId}`;
   const updated = await ReservationModel.findOneAndUpdate(
     { reservationNumber },
-    servedAt ? { $set: { [path]: servedAt } } : { $unset: { [path]: "" } },
+    bumped(servedAt ? { $set: { [path]: servedAt } } : { $unset: { [path]: "" } }),
     { returnDocument: "after" },
   ).lean();
 

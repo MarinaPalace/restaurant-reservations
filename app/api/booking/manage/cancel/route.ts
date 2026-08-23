@@ -87,6 +87,7 @@ export async function POST(request: Request) {
       actor: { kind: "guest", id: passKey.id, name: `Guest in room ${reservation.roomNumber}` },
       reservationNumber: reservation.reservationNumber,
       summary: `Guest cancelled their reservation for ${reservation.date}.`,
+      version: cancelled.version,
     });
 
     return NextResponse.json({ reservation: toGuestReservation(cancelled) });

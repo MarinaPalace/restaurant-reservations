@@ -785,7 +785,9 @@ tracking — asked for, deliberately not built, and written down so the next ses
 decision rather than a blank page.
 
 `docs/audit-log.md` is the log: which route writes which entry, what a change entry now says
-(**Table 12 → 7**, not "edited the reservation"), and the one deliberate gap. Note the change of
+(**Table 12 → 7**, not "edited the reservation"), how **versions** work — every booking counts its
+writes, every menu counts its saves, and every entry names the version it produced — and the one
+deliberate gap. Note the change of
 mind in §4 — **reading the log needs `audit:read`** rather than any signed-in account, because
 every entry names a guest and a room, so the whole of it read end to end is a guest list. `admin`
 holds it implicitly; existing staff accounts have to be granted it.

@@ -1263,3 +1263,121 @@ describe("pass-keys against MongoDB", () => {
     expect(found.map((entry) => entry.reservationNumber)).toEqual([number]);
   });
 });
+
+/**
+ * A guest moving themselves from one table to another. The claims are the part
+ * worth testing: a move that leaves the old table held is a table nobody can
+ * book, and one that releases before it claims is a guest with no table at all
+ * when the new one turns out to be taken.
+ */
+describe("moving a booking to another table", () => {
+  const DATE = "2026-11-02";
+
+  async function book(roomNumber: string, guests: number, table?: { id: string; label: string; seats: number }) {
+    const { reservations } = await loadServices();
+
+    return reservations.createReservationEntry({
+      roomNumber,
+      guestCount: guests,
+      date: DATE,
+      selections: [SELECTIONS[0]],
+      table,
+      tableSource: table ? "guest" : undefined,
+    });
+  }
+
+  async function claimsNow() {
+    const { listTableClaims } = await import("@/lib/services/table-claims");
+    return listTableClaims(DATE);
+  }
+
+  it("takes the new table, gives back the old one, and says who chose it", async () => {
+    await openDate(DATE, 40);
+    const booking = await book("501", 2, { id: "t1", label: "1", seats: 4 });
+
+    const { reservations } = await loadServices();
+    const moved = await reservations.moveReservationTable({
+      reservationNumber: booking.reservationNumber,
+      date: DATE,
+      guests: 2,
+      fromTableId: "t1",
+      to: { id: "t2", label: "2", seats: 4 },
+      source: "guest",
+    });
+
+    expect(moved?.tableId).toBe("t2");
+    expect(moved?.tableNumber).toBe("2");
+    expect(moved?.tableSource).toBe("guest");
+
+    const claims = await claimsNow();
+    expect(claims.find((claim) => claim.tableId === "t2")?.guests).toBe(2);
+    // The table they left is free again, not held by a booking that moved off.
+    expect(claims.find((claim) => claim.tableId === "t1")).toBeUndefined();
+  });
+
+  it("leaves the guest on the table they had when the new one is taken", async () => {
+    await openDate(DATE, 40);
+    const mine = await book("502", 2, { id: "t3", label: "3", seats: 2 });
+    await book("503", 2, { id: "t4", label: "4", seats: 2 });
+
+    const { reservations } = await loadServices();
+    const { TableClaimError } = await import("@/lib/services/table-claims");
+
+    await expect(
+      reservations.moveReservationTable({
+        reservationNumber: mine.reservationNumber,
+        date: DATE,
+        guests: 2,
+        fromTableId: "t3",
+        to: { id: "t4", label: "4", seats: 2 },
+        source: "guest",
+      }),
+    ).rejects.toBeInstanceOf(TableClaimError);
+
+    const unchanged = await reservations.getReservationByNumber(mine.reservationNumber);
+    expect(unchanged?.tableId).toBe("t3");
+
+    // And the claim they already held is still theirs.
+    const claims = await claimsNow();
+    expect(claims.find((claim) => claim.tableId === "t3")?.reservationNumbers).toContain(mine.reservationNumber);
+  });
+
+  it("hands the table back when the guest asks to be seated instead", async () => {
+    await openDate(DATE, 40);
+    const booking = await book("504", 2, { id: "t5", label: "5", seats: 4 });
+
+    const { reservations } = await loadServices();
+    const cleared = await reservations.moveReservationTable({
+      reservationNumber: booking.reservationNumber,
+      date: DATE,
+      guests: 2,
+      fromTableId: "t5",
+      to: null,
+      source: "guest",
+    });
+
+    expect(cleared?.tableId).toBeUndefined();
+    expect(cleared?.tableNumber).toBeUndefined();
+    // Cleared together, always: a table nobody is on has nobody who chose it.
+    expect(cleared?.tableSource).toBeUndefined();
+    expect((await claimsNow()).find((claim) => claim.tableId === "t5")).toBeUndefined();
+  });
+
+  it("moves the booking on a version each time it is written", async () => {
+    await openDate(DATE, 40);
+    const booking = await book("505", 2, { id: "t6", label: "6", seats: 4 });
+    expect(booking.version).toBe(1);
+
+    const { reservations } = await loadServices();
+    const moved = await reservations.moveReservationTable({
+      reservationNumber: booking.reservationNumber,
+      date: DATE,
+      guests: 2,
+      fromTableId: "t6",
+      to: { id: "t7", label: "7", seats: 4 },
+      source: "guest",
+    });
+
+    expect(moved?.version).toBe(2);
+  });
+});

@@ -123,6 +123,12 @@ const reservationSchema = new Schema(
      */
     tableSource: { type: String, enum: ["owner", "staff", "guest"] },
     tableSetAt: { type: String },
+    /**
+     * Bumped by `$inc` on every write. Not Mongoose's own `__v`, which is an
+     * optimistic-concurrency detail of array updates and means nothing to a
+     * person reading a booking's history.
+     */
+    version: { type: Number, default: 1 },
     status: { type: String, enum: ["confirmed", "cancelled"], default: "confirmed" },
     // The pass-key the guest booked with, and their credential for changing
     // it later. Indexed so "this key's booking" is one query. Absent on staff

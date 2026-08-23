@@ -405,6 +405,25 @@ export type ReservationRecord = {
    * straight out of the database — without joining the log.
    */
   cancellation?: CancellationRecord;
+  /**
+   * How many times this booking has been written, counting its creation.
+   *
+   * The log says what changed; this says **which booking** you are holding. A
+   * history of six entries beside a record with no version leaves "is this the
+   * one the last entry produced, or has something happened since?" unanswerable,
+   * which is the question a version number exists to close.
+   *
+   * Incremented with `$inc` in the same update as the change it counts (rule
+   * 2.7), so two waiters marking different courses cannot lose each other's
+   * bump.
+   *
+   * Absent on every booking written before this existed. Such a booking lands
+   * on 1 with its next write, which looks like a creation and is not one — what
+   * makes that harmless is that the audit entry for the same write carries the
+   * same number, and pairing an entry to the record it produced is the whole
+   * job. Both stores agree on this, deliberately.
+   */
+  version?: number;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -744,6 +763,15 @@ export type AuditEntry = {
    * existed.
    */
   changes?: AuditChange[];
+  /**
+   * The version of the thing this entry produced.
+   *
+   * So a history reads as a sequence rather than a pile: v4 made this, v5 made
+   * that, and the record in front of you says which one it is. Absent on
+   * entries about things that are not versioned, and on everything written
+   * before versions existed.
+   */
+  version?: number;
 };
 
 /**

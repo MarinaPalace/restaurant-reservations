@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { ButtonLink } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/feedback";
 import { cx } from "@/components/ui/utils";
+import { PlanViewport, usePlanDragged } from "@/components/plan-viewport";
 import { FEATURE_LABELS, type FloorFeature, type FloorPlan, type FloorTable } from "@/lib/floor-plan";
 import type { BoardTable } from "@/lib/service-board";
 import { isFinished } from "@/app/admin/service/board-row";
@@ -53,6 +54,12 @@ export function BoardRoom({
   onSelect: (key: string | null) => void;
 }) {
   const [zoneId, setZoneId] = useState(plan.zones[0]?.id ?? "");
+  /**
+   * The table to bring into the frame, set when one is reached by tabbing —
+   * and when the board selects one from the list underneath, so "which one is
+   * that?" is answered by the plan moving to it rather than by hunting.
+   */
+  const [revealed, setRevealed] = useState<FloorTable | null>(null);
   const zone = plan.zones.find((entry) => entry.id === zoneId) ?? plan.zones[0] ?? null;
 
   /** The evening's tables, reachable by the label the plan draws. */
@@ -116,35 +123,39 @@ export function BoardRoom({
         </div>
       ) : null}
 
-      <div className="overflow-x-auto rounded-card border border-line bg-surface p-2 sm:p-3">
-        <svg
-          viewBox={`0 0 ${zone.width} ${zone.height}`}
-          preserveAspectRatio="xMidYMid meet"
-          className="w-full min-w-[36rem] touch-none"
-          role="group"
-          aria-label={`${zone.name}, tonight`}
-          onPointerDown={(event) => {
-            if (event.target === event.currentTarget) onSelect(null);
-          }}
-        >
-          <rect width={zone.width} height={zone.height} className="fill-surface-muted" rx={8} />
+      {/*
+        Through the shared viewport, and that is a fix rather than a tidy-up.
+        This was a `min-w-[36rem]` drawing inside an `overflow-x-auto` wrapper
+        with `touch-none` on the SVG — which is exactly the shape of the bug the
+        guest's picker had (`docs/floor-plan.md` §18). On a tablet held in
+        portrait at the pass, the far half of the room was outside the card and
+        no finger could scroll to it: the tables nobody could reach were the
+        ones nobody could mark served.
+      */}
+      <PlanViewport
+        zone={zone}
+        label={`${zone.name}, tonight`}
+        onBackgroundTap={() => onSelect(null)}
+        reveal={revealed}
+      >
+        <rect width={zone.width} height={zone.height} className="fill-surface-muted" rx={8} />
 
-          {/* The room first, so a table is never hidden under the bar. */}
-          {zone.features.map((feature) => (
-            <RoomFeature key={feature.id} feature={feature} />
-          ))}
+        {/* The room first, so a table is never hidden under the bar. */}
+        {zone.features.map((feature) => (
+          <RoomFeature key={feature.id} feature={feature} />
+        ))}
 
-          {zone.tables.map((table) => (
-            <RoomTable
-              key={table.id}
-              table={table}
-              booking={byLabel.get(table.label.trim().toUpperCase()) ?? null}
-              selected={Boolean(selectedKey) && byLabel.get(table.label.trim().toUpperCase())?.key === selectedKey}
-              onSelect={onSelect}
-            />
-          ))}
-        </svg>
-      </div>
+        {zone.tables.map((table) => (
+          <RoomTable
+            key={table.id}
+            table={table}
+            booking={byLabel.get(table.label.trim().toUpperCase()) ?? null}
+            selected={Boolean(selectedKey) && byLabel.get(table.label.trim().toUpperCase())?.key === selectedKey}
+            onSelect={onSelect}
+            onFocus={() => setRevealed(table)}
+          />
+        ))}
+      </PlanViewport>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-ink-muted">
         <Key className="border-line-strong bg-surface" label="Free" />
@@ -260,12 +271,15 @@ function RoomTable({
   booking,
   selected,
   onSelect,
+  onFocus,
 }: {
   table: FloorTable;
   booking: BoardTable | null;
   selected: boolean;
   onSelect: (key: string) => void;
+  onFocus: () => void;
 }) {
+  const dragged = usePlanDragged();
   const state = !booking
     ? "free"
     : booking.attendance === "no-show"
@@ -298,10 +312,13 @@ function RoomTable({
           ? `Table ${table.label}, ${rooms}, ${booking.guests} guests, ${state}`
           : `Table ${table.label}, free`
       }
-      onClick={() => booking && onSelect(booking.key)}
+      onFocus={onFocus}
+      // Sliding the room past a table must not select it.
+      onClick={() => booking && !dragged() && onSelect(booking.key)}
       onKeyDown={(event) => {
         if (booking && (event.key === "Enter" || event.key === " ")) {
           event.preventDefault();
+          event.stopPropagation();
           onSelect(booking.key);
         }
       }}

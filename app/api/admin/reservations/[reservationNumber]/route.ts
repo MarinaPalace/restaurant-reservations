@@ -126,6 +126,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ re
         reservationNumber: updated.reservationNumber,
         summary: summariseChanges(changes),
         changes,
+        version: updated.version,
       });
     }
 

@@ -84,6 +84,7 @@ type SessionPatch = Partial<
     | "roomNumber"
     | "guestCount"
     | "date"
+    | "tableId"
     | "selections"
     | "language"
   >
@@ -97,6 +98,9 @@ export function writeBookingSession(patch: SessionPatch) {
   const storage = window.sessionStorage;
 
   if (patch.passKey !== undefined) storage.setItem(BOOKING_STORAGE_KEYS.passKey, patch.passKey);
+  // An empty string is a real answer here -- "any table" -- so it is stored
+  // rather than treated as nothing to write.
+  if (patch.tableId !== undefined) storage.setItem(BOOKING_STORAGE_KEYS.tableId, patch.tableId);
   if (patch.passKeyExpiresOn !== undefined) {
     storage.setItem(BOOKING_STORAGE_KEYS.passKeyExpiresOn, patch.passKeyExpiresOn);
   }

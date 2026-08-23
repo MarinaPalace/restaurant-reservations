@@ -105,8 +105,24 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
       return;
     }
 
-    writeBookingSession({ date: selectedDate });
-    router.push("/booking/menu");
+    /**
+     * A different evening is a different room, so a table picked for the old
+     * one cannot come along. Cleared here rather than on the table step,
+     * because going *back* and changing the date is exactly when it would
+     * otherwise survive unnoticed into the booking.
+     */
+    writeBookingSession({ date: selectedDate, tableId: "" });
+
+    /**
+     * Straight past the table step unless this evening offers the choice. The
+     * switch is resolved by the server and arrives on the date
+     * (`docs/evening-features.md` §7), so no second request is needed to find
+     * out — and the step itself checks again, for anybody who links to it.
+     */
+    const evening = findDate(selectedDate);
+    const choosing = evening?.features?.tableSelection && evening.features.tableSelection !== "off";
+
+    router.push(choosing ? "/booking/table" : "/booking/menu");
   };
 
   const selectedEntry = selectedDate ? findDate(selectedDate) : null;

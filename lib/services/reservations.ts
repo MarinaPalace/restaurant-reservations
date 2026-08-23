@@ -4,6 +4,9 @@ import { isMongoConfigured, connectToDatabase } from "@/lib/db/connect";
 import { ReservationModel } from "@/lib/models/reservation";
 import { RestaurantDateModel } from "@/lib/models/restaurant-date";
 import { toEveningOverrides, type EveningOverrides } from "@/lib/evening-features";
+import { claimTable, releaseTable, TableClaimError } from "@/lib/services/table-claims";
+import { getFloorPlan } from "@/lib/services/settings";
+import { allTables } from "@/lib/floor-plan";
 import {
   cancelLocalReservation,
   createLocalReservation,
@@ -100,6 +103,7 @@ type MongoReservationDocument = {
   endTime?: unknown;
   notes?: unknown;
   staffNote?: unknown;
+  tableId?: unknown;
   tableGroupId?: unknown;
   tableNumber?: unknown;
   status?: unknown;
@@ -134,6 +138,7 @@ function toReservationRecord(document: MongoReservationDocument): ReservationRec
     endTime: document.endTime ? String(document.endTime) : undefined,
     notes: document.notes ? String(document.notes) : undefined,
     staffNote: document.staffNote ? String(document.staffNote) : undefined,
+    tableId: document.tableId ? String(document.tableId) : undefined,
     tableGroupId: document.tableGroupId ? String(document.tableGroupId) : undefined,
     tableNumber: document.tableNumber ? String(document.tableNumber) : undefined,
     status: document.status === "cancelled" ? "cancelled" : "confirmed",
@@ -225,6 +230,20 @@ export async function createReservationEntry(input: {
   contact?: ReservationContact;
   notes?: string;
   tableNumber?: string;
+  /**
+   * The table this booking picked, resolved from the plan by the caller.
+   *
+   * Present only when the evening has table selection on and the guest chose.
+   * The caller looks the table up so this module needs to know nothing about
+   * floor plans — and so a request cannot claim against a table nobody checked
+   * exists, or lie about how many it seats.
+   *
+   * When present, `tableNumber` is set from its label, which is the continuity
+   * point the whole feature rests on: the sheet, the board and
+   * `groupRoomRowsByTable` already key on that string and need no changes
+   * (`docs/floor-plan.md` §3).
+   */
+  table?: { id: string; label: string; seats: number };
   kind?: ReservationRecord["kind"];
   guestName?: string;
   /** Reservation number of a party this booking should share a table with. */
@@ -286,6 +305,33 @@ export async function createReservationEntry(input: {
 
   const bookedDate = await getRestaurantDate(input.date);
 
+  /**
+   * The second claim.
+   *
+   * Two things can be exhausted once guests pick their own table, and the seat
+   * count cannot answer the second: a room can have twenty free seats and no
+   * free table that fits four. So the seats are claimed above, the table here,
+   * and **a failure hands the seats straight back** — the same unwinding this
+   * function already does when the write itself fails.
+   *
+   * `docs/floor-plan.md` §2: never a read-then-write. `claimTable` is
+   * conditional all the way down.
+   */
+  if (input.table) {
+    try {
+      await claimTable({
+        date: input.date,
+        tableId: input.table.id,
+        seats: input.table.seats,
+        guests: input.guestCount,
+        reservationNumber,
+      });
+    } catch (error) {
+      await RestaurantDateModel.updateOne({ date: input.date }, { $inc: { reservedSeats: -input.guestCount } });
+      throw error;
+    }
+  }
+
   try {
     const created = await ReservationModel.create({
       reservationNumber,
@@ -301,7 +347,10 @@ export async function createReservationEntry(input: {
       time: bookedDate?.serviceTime,
       endTime: bookedDate?.serviceEndTime,
       notes: input.notes,
-      tableNumber: input.tableNumber,
+      // The claimed table's label becomes the booking's table number, which is
+      // what every downstream screen already reads.
+      tableNumber: input.table?.label ?? input.tableNumber,
+      tableId: input.table?.id,
       tableGroupId,
       status: "confirmed",
       passKeyId: input.passKeyId,
@@ -309,8 +358,20 @@ export async function createReservationEntry(input: {
 
     return toReservationRecord(created.toObject() as MongoReservationDocument);
   } catch (error) {
-    // Give the seats back if the reservation itself could not be written.
+    // Give back both claims if the reservation itself could not be written.
     await RestaurantDateModel.updateOne({ date: input.date }, { $inc: { reservedSeats: -input.guestCount } });
+
+    if (input.table) {
+      await releaseTable({
+        date: input.date,
+        tableId: input.table.id,
+        guests: input.guestCount,
+        reservationNumber,
+      }).catch((releaseError) => {
+        console.error("[reservations] failed to release a table after a failed booking", releaseError);
+      });
+    }
+
     throw error;
   }
 }
@@ -358,7 +419,36 @@ export async function cancelReservation(
   const record = toReservationRecord(cancelled as MongoReservationDocument);
   await RestaurantDateModel.updateOne({ date: record.date }, { $inc: { reservedSeats: -record.guestCount } });
 
+  /**
+   * Both claims come back, not just the seats.
+   *
+   * A cancelled booking that kept its table would block it for the rest of the
+   * evening with nobody sitting there and nothing on any screen to explain it.
+   * `releaseTable` is idempotent (rule 2.7's habit), so the status filter above
+   * already making this safe to run twice extends to the table as well.
+   */
+  await releaseClaimedTable(record);
+
   return record;
+}
+
+/** Hands a booking's table back, if it held one. Safe to call twice. */
+async function releaseClaimedTable(record: ReservationRecord): Promise<void> {
+  if (!record.tableId) {
+    return;
+  }
+
+  await releaseTable({
+    date: record.date,
+    tableId: record.tableId,
+    guests: record.guestCount,
+    reservationNumber: record.reservationNumber,
+  }).catch((error) => {
+    // The booking is already cancelled and its seats are back. A table that
+    // failed to release is a table that reads busy — visible and fixable —
+    // rather than a cancellation that half happened.
+    console.error("[reservations] failed to release a table on cancellation", error);
+  });
 }
 
 export class RestoreError extends Error {
@@ -376,6 +466,13 @@ export class RestoreError extends Error {
  * so they must be claimed again — with the same single conditional update used
  * when a booking is made, so a restore and a new booking racing for the last
  * table cannot both win. If the record write then fails, the seats go back.
+ *
+ * **The table is a fresh claim too** (`docs/floor-plan.md` §7). It was released
+ * on cancellation and somebody else may be sitting there now, so a restore that
+ * assumed it back would double-book the room. If the table has gone, the
+ * restore fails cleanly and hands the seats back rather than restoring a
+ * booking to a table that is taken — the guest can be given another one, but
+ * two parties at one table is not recoverable at the door.
  */
 export async function restoreReservation(reservationNumber: string): Promise<ReservationRecord | null> {
   if (!isMongoConfigured()) {
@@ -417,6 +514,39 @@ export async function restoreReservation(reservationNumber: string): Promise<Res
   if (!claimed) {
     const target = await RestaurantDateModel.findOne({ date: existing.date }).lean();
     throw new RestoreError(!target || !target.isOpen ? "DATE_CLOSED" : "DATE_FULL");
+  }
+
+  /**
+   * The table, claimed fresh — see the note above. It was given back when the
+   * booking was cancelled, so it has to be won again like any other, and a
+   * failure hands the seats straight back.
+   */
+  if (existing.tableId) {
+    const plan = await getFloorPlan();
+    const table = allTables(plan).find((entry) => entry.id === existing.tableId);
+
+    try {
+      // A table that has since been deleted from the plan cannot be claimed,
+      // and the restore has to say so rather than quietly restoring a booking
+      // to a table that no longer exists.
+      if (!table) {
+        throw new TableClaimError("TABLE_TAKEN");
+      }
+
+      await claimTable({
+        date: existing.date,
+        tableId: table.id,
+        seats: table.seats,
+        guests: existing.guestCount,
+        reservationNumber,
+      });
+    } catch (error) {
+      await RestaurantDateModel.updateOne(
+        { date: existing.date },
+        { $inc: { reservedSeats: -existing.guestCount } },
+      );
+      throw error;
+    }
   }
 
   try {

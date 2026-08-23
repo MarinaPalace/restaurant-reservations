@@ -357,6 +357,22 @@ export type ReservationRecord = {
   tableGroupId?: string;
   /** Assigned by staff in the dashboard; blank until someone sets it. */
   tableNumber?: string;
+  /**
+   * The plan table this booking holds a claim on.
+   *
+   * Stored beside `tableNumber` rather than instead of it, because they answer
+   * different questions. The number is what everybody *calls* the table and is
+   * what the sheet, the board and `groupRoomRowsByTable` read; this is the
+   * plan's own stable id, and it is what a cancellation releases.
+   *
+   * A label can be renamed in the designer — resolving the claim back through
+   * one at cancellation time would release whichever table happens to answer to
+   * that string today, which may be a different table entirely, or none.
+   *
+   * Absent on every booking taken before table selection, on every booking made
+   * with it off, and on any table a member of staff typed in by hand.
+   */
+  tableId?: string;
   status: ReservationStatus;
   /**
    * The pass-key this booking was made with. It is what lets the guest come

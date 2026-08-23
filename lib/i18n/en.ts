@@ -59,6 +59,7 @@ export const en = {
     room: "Your stay",
     guests: "Guests",
     date: "Date",
+    table: "Table",
     menu: "Menu",
     summary: "Confirm",
   },

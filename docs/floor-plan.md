@@ -341,11 +341,11 @@ Confirmed against a running server: a plan with a `helipad` came back `400`; a p
 came back 800 and moved so it still fits; a table at `37,63` came back at `40,60`; a rotation of 45°
 came back 90°.
 
-## 12. Still not started: the guests' picker
+## 12. Was: still not started — the guests' picker
 
-> **Since §16:** the mode can now also be set **per evening** — see `docs/evening-features.md`. That
-> changes where the answer comes from and nothing about what is missing here: with no picker, an
-> evening set to `optional` or `required` still shows a guest nothing.
+> **Superseded by §17.** The picker and the table claim are built. What follows is the note as it
+> stood while they were not, kept because its instruction — §2 first, and the concurrency test before
+> the claim — is what the build actually followed, and what found the flaw in §2's own recommendation.
 
 
 §6 is untouched and stays untouched until the designer is right, which is the order asked for. When
@@ -596,3 +596,100 @@ the single side, the round arc and its bounds, facing sides staying apart, all-f
 to what `chairPositions` drew before, and the sides surviving a round trip including nonsense and
 the empty list. `tsc`, `eslint` and the full suite (756 tests) are clean. **Not driven against a
 running server.**
+
+---
+
+## 17. §9 step 3: the claim, and the picker
+
+The switch from §15 could be turned on and a guest saw nothing, because §6 had never been built. It
+is built now, and §2 was the section that mattered.
+
+### The concurrency test came first, and it earned its place immediately
+
+`lib/services/table-claims.mongo.test.ts` was written before a line of the claim reached the booking
+flow, as §2 asks. It found the design note's own recommendation to be impossible:
+
+**MongoDB rejects `$expr` in the query predicate of an upsert.** The single conditional upsert
+sketched in §2 cannot be written. Had the claim been wired in first and tested after, this would have
+surfaced as a runtime error on a live booking.
+
+So the claim is **two atomic steps**, and neither is a read-then-write:
+
+1. **Join** — a conditional update with no upsert, matching only if a claim exists *and* this party
+   still fits beside whoever is on it.
+2. **Open** — a plain insert, with the unique index on `(date, tableId)` deciding the race.
+
+A duplicate-key error from step 2 is contention rather than a bug: somebody created the claim between
+our join missing and our insert. The retry is **required, not defensive** — the table may still have
+room for us, and failing there would refuse a booking that fits. There is a test for exactly that,
+and it fails without the retry.
+
+Two guards, doing different jobs: the party-size check covers the empty table, which `$expr` never
+sees because there is no document; the `$expr` covers the contended one.
+
+### What the claim gives for free
+
+Sharing is not a special case — a claim with two reservation numbers on it *is* a shared table, which
+is what `tableGroupId` already meant. Growing a party only needs room for the extra guests.
+
+Releasing is idempotent by filter rather than by checking first: the booking must still be on the
+claim for the update to match, so a cancel that runs twice cannot leave a table reading free while
+somebody is sitting at it.
+
+**Seat accounting is untouched.** `reservedSeats` means exactly what it meant. A booking with the
+plan on makes two claims, and the second failing hands the first back — the same unwinding
+`createReservationEntry` already did when a write failed.
+
+### `tableId` on the booking, beside `tableNumber`
+
+They answer different questions. The number is what everybody *calls* the table and is what the
+sheet, the board and `groupRoomRowsByTable` read — unchanged, which is the continuity §3 promised.
+`tableId` is the plan's stable id and is what a cancellation releases.
+
+Resolving the claim back through the label at cancellation time would release whichever table answers
+to that string *today*, which may be a different table entirely after a rename, or none.
+
+### Cancelling and restoring
+
+Cancelling releases both claims. A cancelled booking that kept its table would block it all evening
+with nobody there and nothing on any screen to explain it.
+
+Restoring takes a **fresh claim on both** (§7). The table was given back on cancellation and somebody
+may be sitting there now; a restore that assumed it back would double-book the room. If the table has
+gone — taken, or deleted from the plan — the restore fails cleanly and hands the seats back. The
+guest can be given another table; two parties at one table cannot be fixed at the door.
+
+### The picker
+
+A step between the date and the menu, because both the date and the party size are needed to say what
+can be offered. It fetches rather than being handed the room, unlike every other step, because both
+of those live in `sessionStorage` — and because the room is the one thing on this flow another guest
+can change while it is on screen.
+
+- **Nothing says who has a table.** "Taken" is all a guest is told, and that is enforced by the
+  *shape* `offerTables` builds rather than by the screen choosing not to render it: there is no room
+  number in a `TableOffer` to leak. The seats already taken are not exposed either — "two of its four
+  seats have gone" is still something about a stranger's party.
+- **Taken tables stay drawn**, greyed and not tappable (rule 2.14). A room with them removed is a
+  different room every time it loads.
+- **"Any table" unless the evening insists.** Most guests do not care, and forcing a choice adds a
+  step to a flow that is otherwise four.
+- **Unlabelled tables are dropped entirely**, not shown as unavailable. The label becomes
+  `tableNumber`; drawing an unlabelled table as taken would be a lie about a free one.
+- **A claim can still fail between drawing and submitting.** That is a `409` and the guest goes back
+  to the picker with the table now visibly taken — the same shape as a full evening.
+- An evening where nothing can be offered says so and lets the booking go ahead anyway. The seats are
+  still there, and refusing a dinner over the seating would be absurd.
+
+The step is on the rail for every flow but walked only by some: an evening with selection off routes
+the guest straight from the date to the menu, and the step itself checks again for anybody who links
+to it directly. A fixed rail was chosen over one that grows and shrinks per evening, because the one
+thing worse than an extra label is a progress bar that goes backwards.
+
+### Still open
+
+- **`assignTableNumber` does not move the claim.** §7 says it must, or the two disagree: staff typing
+  a table number by hand today sets `tableNumber` without claiming, so a guest could later be offered
+  a table reception has already given away on paper. It is a real gap and the next thing to close.
+- **Changing a table from the manage screen** (§8.3) is not built. A guest who wants a different
+  table telephones, as they did before.

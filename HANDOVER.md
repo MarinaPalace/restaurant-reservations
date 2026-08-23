@@ -784,6 +784,14 @@ guests to arrive ten minutes early.
 tracking — asked for, deliberately not built, and written down so the next session starts from a
 decision rather than a blank page.
 
+## 5A. Decided but not built
+
+`docs/backlog.md` is the list: the wallet reservation card, and running more than one restaurant.
+Each entry says what it would touch and what has to be settled first. `docs/multi-restaurant.md`
+carries the full plan for the second one, including **when** — the winter closure, and not before.
+
+---
+
 ## 6. Known limitations and open items
 
 Roughly in the order I would tackle them for beta.

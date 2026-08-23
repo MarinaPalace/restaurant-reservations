@@ -72,6 +72,8 @@ export default function SummaryPage() {
           contact: normalizeContact(contact),
           notes: notes.trim() || undefined,
           joinReservationNumber: shareTable && joinNumber.trim() ? joinNumber.trim().toUpperCase() : undefined,
+          // Empty means "any table", which the route reads as no claim at all.
+          tableId: session.tableId || undefined,
         }),
       });
 
@@ -82,6 +84,17 @@ export default function SummaryPage() {
         // client guessing from the wording of the message.
         if (data.code === "DATE_UNAVAILABLE") {
           router.push("/booking/date");
+          return;
+        }
+
+        /**
+         * Somebody took the table between the room being drawn and this
+         * submission. Back to the picker rather than an error on the summary:
+         * the plan reloads with the table now visibly taken, which is both the
+         * explanation and the way to fix it.
+         */
+        if (data.code === "TABLE_TAKEN") {
+          router.push("/booking/table");
           return;
         }
 

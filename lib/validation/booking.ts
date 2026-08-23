@@ -81,6 +81,14 @@ export const createReservationSchema = z.object({
   notes: z.string().trim().max(500).optional(),
   /** Reservation number of the party this booking wants to share a table with. */
   joinReservationNumber: z.string().trim().max(40).optional(),
+  /**
+   * The table the guest picked, by the plan's own id.
+   *
+   * Only the id: the route resolves the label and the seat count from the plan
+   * (rule 2.6's habit), because a request that named its own seat count could
+   * claim a two-top for six.
+   */
+  tableId: z.string().trim().max(64).optional(),
 });
 
 export type CreateReservationInput = z.infer<typeof createReservationSchema>;

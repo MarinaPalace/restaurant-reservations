@@ -47,6 +47,7 @@ export const ru: PartialDictionary = {
     room: "Ваше проживание",
     guests: "Гости",
     date: "Дата",
+    table: "Столик",
     menu: "Меню",
     summary: "Подтверждение",
   },

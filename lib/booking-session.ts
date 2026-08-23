@@ -12,6 +12,7 @@ export const BOOKING_STORAGE_KEYS = {
   roomNumber: "booking-room-number",
   guestCount: "booking-guest-count",
   date: "booking-date",
+  tableId: "booking-table-id",
   selections: "booking-selections",
   language: "booking-language",
   confirmation: "reservation-confirmation",
@@ -46,6 +47,14 @@ export type BookingSession = {
   /** 0 means "not chosen yet", which is different from a party of one. */
   guestCount: number;
   date: string;
+  /**
+   * The table the guest picked, by the plan's own id.
+   *
+   * Empty means "any table", which is a real answer rather than a missing one:
+   * most guests do not care where they sit, and the evening only insists when
+   * it is set to `required`.
+   */
+  tableId: string;
   selections: ReservationSelection[];
   language: string;
 };
@@ -58,6 +67,7 @@ export const EMPTY_BOOKING_SESSION: BookingSession = {
   roomNumber: "",
   guestCount: 0,
   date: "",
+  tableId: "",
   selections: [],
   language: "en",
 };
@@ -133,6 +143,10 @@ export function readBookingSession(storage: Storage | null | undefined): Booking
     roomNumber: isValidRoomNumber(roomNumber) ? normalizeRoomNumber(roomNumber) : "",
     guestCount: parseGuestCount(storage.getItem(BOOKING_STORAGE_KEYS.guestCount)),
     date: isValidDateKey(date) ? date : "",
+    // Read back as an opaque id: whether it still exists on the plan is the
+    // route's question, and a stale one costs a booking with no table rather
+    // than a wrong table.
+    tableId: (storage.getItem(BOOKING_STORAGE_KEYS.tableId) ?? "").slice(0, 64),
     selections: normalizeSelections(parseJson(storage.getItem(BOOKING_STORAGE_KEYS.selections))),
     language: storage.getItem(BOOKING_STORAGE_KEYS.language) || "en",
   };

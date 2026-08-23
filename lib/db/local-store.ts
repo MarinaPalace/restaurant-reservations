@@ -3,6 +3,7 @@ import { getDataFilePath, readJsonFile, writeJsonFile } from "@/lib/db/json-file
 import { withStoreLock } from "@/lib/db/store-lock";
 import { DEFAULT_MENU, buildDefaultDates } from "@/lib/db/seed-data";
 import { toEveningOverrides, type EveningOverrides } from "@/lib/evening-features";
+import { TableClaimError, type TableClaimRecord } from "@/lib/services/table-claims";
 import {
   withRemainingSeats,
   type CancellationRecord,
@@ -23,6 +24,7 @@ import {
 const MENU_FILE = "menu.json";
 const DATES_FILE = "dates.json";
 const RESERVATIONS_FILE = "reservations.json";
+const TABLE_CLAIMS_FILE = "table-claims.json";
 
 async function readMenu(): Promise<MenuCourse[]> {
   const menu = await readJsonFile<MenuCourse[]>(getDataFilePath(MENU_FILE), []);
@@ -183,6 +185,8 @@ export async function createLocalReservation(input: {
   contact?: ReservationRecord["contact"];
   notes?: string;
   tableNumber?: string;
+  /** The table this booking picked, resolved from the plan by the caller. */
+  table?: { id: string; label: string; seats: number };
   tableGroupId?: string;
   kind?: ReservationRecord["kind"];
   guestName?: string;
@@ -202,6 +206,29 @@ export async function createLocalReservation(input: {
       return { ok: false, reason: "DATE_FULL" };
     }
 
+    /**
+     * The table, claimed inside the same lock as the seats.
+     *
+     * A refusal here leaves the seats untouched, because nothing has been
+     * written yet — the local store gets for free what Mongo has to unwind by
+     * hand.
+     */
+    let claims: TableClaimRecord[] | null = null;
+
+    if (input.table) {
+      claims = await readTableClaims();
+
+      // Thrown rather than returned, so both stores fail a taken table the
+      // same way and the route has one error to handle.
+      applyTableClaim(claims, {
+        date: input.date,
+        tableId: input.table.id,
+        seats: input.table.seats,
+        guests: input.guestCount,
+        reservationNumber: input.reservationNumber,
+      });
+    }
+
     const timestamp = new Date().toISOString();
     const reservation: ReservationRecord = {
       reservationNumber: input.reservationNumber,
@@ -218,7 +245,8 @@ export async function createLocalReservation(input: {
       time: dateEntry.serviceTime,
       endTime: dateEntry.serviceEndTime,
       notes: input.notes,
-      tableNumber: input.tableNumber,
+      tableNumber: input.table?.label ?? input.tableNumber,
+      tableId: input.table?.id,
       tableGroupId: input.tableGroupId,
       status: "confirmed",
       passKeyId: input.passKeyId,
@@ -232,6 +260,10 @@ export async function createLocalReservation(input: {
 
     await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
     await writeJsonFile(getDataFilePath(DATES_FILE), dates);
+
+    if (claims) {
+      await writeJsonFile(getDataFilePath(TABLE_CLAIMS_FILE), claims);
+    }
 
     return { ok: true, reservation };
   });
@@ -425,6 +457,128 @@ export async function updateLocalReservationAddOns(
 }
 
 /** The staff-only note. Empty clears it, so unset has one representation. */
+/* ------------------------------------------------------------------ *
+ * Table claims
+ * ------------------------------------------------------------------ */
+
+/**
+ * The local mirror of `lib/services/table-claims.ts`.
+ *
+ * Everything happens **inside the store lock**, which is this store's
+ * equivalent of the conditional update Mongo does: the read and the write
+ * cannot be interleaved by another claim, so two parties racing for the last
+ * place at a table cannot both be told yes.
+ */
+export async function claimLocalTable(input: {
+  date: string;
+  tableId: string;
+  seats: number;
+  guests: number;
+  reservationNumber: string;
+}): Promise<TableClaimRecord> {
+  return withStoreLock(async () => {
+    const claims = await readTableClaims();
+    const next = applyTableClaim(claims, input);
+    await writeJsonFile(getDataFilePath(TABLE_CLAIMS_FILE), claims);
+    return next;
+  });
+}
+
+/**
+ * The claim itself, without taking the lock.
+ *
+ * Split out because `createLocalReservation` already holds it, and
+ * `withStoreLock` is a plain mutex rather than a reentrant one — calling the
+ * locking version from inside it would deadlock the whole store rather than
+ * fail. Booking a table locally is therefore one lock covering the seats *and*
+ * the table, which is stronger than the two separate conditional updates Mongo
+ * needs and is the same guarantee.
+ *
+ * Mutates `claims` in place; the caller writes the file.
+ */
+function applyTableClaim(
+  claims: TableClaimRecord[],
+  input: { date: string; tableId: string; seats: number; guests: number; reservationNumber: string },
+): TableClaimRecord {
+  const index = claims.findIndex(
+    (claim) => claim.date === input.date && claim.tableId === input.tableId,
+  );
+  const existing = index === -1 ? null : claims[index];
+
+  // Already on this claim: the same booking asking twice must not be counted
+  // twice, which is what `$addToSet` and the `$ne` filter buy on the Mongo path.
+  if (existing?.reservationNumbers.includes(input.reservationNumber)) {
+    return existing;
+  }
+
+  const seated = existing?.guests ?? 0;
+
+  if (seated + input.guests > input.seats) {
+    throw new TableClaimError(input.guests > input.seats ? "TABLE_TOO_SMALL" : "TABLE_TAKEN");
+  }
+
+  const next: TableClaimRecord = {
+    date: input.date,
+    tableId: input.tableId,
+    guests: seated + input.guests,
+    reservationNumbers: [...(existing?.reservationNumbers ?? []), input.reservationNumber],
+  };
+
+  if (index === -1) {
+    claims.push(next);
+  } else {
+    claims[index] = next;
+  }
+
+  return next;
+}
+
+export async function releaseLocalTable(input: {
+  date: string;
+  tableId: string;
+  guests: number;
+  reservationNumber: string;
+}): Promise<void> {
+  await withStoreLock(async () => {
+    const claims = await readTableClaims();
+    const index = claims.findIndex(
+      (claim) => claim.date === input.date && claim.tableId === input.tableId,
+    );
+
+    // Idempotent: a booking that is not on the claim leaves it alone rather
+    // than decrementing a table somebody else is sitting at.
+    if (index === -1 || !claims[index].reservationNumbers.includes(input.reservationNumber)) {
+      return;
+    }
+
+    const remaining = claims[index].reservationNumbers.filter(
+      (entry) => entry !== input.reservationNumber,
+    );
+
+    if (remaining.length === 0) {
+      claims.splice(index, 1);
+    } else {
+      claims[index] = {
+        ...claims[index],
+        guests: Math.max(0, claims[index].guests - input.guests),
+        reservationNumbers: remaining,
+      };
+    }
+
+    await writeJsonFile(getDataFilePath(TABLE_CLAIMS_FILE), claims);
+  });
+}
+
+export async function listLocalTableClaims(date: string): Promise<TableClaimRecord[]> {
+  const claims = await readTableClaims();
+  return claims.filter((claim) => claim.date === date);
+}
+
+async function readTableClaims(): Promise<TableClaimRecord[]> {
+  const claims = await readJsonFile<TableClaimRecord[]>(getDataFilePath(TABLE_CLAIMS_FILE), []);
+  return Array.isArray(claims) ? claims : [];
+}
+
 export async function updateLocalReservationStaffNote(reservationNumber: string, note: string) {
   return withStoreLock(async () => {
     const reservations = await readReservations();

@@ -111,6 +111,8 @@ const reservationSchema = new Schema(
      * by any screen.
      */
     staffNote: { type: String },
+    /** The plan table this booking claims. See the type for why it is not the label. */
+    tableId: { type: String },
     // Shared by rooms dining together; indexed so a group loads in one query.
     tableGroupId: { type: String, index: true },
     tableNumber: { type: String },

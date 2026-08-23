@@ -45,6 +45,7 @@ export const ro: PartialDictionary = {
     room: "Sejurul dumneavoastră",
     guests: "Invitați",
     date: "Data",
+    table: "Masă",
     menu: "Meniu",
     summary: "Confirmare",
   },

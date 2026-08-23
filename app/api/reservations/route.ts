@@ -6,6 +6,9 @@ import {
   reserveReservationNumber,
 } from "@/lib/services/reservations";
 import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
+import { getEveningFeatures, getFloorPlan } from "@/lib/services/settings";
+import { findPlanTable } from "@/lib/floor-plan-availability";
+import { TableClaimError } from "@/lib/services/table-claims";
 import { canGuestBookDate } from "@/lib/reservation-policy";
 import { BOOKING_MESSAGES, validateReservationRequest } from "@/lib/services/booking-rules";
 import {
@@ -184,7 +187,27 @@ export async function POST(request: Request) {
 
     claimedKeyId = spent.id;
 
+    /**
+     * The table, resolved from the plan rather than trusted from the request.
+     *
+     * Three things have to be true before a table is claimed, and each is
+     * checked here rather than anywhere the guest can reach:
+     *
+     * - **This evening actually offers the choice.** A request naming a table
+     *   for an evening with selection off is ignored rather than refused: the
+     *   guest gets the booking they asked for, and the field they should never
+     *   have been able to send simply does nothing.
+     * - **The table exists on the plan**, and it is the plan that says how many
+     *   it seats. Rule 2.6: resolve from what is stored, never from what was
+     *   posted.
+     * - **It is in service and labelled**, since the label becomes the
+     *   booking's `tableNumber` and an unlabelled table could not be named on
+     *   the service sheet afterwards.
+     */
+    const table = await resolveTable(parsed.data.date, parsed.data.tableId);
+
     const reservation = await createReservationEntry({
+      table,
       reservationNumber: claimedReservationNumber,
       roomNumber: parsed.data.roomNumber,
       guestCount: parsed.data.guestCount,
@@ -215,6 +238,24 @@ export async function POST(request: Request) {
       });
     }
 
+    /**
+     * Somebody else took the table between the plan being drawn and this
+     * request arriving. A `409` with the same shape as a full evening — the
+     * screen reloads the room and the table is now visibly taken.
+     */
+    if (error instanceof TableClaimError) {
+      return NextResponse.json(
+        {
+          error:
+            error.code === "TABLE_TOO_SMALL"
+              ? "That table is not big enough for your party. Please choose another."
+              : "Somebody has just taken that table. Please choose another.",
+          code: "TABLE_TAKEN",
+        },
+        { status: 409 },
+      );
+    }
+
     // The party being joined may have gone away between choosing it and here.
     if (error instanceof TableJoinError) {
       return NextResponse.json({ error: error.message, code: "TABLE_JOIN_FAILED" }, { status: 409 });
@@ -234,4 +275,40 @@ export async function POST(request: Request) {
     console.error("[reservations] failed to create reservation", error);
     return NextResponse.json({ error: GENERIC_ERROR }, { status: 500 });
   }
+}
+
+/**
+ * The plan table a request named, or nothing.
+ *
+ * Nothing is the right answer far more often than an error is: an evening with
+ * selection off, a request from an older screen, a table since taken out of
+ * service. In every one of those the guest asked for a dinner and should get
+ * one — the seat claim is what actually holds their place, and the table is an
+ * additional nicety that either works or does not.
+ *
+ * The one case that *is* an error is a table that exists, is offerable, and
+ * cannot be claimed — and that is raised by `claimTable`, not here.
+ */
+async function resolveTable(
+  date: string,
+  tableId: string | undefined,
+): Promise<{ id: string; label: string; seats: number } | undefined> {
+  if (!tableId) {
+    return undefined;
+  }
+
+  const evening = await getRestaurantDate(date);
+  const features = await getEveningFeatures(evening);
+
+  if (features.tableSelection === "off") {
+    return undefined;
+  }
+
+  const table = findPlanTable(await getFloorPlan(), tableId);
+
+  if (!table || !table.active || !table.label.trim()) {
+    return undefined;
+  }
+
+  return { id: table.id, label: table.label.trim(), seats: table.seats };
 }

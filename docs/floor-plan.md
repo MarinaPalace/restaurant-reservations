@@ -1107,9 +1107,35 @@ Three things follow for free:
   seats, with the seats lost where they meet spelled out. Staff who expect eight
   find out at the plan and not on the night.
 
-`combineTables` searches stretches shortest-first and takes the fewest seats
-among them, and it has to *try* them rather than reason about them: adding a
-table to a stretch can add fewer seats than that table has.
+`combineTables` searches stretches shortest-first, and it has to *try* them
+rather than reason about them: adding a table to a stretch can add fewer seats
+than that table has.
+
+### Where along the row is the guest's choice
+
+§21 offered one combination per group and defended it: a guest asked to choose
+between eleven ways to seat five is being asked to do the maitre d's job. Half
+of that was right and half was not, and a room of six two-tops shows which half.
+
+A party of six fits on three of them in **four different places** — 1+2+3,
+2+3+4, 3+4+5, 4+5+6. Those are not eleven ways to do the same thing. One is by
+the window and one is by the door, and which of them a guest wants is precisely
+the question the picker exists to ask. So every stretch that fits is offered.
+
+**How many tables is still not their choice.** Every stretch offered is the same
+length — the fewest that will seat the party — because a party of six given four
+tables to push together has been sold a worse evening and the room has lost a
+table for nothing. The row offers *where*, never *how many*. Tightest first, so
+a guest who does not care takes the one that costs the room least, and capped at
+`MAX_COMBINATIONS_PER_ROW`, since a dozen near-identical buttons is a list to
+get lost in rather than a choice.
+
+Offered stretches overlap, and the plan had to answer for it: table 3 above is
+in three of the four offers. Tapping a table takes the **first** stretch holding
+it — the tightest — rather than the last, which would have depended on the order
+the search happened to run in. A stretch already chosen stays chosen when one of
+its tables is tapped again, so a guest letting go of an offer does not silently
+land on a different one that shares a table.
 
 One real gap this closed. The booking route never checked the party against the
 combination's seats, and nothing below it would: a merged holding claims each

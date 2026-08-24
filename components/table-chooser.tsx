@@ -143,14 +143,24 @@ function TableList({
       {/*
         Tables pushed together come first, and only appear when no single table
         would have done — so on the evening a guest sees them, they are the
-        answer rather than an option to weigh up.
+        answer rather than something to weigh against an ordinary table.
+
+        Several are offered when the room allows it: the same number of tables
+        in different parts of the hall, which is a real choice. How many tables
+        is not offered, because that is the restaurant's arithmetic.
       */}
       {zone.combinations.length > 0 ? (
         <div className="mb-4">
-          <h2 className="text-sm font-medium text-ink-muted">Tables pushed together for your party</h2>
+          <h2 className="text-sm font-medium text-ink-muted">
+            {zone.combinations.length > 1
+              ? "Choose tables to be pushed together"
+              : "Tables pushed together for your party"}
+          </h2>
           <p className="mt-0.5 text-xs text-ink-subtle">
-            No single table in {zone.name} seats your party, so these are joined for you. The seats
-            shown are what they seat pushed together, which is fewer than their two totals added up.
+            No single table in {zone.name} seats your party, so these are joined for you.
+            {zone.combinations.length > 1 ? " Pick whichever part of the room you would rather sit in." : ""}{" "}
+            The seats shown are what they seat pushed together, which is fewer than their totals
+            added up.
           </p>
           <ul className="mt-2 grid gap-2 sm:grid-cols-2">
             {zone.combinations.map((combination) => (

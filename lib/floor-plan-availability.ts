@@ -30,6 +30,16 @@ import type { TableClaimRecord } from "@/lib/services/table-claims";
  */
 
 /**
+ * How many places along one row a party is offered.
+ *
+ * A long row of two-tops fits a party of six in a dozen places, and a dozen
+ * near-identical buttons is not a choice — it is a list to get lost in. The
+ * tightest few are kept, which for any room somebody actually laid out is all
+ * of them.
+ */
+export const MAX_COMBINATIONS_PER_ROW = 6;
+
+/**
  * Why a table cannot be picked, when it cannot.
  *
  * `kept-for-larger` is the one that is not about the table at all: it fits, it
@@ -201,13 +211,18 @@ export function offerTables(
 /**
  * The tables to push together for a party no single table can take.
  *
- * ## One answer per row, not a menu
+ * ## Where along the row is the guest's choice
  *
- * A row of four tables offers several stretches that would fit a party of five,
- * and a guest asked to choose between them is being asked to do the maitre
- * d's job. Each row therefore offers **one**: the fewest tables that will do,
- * and among those the fewest seats — so a party of five is given two four-tops
- * rather than three, and the third table is still there for somebody else.
+ * A row of six two-tops seats a party of six in four different places — the
+ * first three tables, or the second three, and so on. They are not the same
+ * offer: one is by the window and one is by the door, and which of those a
+ * guest wants is exactly the thing the picker exists to ask. So every stretch
+ * that fits is offered.
+ *
+ * **How many tables is not their choice.** Every stretch offered is the same
+ * length — the fewest tables that will seat the party — because a party of six
+ * given four tables to push together has been sold a worse evening and the room
+ * has lost a table for nothing. So the row offers where, and never how many.
  *
  * ## Only a stretch of the row
  *
@@ -274,21 +289,17 @@ function combineTables(
     }
 
     for (const row of rows.values()) {
-      const chosen = shortestStretchThatFits(row, guests);
+      for (const stretch of shortestStretchesThatFit(row, guests)) {
+        const id = stretch.map((table) => table.id).join("+");
 
-      if (!chosen) {
-        continue;
+        combinations.set(id, {
+          id,
+          tableIds: stretch.map((table) => table.id),
+          labels: stretch.map((table) => table.label),
+          seats: joinedSeats(stretch),
+          axis,
+        });
       }
-
-      const id = chosen.map((table) => table.id).join("+");
-
-      combinations.set(id, {
-        id,
-        tableIds: chosen.map((table) => table.id),
-        labels: chosen.map((table) => table.label),
-        seats: joinedSeats(chosen),
-        axis,
-      });
     }
   }
 
@@ -299,43 +310,42 @@ function combineTables(
 }
 
 /**
- * The shortest stretch of one row that seats the party.
+ * Every stretch of one row, of the fewest tables that will seat the party.
  *
- * Every stretch is tried, shortest first, and the first length that answers
- * wins — with the fewest seats breaking a tie, so a party of five in a row of
- * 4, 6, 4 is given the two four-tops rather than the four and the six.
+ * Lengths are tried shortest first and the search stops at the one that
+ * answers, so a party that fits on two tables is never offered three. All the
+ * places that length fits are then returned together: they are the same amount
+ * of furniture in different parts of the room, which is a choice worth giving.
  *
  * Tried rather than reasoned about, because the seat count of a stretch is not
  * the sum of its tables: each junction costs the chairs standing where the next
  * table now is, so adding a table to a stretch can add fewer seats than that
  * table has — and, for a two-seater joined on both sides, none at all.
+ *
+ * Ordered tightest first, so the stretch that costs the room least is the one
+ * a guest who does not care takes.
  */
-function shortestStretchThatFits(row: readonly FloorTable[], guests: number): FloorTable[] | null {
+function shortestStretchesThatFit(row: readonly FloorTable[], guests: number): FloorTable[][] {
   for (let length = 2; length <= row.length; length += 1) {
-    let best: FloorTable[] | null = null;
-    let bestSeats = 0;
+    const fitting: FloorTable[][] = [];
 
     for (let from = 0; from + length <= row.length; from += 1) {
       const stretch = row.slice(from, from + length);
-      const seats = joinedSeats(stretch);
 
-      if (seats < guests) {
-        continue;
-      }
-
-      if (!best || seats < bestSeats) {
-        best = stretch;
-        bestSeats = seats;
+      if (joinedSeats(stretch) >= guests) {
+        fitting.push(stretch);
       }
     }
 
-    // Nothing shorter can win, so the search stops at the length that answered.
-    if (best) {
-      return best;
+    // Nothing shorter can answer, so this length is the answer.
+    if (fitting.length > 0) {
+      return fitting
+        .sort((a, b) => joinedSeats(a) - joinedSeats(b))
+        .slice(0, MAX_COMBINATIONS_PER_ROW);
     }
   }
 
-  return null;
+  return [];
 }
 
 /**

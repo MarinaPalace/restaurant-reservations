@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { findPlanCombination, offerTables } from "@/lib/floor-plan-availability";
+import {
+  MAX_COMBINATIONS_PER_ROW,
+  findPlanCombination,
+  offerTables,
+} from "@/lib/floor-plan-availability";
 import type { ChairSide, FloorPlan, FloorTable } from "@/lib/floor-plan";
 import type { TableClaimRecord } from "@/lib/services/table-claims";
 
@@ -66,13 +70,36 @@ describe("a party no single table can take", () => {
   it("pushes two neighbours together", () => {
     const [zone] = offerTables(ROW, [], 5);
 
-    expect(zone.combinations).toHaveLength(1);
     expect(zone.combinations[0]).toMatchObject({
       id: "t13+t12",
       tableIds: ["t13", "t12"],
       labels: ["13", "12"],
       axis: "horizontal",
     });
+  });
+
+  it("offers every place along the row the party fits", () => {
+    /**
+     * Four tables in a line hold a party of five in three places, and they are
+     * not the same offer: one end of the row is by the window and the other is
+     * by the door. Which of those a guest wants is the question the picker is
+     * asking.
+     */
+    const [zone] = offerTables(ROW, [], 5);
+
+    expect(zone.combinations.map((entry) => entry.id)).toEqual([
+      "t13+t12",
+      "t12+t11",
+      "t11+t1",
+    ]);
+  });
+
+  it("never offers more tables than the party needs", () => {
+    // Every offer is the same length — the fewest that will do. Where is the
+    // guest's choice; how many is not.
+    const lengths = new Set(offerTables(ROW, [], 5)[0].combinations.map((e) => e.tableIds.length));
+
+    expect([...lengths]).toEqual([2]);
   });
 
   it("does not sell the chairs that are lost where the tables meet", () => {
@@ -219,6 +246,64 @@ describe("a party no single table can take", () => {
     );
 
     expect(offerTables(unlabelled, [], 5)[0].combinations).toEqual([]);
+  });
+});
+
+describe("a row of six two-tops", () => {
+  /** Six two-tops in a line, which is the room this was reported from. */
+  const TWOS = plan(
+    row(
+      ["1", "2", "3", "4", "5", "6"].map((label) =>
+        table({ id: `t${label}`, label, seats: 2 }),
+      ),
+    ),
+  );
+
+  it("seats a party of six on three of them, in four places", () => {
+    const [zone] = offerTables(TWOS, [], 6);
+
+    expect(zone.combinations.map((entry) => entry.id)).toEqual([
+      "t1+t2+t3",
+      "t2+t3+t4",
+      "t3+t4+t5",
+      "t4+t5+t6",
+    ]);
+    expect(zone.combinations.every((entry) => entry.seats === 6)).toBe(true);
+  });
+
+  it("loses no seats joining them, since a two-top is laid top and bottom", () => {
+    // A 70cm square seating two puts both chairs on its long-facing sides, so
+    // pushing them together left to right takes nothing away.
+    expect(offerTables(TWOS, [], 6)[0].combinations[0].seats).toBe(6);
+  });
+
+  it("offers fewer places as the row fills up", () => {
+    // Table 3 is sold, so the row is 1–2 and 4–5–6. Only one stretch of three
+    // survives.
+    const [zone] = offerTables(TWOS, [claim("t3", 2)], 6);
+
+    expect(zone.combinations.map((entry) => entry.id)).toEqual(["t4+t5+t6"]);
+  });
+
+  it("takes two of them for a party of four", () => {
+    const [zone] = offerTables(TWOS, [], 4);
+
+    expect(zone.combinations.map((entry) => entry.tableIds.length)).toEqual([2, 2, 2, 2, 2]);
+    expect(zone.combinations[0].id).toBe("t1+t2");
+  });
+
+  it("caps how many places are listed, so the list stays a choice", () => {
+    const long = plan(
+      row(
+        Array.from({ length: 20 }, (_, index) =>
+          table({ id: `t${index}`, label: String(index), seats: 2 }),
+        ),
+      ),
+    );
+
+    expect(offerTables(long, [], 6)[0].combinations.length).toBeLessThanOrEqual(
+      MAX_COMBINATIONS_PER_ROW,
+    );
   });
 });
 

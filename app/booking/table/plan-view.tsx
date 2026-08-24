@@ -53,20 +53,46 @@ export function PlanView({
   const [reveal, setReveal] = useState<TableOffer | null>(null);
 
   /**
-   * Which combination each table belongs to, when it belongs to one.
+   * Which combination tapping each table takes.
    *
    * A four-top is "too small" for a party of five on its own, and the plan used
-   * to grey it out and stop there. If it is half of an offered pair, tapping it
-   * takes the pair — the guest is choosing *where to sit*, and which two tables
-   * that means is the restaurant's arithmetic, not theirs.
+   * to grey it out and stop there. If it is part of an offered stretch, tapping
+   * it takes that stretch — the guest is choosing *where to sit*, and how many
+   * tables that means is the restaurant's arithmetic, not theirs.
+   *
+   * ## A table can be in more than one of them
+   *
+   * Offered stretches overlap: in a row of six two-tops a party of six is
+   * offered 1+2+3, 2+3+4, 3+4+5 and 4+5+6, and table 3 is in three of those.
+   * The **first** wins, which is the tightest — so tapping a table always takes
+   * the offer that costs the room least, and a guest who wants one of the others
+   * picks it from the list, where they are named. Last-one-wins would have made
+   * the tap depend on the order the search happened to run in.
+   *
+   * A stretch the guest has already chosen stays chosen: tapping any of its
+   * tables lets it go again, rather than silently swapping them onto a different
+   * stretch that happens to share a table.
    */
   const inCombination = new Map<string, string>();
 
   for (const combination of zone.combinations) {
     for (const tableId of combination.tableIds) {
-      inCombination.set(tableId, combination.id);
+      if (!inCombination.has(tableId)) {
+        inCombination.set(tableId, combination.id);
+      }
     }
   }
+
+  /** The stretch a tap on this table should take, the chosen one winning. */
+  const combinationFor = (tableId: string): string | null => {
+    const chosenIds = (chosen ?? "").split("+");
+
+    if (chosenIds.length > 1 && chosenIds.includes(tableId)) {
+      return chosen;
+    }
+
+    return inCombination.get(tableId) ?? null;
+  };
 
   /** Every table the current choice covers. One, or two pushed together. */
   const chosenTables = new Set((chosen ?? "").split("+").filter(Boolean));
@@ -127,7 +153,7 @@ export function PlanView({
             key={table.id}
             table={table}
             chosen={chosenTables.has(table.id)}
-            joinWith={inCombination.get(table.id) ?? null}
+            joinWith={combinationFor(table.id)}
             onChoose={onChoose}
             onRefuse={onRefuse}
             onFocus={() => setReveal(table)}

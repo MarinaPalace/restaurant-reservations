@@ -3,7 +3,15 @@
 import { useState } from "react";
 import { cx } from "@/components/ui/utils";
 import { PlanViewport, usePlanDragged } from "@/components/plan-viewport";
-import { FEATURE_LABELS, type FloorFeature } from "@/lib/floor-plan";
+import {
+  CHAIR_SIDES,
+  CHAIR_SIZE,
+  chairPositions,
+  chairSidesOf,
+  FEATURE_LABELS,
+  type ChairSide,
+  type FloorFeature,
+} from "@/lib/floor-plan";
 import {
   canJoinRun,
   inspectRun,
@@ -128,6 +136,20 @@ export function PlanView({
             key={table.id}
             table={table}
             chosen={chosenTables.has(table.id)}
+            /**
+             * The sides where this table meets another in the chosen row, so
+             * the chairs standing there can come off. Only for the row being
+             * chosen: everywhere else the room is drawn as it is laid.
+             */
+            joinedSides={
+              chosenTables.has(table.id)
+                ? CHAIR_SIDES.filter((side) =>
+                    (table.neighbours ?? []).some(
+                      (link) => link.side === side && chosenTables.has(link.tableId),
+                    ),
+                  )
+                : []
+            }
             buildRun={() => nextSelection(zone.tables, chosen, table.id, guestCount, pinned)}
             onSelect={onSelect}
             onRefuse={onRefuse}
@@ -208,6 +230,7 @@ function RoomFeature({ feature }: { feature: FloorFeature }) {
 function PickableTable({
   table,
   chosen,
+  joinedSides,
   buildRun,
   onSelect,
   onRefuse,
@@ -215,6 +238,8 @@ function PickableTable({
 }: {
   table: TableOffer;
   chosen: boolean;
+  /** Sides where this table meets another in the chosen row. */
+  joinedSides: readonly ChairSide[];
   /** The whole selection this tap would leave behind. */
   buildRun: () => string | null;
   onSelect: (next: string | null) => void;
@@ -240,6 +265,23 @@ function PickableTable({
     onSelect(buildRun());
   };
   const middle = { x: table.width / 2, y: table.height / 2 };
+
+  /**
+   * Where this table's chairs go once the row it is in has been accounted for.
+   *
+   * Two tables pushed together lose the chairs where they meet — they are
+   * standing where the other table now is — so a row of two four-tops is drawn
+   * with six chairs and not eight. Which is the same arithmetic the seat count
+   * does, and the point of doing it here too: the guest counts what they are
+   * being sold.
+   */
+  const laid = chairSidesOf(table).filter((side) => !joinedSides.includes(side));
+  const lost = joinedSides.reduce((total, side) => total + table.perSide[side], 0);
+  const chairs = chairPositions({
+    ...table,
+    chairCount: Math.max(0, table.seats - lost),
+    chairSides: laid,
+  });
 
   const fill = chosen
     ? "fill-primary stroke-accent"
@@ -274,6 +316,37 @@ function PickableTable({
         }
       }}
     >
+      {/*
+        The chairs, drawn under the table so the table's own outline stays the
+        thing being tapped.
+
+        **Every chair a table has, whoever is at it.** A table with one guest on
+        it is drawn with all four, not three: how much of a table is gone is
+        something about a stranger's party, and the plan says "taken" and stops
+        there (`docs/floor-plan.md` §6).
+
+        As many chairs as the table **seats**, rather than the count staff drew
+        it with — a guest counting chairs to see whether their party fits must
+        get the same number the booking is measured against.
+      */}
+      {chairs.map((chair, index) => (
+        <rect
+          key={index}
+          x={chair.x}
+          y={chair.y}
+          width={CHAIR_SIZE}
+          height={CHAIR_SIZE}
+          rx={6}
+          transform={`rotate(${chair.rotation} ${chair.x + CHAIR_SIZE / 2} ${chair.y + CHAIR_SIZE / 2})`}
+          className={cx(
+            "pointer-events-none",
+            chosen ? "fill-accent-soft stroke-accent" : "fill-surface-muted stroke-line-strong",
+            free ? "" : "opacity-60",
+          )}
+          strokeWidth={2}
+        />
+      ))}
+
       {table.shape === "round" || table.shape === "oval" ? (
         <ellipse
           cx={middle.x}

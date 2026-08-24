@@ -43,6 +43,7 @@ import {
   snap,
   zoneArea,
   toFloorPlan,
+  type ChairSide,
   type FloorPlan,
   type FloorTable,
   type FloorZone,
@@ -1212,5 +1213,64 @@ describe("the table number a merged booking carries", () => {
     expect(tableNumberFrom([{ id: "a", label: "7", seats: 4 }])).toBe("7");
     expect(tableNumberFrom([])).toBeUndefined();
     expect(tableNumberFrom(undefined)).toBeUndefined();
+  });
+});
+
+/**
+ * The chairs a guest is shown.
+ *
+ * The plan draws as many chairs as a table **seats**, and a row pushed together
+ * drops the ones where its tables meet. A guest counting chairs to decide
+ * whether their party fits has to arrive at the number the booking is measured
+ * against — otherwise the picture and the price of it disagree.
+ */
+describe("chairs drawn against seats sold", () => {
+  const square = (id: string, seats: number) =>
+    table({ id, label: id, seats, shape: "square", width: 70, height: 70 });
+
+  it("draws one chair per seat on a table standing alone", () => {
+    for (const seats of [1, 2, 4, 6]) {
+      expect(chairPositions({ ...square("t", seats), chairCount: seats })).toHaveLength(seats);
+    }
+  });
+
+  it("draws the row's seats, not the sum of its tables", () => {
+    // Two four-tops meeting left to right: four chairs each, less the one on
+    // each side of the join — six, which is what `joinedSeats` sells.
+    const a = { ...square("a", 4), neighbours: [{ tableId: "b", side: "right" as const }] };
+    const b = { ...square("b", 4), neighbours: [{ tableId: "a", side: "left" as const }] };
+
+    const drawn = [
+      { table: a, joined: ["right"] as const },
+      { table: b, joined: ["left"] as const },
+    ].reduce((total, { table: entry, joined }) => {
+      const lost = joined.reduce((sum, side) => sum + seatsPerSide(entry)[side], 0);
+
+      return (
+        total +
+        chairPositions({
+          ...entry,
+          chairCount: entry.seats - lost,
+          chairSides: chairSidesOf(entry).filter((side) => !joined.includes(side as never)),
+        }).length
+      );
+    }, 0);
+
+    expect(drawn).toBe(joinedSeats([a, b]));
+    expect(drawn).toBe(6);
+  });
+
+  it("draws nothing on a side that was never laid", () => {
+    const banquette = { ...square("t", 4), chairSides: ["top", "bottom"] as ChairSide[] };
+
+    const drawn = chairPositions({
+      ...banquette,
+      chairCount: 4,
+      chairSides: [...banquette.chairSides],
+    });
+
+    // All four still drawn, both facing sides, none against the wall.
+    expect(drawn).toHaveLength(4);
+    expect(seatsPerSide(banquette)).toEqual({ top: 2, right: 0, bottom: 2, left: 0 });
   });
 });

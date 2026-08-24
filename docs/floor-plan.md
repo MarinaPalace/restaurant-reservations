@@ -1269,3 +1269,38 @@ whether this booking held the table whole has to be decided from the document as
 it stands at that instant, and reading first is the race this file exists to
 avoid. Absent `wholeFor` reads as "nobody holds this whole", which is what every
 claim written before this meant.
+
+---
+
+## 25. The chairs, on the guest's plan
+
+Staff had chairs on their drawing and guests had bare rectangles. A guest
+deciding whether their party fits is counting places to sit, and the room was
+not showing them any.
+
+**As many chairs as the table seats**, rather than the count staff drew it with.
+`chairCount` is what the room looks like and `seats` is what may be booked, and
+a guest counting chairs must arrive at the number the booking is measured
+against. A side staff never laid — a table against a wall, a banquette — still
+has no chairs on it; that is the room, not the arithmetic.
+
+**A chosen row drops the chairs where its tables meet.** Two four-tops pushed
+together are drawn with six chairs, not eight, which is the same subtraction
+`joinedSeats` does and the reason for doing it in the drawing too: the guest
+counts what they are being sold. There is a test tying the two together, so the
+picture cannot drift from the price of it.
+
+### Every chair, whoever is at the table
+
+A table with one guest on it is drawn with **all** its chairs, not with one
+crossed off. §6 stands: how much of a table is gone says something about a
+stranger's party, and the plan says *taken* and stops there. Asked for and
+settled deliberately — the room shows what a table seats, never who is at it.
+
+### The margin had to grow
+
+Chairs stand outside the table they belong to, half a metre of floor beyond its
+edge, and the viewport allowed 20 cm around the drawing. A table against a wall
+had its chairs cut in half by the edge of the picture — which reads as a room
+drawn wrong rather than as a picture that stops short. The margin is a chair
+wide now.

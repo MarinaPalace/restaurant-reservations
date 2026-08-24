@@ -1,4 +1,4 @@
-import { rotatedExtent, type Placed } from "@/lib/floor-plan";
+import { CHAIR_GAP, CHAIR_SIZE, rotatedExtent, type Placed } from "@/lib/floor-plan";
 
 /**
  * What a plan actually covers, and how to look around it.
@@ -46,8 +46,13 @@ export const ZOOM_STEP = 1.25;
  *
  * A table flush against a wall would otherwise have its outline half on the
  * edge of the picture, which reads as clipped even when nothing is missing.
+ *
+ * Wide enough for a **chair**, because chairs are part of the drawing and stand
+ * outside the table they belong to. A table against a wall has its chairs on
+ * the floor beyond it, and 20 cm of margin cut them in half — which reads as a
+ * room drawn wrong rather than as a picture that stops short.
  */
-const MARGIN = 20;
+const MARGIN = CHAIR_SIZE + CHAIR_GAP + 6;
 
 /** The axis-aligned box a rotated shape really occupies. */
 function footprint(placed: Placed): ViewBox {

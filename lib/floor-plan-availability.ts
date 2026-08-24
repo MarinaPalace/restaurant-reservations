@@ -102,6 +102,15 @@ export type TableOffer = {
    * `chairSides`, which is not sent and should not be.
    */
   perSide: Record<ChairSide, number>;
+  /**
+   * Which sides of this table are laid, when it is not all four.
+   *
+   * Sent so the guest's room is drawn as the room actually is: a table against
+   * a wall is laid on three sides, and drawing a chair on the fourth would put
+   * furniture where there is a wall. `perSide` says how many seats are on each
+   * side; this says which sides exist at all, which is what a drawing needs.
+   */
+  chairSides?: ChairSide[];
 };
 
 /**
@@ -261,6 +270,7 @@ export function offerTables(
           occupied: taken > 0,
           neighbours: table.neighbours,
           perSide: seatsPerSide(table),
+          chairSides: table.chairSides,
         };
       }),
       combinations: combineTables(zone.tables, takenAt, guests),

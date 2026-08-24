@@ -30,6 +30,23 @@ const tableClaimSchema = new Schema(
     guests: { type: Number, required: true, default: 0 },
     /** The bookings sharing it. Normally one. */
     reservationNumbers: { type: [String], default: [] },
+    /**
+     * The bookings holding this table **whole**, rather than a seat at it.
+     *
+     * A table in a row pushed together is taken entirely, however few people
+     * are actually at it: nobody can be sold a seat at a table shoved against a
+     * stranger's dinner. On an empty table that is said by claiming every seat.
+     * It cannot be said that way on a table another booking is already at — the
+     * arithmetic would have to fill the table to its capacity, and cancelling
+     * could then only give back the whole thing, wiping out the party that was
+     * there first.
+     *
+     * So exclusivity is said here instead of being implied by a number.
+     * `guests` stays the count of people actually seated, every booking gives
+     * back exactly what it took, and a table with anybody in this list is
+     * offered to nobody.
+     */
+    wholeFor: { type: [String], default: [] },
   },
   { timestamps: true },
 );

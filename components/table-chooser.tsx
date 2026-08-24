@@ -33,7 +33,7 @@ export function TableChooser({
   guestCount,
   chosen,
   onChoose,
-  locked = false,
+  pinned,
 }: {
   zones: ZoneOffer[];
   guestCount: number;
@@ -44,12 +44,13 @@ export function TableChooser({
   chosen: string | null;
   onChoose: (id: string | null) => void;
   /**
-   * The table is already decided — the guest is joining a party that has one —
-   * so the room is shown and nothing in it can be picked. Drawn rather than
-   * hidden, because "you are at table 11" is worth being able to see on the
-   * plan.
+   * Tables belonging to the party the guest said they are sitting with.
+   *
+   * They cannot be let go of — "we are sitting with room 402" is not undone by
+   * tapping room 402's table — but more tables can be pushed against them, which
+   * is how a party too big for that table alone is seated beside it.
    */
-  locked?: boolean;
+  pinned?: readonly string[];
 }) {
   const [zoneId, setZoneId] = useState<string | null>(null);
   const [refused, setRefused] = useState("");
@@ -65,8 +66,12 @@ export function TableChooser({
    * to toggle.
    */
   const select = (next: string | null) => {
-    if (locked) {
-      setRefused("You are being seated with the booking you named, so the table is already decided.");
+    if (next === chosen) {
+      setRefused(
+        pinned?.length
+          ? "You are sitting with the booking you named, so their table stays. You can add tables beside it."
+          : "",
+      );
       return;
     }
 
@@ -75,9 +80,10 @@ export function TableChooser({
   };
 
   const choose = (id: string) => {
-    // Nothing to choose when the table came with the party being joined.
-    if (locked) {
-      setRefused("You are being seated with the booking you named, so the table is already decided.");
+    // A prepared stretch cannot be taken when it would abandon the party being
+    // sat with; the plan is where those tables are added instead.
+    if (pinned?.length) {
+      setRefused("You are sitting with the booking you named, so their table stays.");
       return;
     }
 
@@ -121,6 +127,7 @@ export function TableChooser({
         zone={zone}
         guestCount={guestCount}
         chosen={chosen}
+        pinned={pinned}
         onSelect={select}
         onRefuse={(table) => setRefused(refusalSentence(table))}
       />

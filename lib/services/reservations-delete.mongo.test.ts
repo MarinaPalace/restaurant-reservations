@@ -125,3 +125,139 @@ describe("deleting a booking that held a table", () => {
     expect(claim?.reservationNumbers).toEqual([theirs.reservationNumber]);
   });
 });
+
+/**
+ * A party joining another party and needing more room than their table has.
+ *
+ * The case the whole `wholeFor` idea exists for. Two four-tops pushed together
+ * seat six; the first party is already at one of them, so the second cannot
+ * simply claim it whole — the arithmetic would fill the table to capacity and
+ * cancelling could then only give back the whole thing, wiping out the party
+ * that was there first.
+ */
+describe("pushing tables onto a party already seated", () => {
+  const ANCHOR = { id: "f-aaaaaaaa", label: "11", seats: 4 };
+  const NEXT = { id: "f-bbbbbbbb", label: "12", seats: 4 };
+
+  async function seatFirstParty(date: string, guests = 2) {
+    const { reservations } = await loadServices();
+    await openDate(date, 20);
+
+    return reservations.createReservationEntry({
+      roomNumber: "402",
+      guestCount: guests,
+      date,
+      guestName: "Petrov",
+      selections: [],
+      tables: [ANCHOR],
+    });
+  }
+
+  it("holds their table whole without inflating who is sitting at it", async () => {
+    const { reservations, claims } = await loadServices();
+    const first = await seatFirstParty("2026-12-01");
+
+    await reservations.createReservationEntry({
+      roomNumber: "118",
+      guestCount: 4,
+      date: "2026-12-01",
+      guestName: "Ivanova",
+      selections: [],
+      tables: [ANCHOR, NEXT],
+      joinReservationNumber: first.reservationNumber,
+    });
+
+    const shared = (await claims.listTableClaims("2026-12-01")).find((c) => c.tableId === ANCHOR.id);
+
+    // Still the two people who are actually there, not the table's capacity.
+    expect(shared?.guests).toBe(2);
+    expect(shared?.wholeFor).toHaveLength(1);
+    expect(shared?.reservationNumbers).toHaveLength(2);
+  });
+
+  it("offers that table to nobody else, however few are counted at it", async () => {
+    const { reservations, claims } = await loadServices();
+    const first = await seatFirstParty("2026-12-02");
+
+    await reservations.createReservationEntry({
+      roomNumber: "118",
+      guestCount: 4,
+      date: "2026-12-02",
+      guestName: "Ivanova",
+      selections: [],
+      tables: [ANCHOR, NEXT],
+      joinReservationNumber: first.reservationNumber,
+    });
+
+    // Two of its four seats are counted, and none of them are for sale: a
+    // stranger cannot be seated at a table shoved against somebody's dinner.
+    await expect(
+      claims.claimTable({
+        date: "2026-12-02",
+        tableId: ANCHOR.id,
+        seats: 4,
+        guests: 2,
+        reservationNumber: "R-STRANGER",
+      }),
+    ).rejects.toThrow("TABLE_TAKEN");
+  });
+
+  it("gives back exactly what it took, leaving the first party where they were", async () => {
+    const { reservations, claims } = await loadServices();
+    const first = await seatFirstParty("2026-12-03");
+
+    const second = await reservations.createReservationEntry({
+      roomNumber: "118",
+      guestCount: 4,
+      date: "2026-12-03",
+      guestName: "Ivanova",
+      selections: [],
+      tables: [ANCHOR, NEXT],
+      joinReservationNumber: first.reservationNumber,
+    });
+
+    await reservations.cancelReservation(second.reservationNumber);
+
+    const after = await claims.listTableClaims("2026-12-03");
+    const shared = after.find((claim) => claim.tableId === ANCHOR.id);
+
+    // The first party is untouched and their table is theirs again.
+    expect(shared?.guests).toBe(2);
+    expect(shared?.wholeFor).toEqual([]);
+    expect(shared?.reservationNumbers).toEqual([first.reservationNumber]);
+    // The table that was only ever the joining party's is back in the room.
+    expect(after.find((claim) => claim.tableId === NEXT.id)).toBeUndefined();
+  });
+
+  it("will not take a table the party being joined is not actually at", async () => {
+    // The number is a credential, not an instruction: naming a booking cannot
+    // hand over a table that booking never had.
+    const { reservations, claims } = await loadServices();
+    const first = await seatFirstParty("2026-12-04");
+
+    await reservations.createReservationEntry({
+      roomNumber: "301",
+      guestCount: 4,
+      date: "2026-12-04",
+      guestName: "Dimitrova",
+      selections: [],
+      tables: [NEXT],
+    });
+
+    await expect(
+      reservations.createReservationEntry({
+        roomNumber: "118",
+        guestCount: 4,
+        date: "2026-12-04",
+        guestName: "Ivanova",
+        selections: [],
+        tables: [ANCHOR, NEXT],
+        joinReservationNumber: first.reservationNumber,
+      }),
+    ).rejects.toThrow();
+
+    // And the first party still has their table.
+    const shared = (await claims.listTableClaims("2026-12-04")).find((c) => c.tableId === ANCHOR.id);
+    expect(shared?.reservationNumbers).toEqual([first.reservationNumber]);
+  });
+});

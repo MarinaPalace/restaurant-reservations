@@ -525,6 +525,14 @@ export async function createReservationEntry(input: {
           seats: table.seats,
           guests: seatsToClaim(input.tables, table, input.guestCount),
           reservationNumber,
+          /**
+           * A party pushing tables together onto a table the booking they are
+           * joining is already at. Only for a row: a single shared table is an
+           * ordinary shared table, where two rooms take a seat each and both
+           * counts are real. Ignored when that booking is not at this one, so
+           * the other tables of the row are claimed the ordinary way.
+           */
+          joiningWith: (input.tables?.length ?? 0) > 1 ? (tableGroupId ?? undefined) : undefined,
         });
 
         claimed.push(table);

@@ -49,7 +49,7 @@ function plan(tables: FloorTable[]): FloorPlan {
 }
 
 function claim(tableId: string, guests: number, reservationNumber = "R-1"): TableClaimRecord {
-  return { date: "2026-08-25", tableId, guests, reservationNumbers: [reservationNumber] };
+  return { date: "2026-08-25", tableId, guests, reservationNumbers: [reservationNumber], wholeFor: [] };
 }
 
 /**
@@ -601,5 +601,47 @@ describe("tapping tables out on the plan", () => {
     }
 
     expect(findPlanCombination(TWOS, chosen!)?.seats).toBe(6);
+  });
+});
+
+
+/**
+ * Tapping when the guest is sitting with somebody.
+ *
+ * Their table is kept whatever the guest taps, and tables can be pushed against
+ * it — which is how a party too big for that table alone is seated beside them
+ * instead of being told to book separately.
+ */
+describe("building a row onto a party being sat with", () => {
+  const TWOS = plan(
+    row(["1", "2", "3", "4"].map((label) => table({ id: `t${label}`, label, seats: 2 }))),
+  );
+
+  const offered = offerTables(TWOS, [], 4)[0].tables;
+  const pinned = ["t2"];
+
+  it("keeps their table when the guest taps it", () => {
+    expect(nextSelection(offered, "t2", "t2", 4, pinned)).toBe("t2");
+  });
+
+  it("pushes the next table against theirs", () => {
+    expect(nextSelection(offered, "t2", "t3", 4, pinned)).toBe("t2+t3");
+  });
+
+  it("pushes against either side of theirs", () => {
+    expect(nextSelection(offered, "t2", "t1", 4, pinned)).toBe("t1+t2");
+  });
+
+  it("will not wander off to a table across the room", () => {
+    expect(nextSelection(offered, "t2", "t4", 4, pinned)).toBe("t2");
+  });
+
+  it("gives back a table the guest added, but never theirs", () => {
+    expect(nextSelection(offered, "t2+t3", "t3", 4, pinned)).toBe("t2");
+    expect(nextSelection(offered, "t2+t3", "t2", 4, pinned)).toBe("t2+t3");
+  });
+
+  it("keeps their table in the middle of a longer row", () => {
+    expect(nextSelection(offered, "t1+t2+t3", "t2", 4, pinned)).toBe("t1+t2+t3");
   });
 });

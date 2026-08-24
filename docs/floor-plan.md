@@ -1213,3 +1213,59 @@ question is "could this party sit here at all", and a four-top being held back
 for a larger party is still a four-top that fits — a room of them must not start
 joining tables for a party of two. `hardRefusal` answers the first question and
 `reasonUnavailable` layers the right-sizing on top of it.
+
+---
+
+## 24. Sitting with a party who is already at a table
+
+"Sit us with room 402" was asked on the summary, after the table had been
+chosen. On an evening where guests pick their own table that asks the same
+question twice and keeps both answers: joining only set the group, and the
+joining guest went on claiming the table they had picked earlier. Two bookings
+came out marked as sharing a table while holding different ones — and the manage
+screen then refused to change either, because a booking sharing a table has to
+be sorted out by reception.
+
+The question is asked **before** the table now, on the table step itself. A
+party joining another party is not choosing where to sit; they are being told.
+
+`/api/booking/share` answers what that table is and nothing else — not a name,
+not a room, not how many are already at it (§6, and the number of strangers at a
+table is the part of §6 to be most careful about). It answers *whether this party
+fits* rather than handing over the seats taken, is rate-limited, and makes the
+same three refusals `resolveTableGroup` makes, worded for somebody still filling
+in the form.
+
+### Their table is pinned, not locked
+
+It cannot be let go of — "we are sitting with room 402" is not undone by tapping
+room 402's table — but tables **can** be pushed against it. That is how a party
+too big for that table alone is seated beside them rather than told to book
+separately.
+
+### Exclusivity is stated, not implied by a number
+
+The part that needed care. A table in a row pushed together is taken **whole**,
+however few people are at it, because nobody can be sold a seat at a table
+shoved against a stranger's dinner. On an empty table that is said by claiming
+every seat. It cannot be said that way on a table another booking is already at:
+the count would have to be filled to the table's capacity, and cancelling could
+then only give back the whole thing — wiping out the party who were there first.
+
+So `wholeFor` on the claim lists the bookings holding the table whole, and
+`guests` stays the count of people actually seated. A table with anybody in that
+list is offered to nobody, whatever the count says, and every booking gives back
+exactly what it took. Three things follow, and each is a test:
+
+- The shared table still reads **2 seated** after a party of four is pushed onto
+  it — the truth, rather than a 4 that means "full".
+- A stranger asking for its two spare seats is **refused**, which the seat
+  arithmetic on its own would have allowed.
+- Cancelling the joining booking leaves the first party at their table with
+  their own count, and gives the added table back to the room.
+
+Releasing is a single conditional pipeline rather than a read and then a write:
+whether this booking held the table whole has to be decided from the document as
+it stands at that instant, and reading first is the race this file exists to
+avoid. Absent `wholeFor` reads as "nobody holds this whole", which is what every
+claim written before this meant.

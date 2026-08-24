@@ -192,6 +192,21 @@ export function offerTables(
 ): ZoneOffer[] {
   const seated = new Map(claims.map((claim) => [claim.tableId, claim.guests]));
 
+  /**
+   * A table somebody holds **whole** reads as completely full, whatever its
+   * guest count says.
+   *
+   * That count is the people actually seated, and for a table in a row pushed
+   * together it is deliberately not the whole table — a party of five on three
+   * two-tops is five people, not six. What makes the rest of it unsellable is
+   * the holding, not the arithmetic, so this is where the two are reconciled
+   * and everything below goes on asking one question: how much of this table is
+   * gone.
+   */
+  const held = new Set(claims.filter((claim) => claim.wholeFor.length > 0).map((c) => c.tableId));
+  const takenAt = (table: FloorTable) =>
+    held.has(table.id) ? table.seats : (seated.get(table.id) ?? 0);
+
   return plan.zones.map((zone) => {
     const listed = zone.tables.filter((table) => table.label.trim().length > 0);
 
@@ -212,7 +227,7 @@ export function offerTables(
      * table — it only ever moves a party onto a tighter one.
      */
     const tightest = listed.reduce((least: number | null, table) => {
-      const taken = seated.get(table.id) ?? 0;
+      const taken = takenAt(table);
 
       if (hardRefusal(table, taken, guests)) {
         return least;
@@ -230,7 +245,7 @@ export function offerTables(
       height: zone.height,
       features: zone.features,
       tables: listed.map((table) => {
-        const taken = seated.get(table.id) ?? 0;
+        const taken = takenAt(table);
 
         return {
           id: table.id,
@@ -248,7 +263,7 @@ export function offerTables(
           perSide: seatsPerSide(table),
         };
       }),
-      combinations: combineTables(zone.tables, seated, guests),
+      combinations: combineTables(zone.tables, takenAt, guests),
     };
   });
 }
@@ -291,7 +306,7 @@ export function offerTables(
  */
 function combineTables(
   tables: readonly FloorTable[],
-  seated: Map<string, number>,
+  takenAt: (table: FloorTable) => number,
   guests: number,
 ): TableCombination[] {
   if (guests < 1) {
@@ -304,7 +319,7 @@ function combineTables(
   // room more, not less.
   const fitsAlone = tables.some(
     (table) =>
-      table.label.trim().length > 0 && !hardRefusal(table, seated.get(table.id) ?? 0, guests),
+      table.label.trim().length > 0 && !hardRefusal(table, takenAt(table), guests),
   );
 
   if (fitsAlone) {
@@ -313,7 +328,7 @@ function combineTables(
 
   /** Not free, not labelled, not in service: the row stops here. */
   const unusable = (table: FloorTable) =>
-    !table.active || !table.label.trim() || (seated.get(table.id) ?? 0) > 0;
+    !table.active || !table.label.trim() || takenAt(table) > 0;
 
   const combinations = new Map<string, TableCombination>();
 
@@ -555,6 +570,12 @@ export function nextSelection(
   chosen: string | null,
   tappedId: string,
   guests: number,
+  /**
+   * Tables the guest cannot let go of: the ones belonging to the party they
+   * said they are sitting with. They may push more tables against them, but
+   * "we are sitting with room 402" is not undone by tapping room 402's table.
+   */
+  pinned: readonly string[] = [],
 ): string | null {
   const byId = new Map(tables.map((table) => [table.id, table]));
   const tapped = byId.get(tappedId);
@@ -571,26 +592,30 @@ export function nextSelection(
 
   const ids = (of: readonly TableOffer[]) => of.map((table) => table.id).join("+") || null;
 
+  // Nothing that would drop a pinned table is a move at all, including tapping
+  // the pinned table itself.
+  const keepsPinned = (of: readonly TableOffer[]) =>
+    pinned.every((id) => of.some((table) => table.id === id));
+
   if (run.length === 0) {
-    return tapped.id;
+    return pinned.length > 0 ? chosen : tapped.id;
   }
 
   const at = run.findIndex((table) => table.id === tapped.id);
 
   // Either end of the row: let it go, the way anybody undoes the last thing
   // they did. The row that is left still stands.
-  if (at === 0) {
-    return ids(run.slice(1));
-  }
+  if (at === 0 || at === run.length - 1) {
+    const shorter = at === 0 ? run.slice(1) : run.slice(0, -1);
 
-  if (at === run.length - 1) {
-    return ids(run.slice(0, -1));
+    return keepsPinned(shorter) ? ids(shorter) : chosen;
   }
 
   // The middle of the row — not an end, so not something to remove without
-  // tearing the row in two. Start again from it instead.
+  // tearing the row in two. Start again from it instead, unless that would
+  // abandon the party being sat with.
   if (at > 0) {
-    return tapped.id;
+    return pinned.length > 0 ? chosen : tapped.id;
   }
 
   const extended = [
@@ -599,8 +624,9 @@ export function nextSelection(
   ].find((candidate) => inspectRun(candidate).ok);
 
   if (!extended) {
-    // Nowhere near the row: a guest changing their mind about where to sit.
-    return tapped.id;
+    // Nowhere near the row: a guest changing their mind about where to sit —
+    // which is not on offer when they are being sat with somebody.
+    return pinned.length > 0 ? chosen : tapped.id;
   }
 
   /**

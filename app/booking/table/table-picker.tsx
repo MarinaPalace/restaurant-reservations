@@ -157,8 +157,8 @@ function ShareWith({
             <Alert tone={sharing.fits ? "info" : "warning"}>
               {sharing.tableNumber
                 ? sharing.fits
-                  ? `Reservation ${sharing.number} is at table ${sharing.tableNumber}. You will be seated there, so there is no table to choose.`
-                  : `Reservation ${sharing.number} is at table ${sharing.tableNumber}, which does not have room for ${guestCount} more. Please book separately, or ask reception to seat you together.`
+                  ? `Reservation ${sharing.number} is at table ${sharing.tableNumber}, and there is room for you there. Their table is kept below; you can push more tables against it if you would rather have the space.`
+                  : `Reservation ${sharing.number} is at table ${sharing.tableNumber}, which does not have room for ${guestCount} more. Tap a table beside theirs on the plan to push it together with them.`
                 : `Reservation ${sharing.number} has no table yet, so you will be seated together on the night.`}
             </Alert>
           ) : null}
@@ -354,7 +354,7 @@ export function TablePicker() {
               guestCount={guestCount}
               chosen={chosen}
               onChoose={choose}
-              locked={Boolean(sharing?.tables.length)}
+              pinned={sharing?.tables ?? []}
             />
 
             {/*

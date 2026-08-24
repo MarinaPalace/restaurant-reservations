@@ -41,6 +41,7 @@ export function PlanView({
   zone,
   guestCount,
   chosen,
+  pinned,
   onSelect,
   onRefuse,
 }: {
@@ -48,6 +49,8 @@ export function PlanView({
   guestCount: number;
   /** A table id, or a combination id — `t7+t8` — when tables are pushed together. */
   chosen: string | null;
+  /** Tables the guest may not let go of — the party they are sitting with. */
+  pinned?: readonly string[];
   /** The whole selection after a tap — a row, a single table, or nothing. */
   onSelect: (next: string | null) => void;
   /** A guest tapped a table they cannot have. Says why, in words. */
@@ -125,7 +128,7 @@ export function PlanView({
             key={table.id}
             table={table}
             chosen={chosenTables.has(table.id)}
-            buildRun={() => nextSelection(zone.tables, chosen, table.id, guestCount)}
+            buildRun={() => nextSelection(zone.tables, chosen, table.id, guestCount, pinned)}
             onSelect={onSelect}
             onRefuse={onRefuse}
             onFocus={() => setReveal(table)}

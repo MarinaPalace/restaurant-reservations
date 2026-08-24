@@ -46,6 +46,12 @@ export type TableClaimRecord = {
   tableId: string;
   guests: number;
   reservationNumbers: string[];
+  /**
+   * The bookings holding the table whole. A table with anybody here is offered
+   * to nobody, whatever `guests` says. See the model for why exclusivity is
+   * stated rather than implied by filling the seat count.
+   */
+  wholeFor: string[];
 };
 
 /** Raised when the table could not be had. The caller unwinds its seat claim. */
@@ -99,6 +105,19 @@ export async function claimTable(input: {
   seats: number;
   guests: number;
   reservationNumber: string;
+  /**
+   * Take this table **whole**, beside a booking already at it.
+   *
+   * Named rather than implied: this is a party pushing tables together onto a
+   * table another booking is already sitting at, having said which booking they
+   * are joining. The table stops being available to anybody else without its
+   * guest count being inflated to say so, which is what lets each booking give
+   * back exactly what it took.
+   *
+   * Ignored when that booking is not actually at this table — then it is an
+   * ordinary table and claimed the ordinary way.
+   */
+  joiningWith?: string;
 }): Promise<TableClaimRecord> {
   if (input.guests > input.seats) {
     throw new TableClaimError("TABLE_TOO_SMALL");
@@ -109,6 +128,41 @@ export async function claimTable(input: {
   }
 
   await connectToDatabase();
+
+  if (input.joiningWith) {
+    /**
+     * Join the claim of the party being sat with, and hold the table whole.
+     * Conditional like everything else here: it matches only a claim that
+     * booking is actually on, so a made-up number cannot take a stranger's
+     * table, and `$ne` keeps a retried request from adding itself twice.
+     */
+    const shared = await TableClaimModel.findOneAndUpdate(
+      {
+        date: input.date,
+        tableId: input.tableId,
+        reservationNumbers: { $all: [input.joiningWith], $ne: input.reservationNumber },
+      },
+      { $addToSet: { reservationNumbers: input.reservationNumber, wholeFor: input.reservationNumber } },
+      { returnDocument: "after" },
+    ).lean();
+
+    if (shared) {
+      return toRecord(shared);
+    }
+
+    const already = await TableClaimModel.findOne({
+      date: input.date,
+      tableId: input.tableId,
+      reservationNumbers: input.reservationNumber,
+    }).lean();
+
+    if (already) {
+      return toRecord(already);
+    }
+
+    // They are not at this one. It is an ordinary table of the row, claimed the
+    // ordinary way below.
+  }
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     /**
@@ -123,7 +177,17 @@ export async function claimTable(input: {
         date: input.date,
         tableId: input.tableId,
         reservationNumbers: { $ne: input.reservationNumber },
-        $expr: { $lte: [{ $add: [{ $ifNull: ["$guests", 0] }, input.guests] }, input.seats] },
+        $expr: {
+          $and: [
+            { $lte: [{ $add: [{ $ifNull: ["$guests", 0] }, input.guests] }, input.seats] },
+            /**
+             * And nobody is holding it whole. A table in a row pushed together
+             * counts only the people actually at it, so its spare seats look
+             * for sale and are not: they are where the next table now stands.
+             */
+            { $eq: [{ $size: { $ifNull: ["$wholeFor", []] } }, 0] },
+          ],
+        },
       },
       {
         $inc: { guests: input.guests },
@@ -203,10 +267,42 @@ export async function releaseTable(input: {
 
   await connectToDatabase();
 
+  /**
+   * Written as a pipeline so that giving the seats back and letting go of the
+   * table happen in one conditional step.
+   *
+   * A booking holding the table **whole** never added to `guests` — that is the
+   * whole point of `wholeFor` — so it must not subtract from it either, or
+   * cancelling would wipe out the party that was there first. Which of the two
+   * it is has to be decided from the document as it stands at that instant, and
+   * a read followed by a write is exactly the race this file exists to avoid.
+   */
+  const held = { $ifNull: ["$wholeFor", []] };
+  const mine = { $in: [input.reservationNumber, held] };
+
   const updated = await TableClaimModel.findOneAndUpdate(
     { date: input.date, tableId: input.tableId, reservationNumbers: input.reservationNumber },
-    { $inc: { guests: -input.guests }, $pull: { reservationNumbers: input.reservationNumber } },
-    { returnDocument: "after" },
+    [
+      {
+        $set: {
+          guests: {
+            $max: [0, { $subtract: ["$guests", { $cond: [mine, 0, input.guests] }] }],
+          },
+          reservationNumbers: {
+            $filter: {
+              input: "$reservationNumbers",
+              cond: { $ne: ["$$this", input.reservationNumber] },
+            },
+          },
+          wholeFor: {
+            $filter: { input: held, cond: { $ne: ["$$this", input.reservationNumber] } },
+          },
+        },
+      },
+    ],
+    // Mongoose refuses an array update without being told it is a pipeline,
+    // rather than quietly treating it as a document.
+    { returnDocument: "after", updatePipeline: true },
   ).lean();
 
   if (updated && (updated as { reservationNumbers?: string[] }).reservationNumbers?.length === 0) {
@@ -231,6 +327,7 @@ function toRecord(value: unknown): TableClaimRecord {
     tableId?: unknown;
     guests?: unknown;
     reservationNumbers?: unknown;
+    wholeFor?: unknown;
   };
 
   return {
@@ -240,6 +337,10 @@ function toRecord(value: unknown): TableClaimRecord {
     reservationNumbers: Array.isArray(claim.reservationNumbers)
       ? claim.reservationNumbers.map(String)
       : [],
+    // Absent on every claim written before tables could be joined onto a party
+    // already seated, which reads as "nobody holds this whole" — what those
+    // claims meant.
+    wholeFor: Array.isArray(claim.wholeFor) ? claim.wholeFor.map(String) : [],
   };
 }
 

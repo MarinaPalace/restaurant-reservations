@@ -33,6 +33,7 @@ export function TableChooser({
   guestCount,
   chosen,
   onChoose,
+  locked = false,
 }: {
   zones: ZoneOffer[];
   guestCount: number;
@@ -42,6 +43,13 @@ export function TableChooser({
    */
   chosen: string | null;
   onChoose: (id: string | null) => void;
+  /**
+   * The table is already decided — the guest is joining a party that has one —
+   * so the room is shown and nothing in it can be picked. Drawn rather than
+   * hidden, because "you are at table 11" is worth being able to see on the
+   * plan.
+   */
+  locked?: boolean;
 }) {
   const [zoneId, setZoneId] = useState<string | null>(null);
   const [refused, setRefused] = useState("");
@@ -49,6 +57,12 @@ export function TableChooser({
   const zone = zones.find((entry) => entry.id === zoneId) ?? zones[0] ?? null;
 
   const choose = (id: string) => {
+    // Nothing to choose when the table came with the party being joined.
+    if (locked) {
+      setRefused("You are being seated with the booking you named, so the table is already decided.");
+      return;
+    }
+
     // Tapping what is already chosen lets it go, which is how a guest changes
     // their mind back to "you seat us" without hunting for another control.
     onChoose(chosen === id ? null : id);

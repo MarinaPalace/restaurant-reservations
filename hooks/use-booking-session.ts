@@ -85,6 +85,7 @@ type SessionPatch = Partial<
     | "guestCount"
     | "date"
     | "tableId"
+    | "joinNumber"
     | "selections"
     | "language"
   >
@@ -101,6 +102,10 @@ export function writeBookingSession(patch: SessionPatch) {
   // An empty string is a real answer here -- "any table" -- so it is stored
   // rather than treated as nothing to write.
   if (patch.tableId !== undefined) storage.setItem(BOOKING_STORAGE_KEYS.tableId, patch.tableId);
+  // Empty is a real answer here too: "we are not sitting with anybody".
+  if (patch.joinNumber !== undefined) {
+    storage.setItem(BOOKING_STORAGE_KEYS.joinNumber, patch.joinNumber);
+  }
   if (patch.passKeyExpiresOn !== undefined) {
     storage.setItem(BOOKING_STORAGE_KEYS.passKeyExpiresOn, patch.passKeyExpiresOn);
   }

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Alert, Skeleton } from "@/components/ui/feedback";
+import { Field, Input } from "@/components/ui/field";
 import { BookingSteps } from "@/components/booking-steps";
 import { PageShell } from "@/components/page-shell";
 import { useBookingGuard, writeBookingSession } from "@/hooks/use-booking-session";
@@ -43,6 +44,130 @@ import { TableChooser, findOffer } from "@/components/table-chooser";
  * unusable (`plan-view.tsx`); a screen with two ways through it cannot fail
  * like that again.
  */
+type ShareTarget = {
+  number: string;
+  tables: string[];
+  tableNumber: string | null;
+  seats?: number;
+  fits: boolean;
+};
+
+/**
+ * "We are sitting with another booking", asked before any table is chosen.
+ *
+ * The number is the credential, as it has always been for sharing a table: a
+ * guest who has it was given it by the party they are joining. What comes back
+ * is the table they are at and whether this party fits beside them — never a
+ * name, a room, or how many are already seated.
+ */
+function ShareWith({
+  date,
+  guestCount,
+  sharing,
+  onShare,
+}: {
+  date: string;
+  guestCount: number;
+  sharing: ShareTarget | null;
+  onShare: (target: ShareTarget | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [number, setNumber] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [problem, setProblem] = useState("");
+
+  const check = () => {
+    const wanted = number.trim().toUpperCase();
+
+    if (!wanted) {
+      setProblem("Please enter the reservation number you are sitting with.");
+      return;
+    }
+
+    setChecking(true);
+    setProblem("");
+
+    fetch(
+      `/api/booking/share?number=${encodeURIComponent(wanted)}&date=${encodeURIComponent(date)}&guests=${guestCount}`,
+    )
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          setProblem(data.error ?? "We could not check that reservation.");
+          onShare(null);
+          return;
+        }
+
+        onShare(data as ShareTarget);
+      })
+      .catch(() => setProblem("We could not check that reservation."))
+      .finally(() => setChecking(false));
+  };
+
+  return (
+    <div className="mt-5 rounded-control border border-line bg-surface-muted p-4">
+      <label className="flex min-h-11 items-center gap-3 text-sm font-medium text-ink">
+        <input
+          type="checkbox"
+          className="size-4 accent-[var(--primary)]"
+          checked={open}
+          onChange={(event) => {
+            setOpen(event.target.checked);
+
+            if (!event.target.checked) {
+              setNumber("");
+              setProblem("");
+              onShare(null);
+            }
+          }}
+        />
+        We are sitting with another booking
+      </label>
+
+      {open ? (
+        <div className="mt-3 flex flex-col gap-3">
+          <Field
+            label="Their reservation number"
+            hint="Ask them for it — it is on their confirmation."
+          >
+            {(fieldProps) => (
+              <Input
+                {...fieldProps}
+                value={number}
+                autoCapitalize="characters"
+                onChange={(event) => setNumber(event.target.value.toUpperCase())}
+              />
+            )}
+          </Field>
+
+          <div>
+            <Button variant="secondary" onClick={check} disabled={checking}>
+              {checking ? "Checking…" : "Find their table"}
+            </Button>
+          </div>
+
+          {problem ? (
+            <Alert tone="warning">
+              {problem}
+            </Alert>
+          ) : null}
+
+          {sharing && !problem ? (
+            <Alert tone={sharing.fits ? "info" : "warning"}>
+              {sharing.tableNumber
+                ? sharing.fits
+                  ? `Reservation ${sharing.number} is at table ${sharing.tableNumber}. You will be seated there, so there is no table to choose.`
+                  : `Reservation ${sharing.number} is at table ${sharing.tableNumber}, which does not have room for ${guestCount} more. Please book separately, or ask reception to seat you together.`
+                : `Reservation ${sharing.number} has no table yet, so you will be seated together on the night.`}
+            </Alert>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function TablePicker() {
   const router = useRouter();
   const { session, ready } = useBookingGuard(["room", "guests", "date"]);
@@ -51,6 +176,17 @@ export function TablePicker() {
   const [mode, setMode] = useState<"off" | "optional" | "required">("optional");
   const [chosen, setChosen] = useState<string | null>(null);
   const [error, setError] = useState("");
+
+  /**
+   * The party this one is sitting with, if any, and where they are sitting.
+   *
+   * Asked here rather than on the summary because on an evening where guests
+   * choose their own table the two are the same question: a party joining
+   * another party is not picking a table, they are being told which one they
+   * are at. Asked afterwards, it produced bookings marked as sharing a table
+   * while holding a different one.
+   */
+  const [sharing, setSharing] = useState<ShareTarget | null>(null);
 
   const { date, guestCount } = session;
 
@@ -119,7 +255,7 @@ export function TablePicker() {
   const chosenTable = findOffer(zones ?? [], chosen);
 
   const goOn = (tableId: string | null) => {
-    writeBookingSession({ tableId: tableId ?? "" });
+    writeBookingSession({ tableId: tableId ?? "", joinNumber: sharing?.number ?? "" });
     router.push("/booking/menu");
   };
 
@@ -168,9 +304,30 @@ export function TablePicker() {
           }
         />
 
+        <ShareWith
+          date={date}
+          guestCount={guestCount}
+          sharing={sharing}
+          onShare={(target) => {
+            setSharing(target);
+            setError("");
+
+            /**
+             * Their table becomes this booking's table, and the picker below is
+             * locked: the guest asked to sit with somebody, and where that party
+             * is sitting is not a thing to be offered a choice about.
+             */
+            if (target?.tables.length) {
+              setChosen(target.tables.join("+"));
+            } else if (!target) {
+              setChosen(null);
+            }
+          }}
+        />
+
         {!ready || zones === null ? (
           <Skeleton className="mt-6 h-72 w-full" />
-        ) : !offerable ? (
+        ) : !offerable && !sharing ? (
           <>
             {/*
               Every table is taken, too small, or out of service. Saying so and
@@ -192,7 +349,13 @@ export function TablePicker() {
           </>
         ) : (
           <>
-            <TableChooser zones={zones} guestCount={guestCount} chosen={chosen} onChoose={choose} />
+            <TableChooser
+              zones={zones}
+              guestCount={guestCount}
+              chosen={chosen}
+              onChoose={choose}
+              locked={Boolean(sharing?.tables.length)}
+            />
 
             {/*
               What the guest has, in words, next to the button that commits it.

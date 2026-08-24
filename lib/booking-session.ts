@@ -13,6 +13,7 @@ export const BOOKING_STORAGE_KEYS = {
   guestCount: "booking-guest-count",
   date: "booking-date",
   tableId: "booking-table-id",
+  joinNumber: "booking-join-number",
   selections: "booking-selections",
   language: "booking-language",
   confirmation: "reservation-confirmation",
@@ -55,6 +56,8 @@ export type BookingSession = {
    * it is set to `required`.
    */
   tableId: string;
+  /** The reservation number this party is sitting with, if any. */
+  joinNumber: string;
   selections: ReservationSelection[];
   language: string;
 };
@@ -68,6 +71,7 @@ export const EMPTY_BOOKING_SESSION: BookingSession = {
   guestCount: 0,
   date: "",
   tableId: "",
+  joinNumber: "",
   selections: [],
   language: "en",
 };
@@ -153,6 +157,17 @@ export function readBookingSession(storage: Storage | null | undefined): Booking
      * produces an id with its tail missing, which resolves to nothing and books
      * the guest with no table while telling nobody.
      */
+    /**
+     * The booking this party is sitting with, when they said so before choosing
+     * a table.
+     *
+     * Asked before the table rather than on the summary, because on an evening
+     * where guests pick their own table the two questions are the same
+     * question: a party joining another party is not choosing a table, they are
+     * being told which one they are sitting at. Asking afterwards produced
+     * bookings marked as sharing a table while holding a different one.
+     */
+    joinNumber: (storage.getItem(BOOKING_STORAGE_KEYS.joinNumber) ?? "").trim().toUpperCase().slice(0, 24),
     tableId: (storage.getItem(BOOKING_STORAGE_KEYS.tableId) ?? "").slice(
       0,
       MAX_TABLE_SELECTION_LENGTH,

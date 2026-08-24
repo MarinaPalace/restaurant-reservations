@@ -106,20 +106,29 @@ export async function claimTable(input: {
   guests: number;
   reservationNumber: string;
   /**
-   * Take this table **whole**, beside a booking already at it.
+   * Take this table **whole**: one table of a row pushed together.
    *
-   * Named rather than implied: this is a party pushing tables together onto a
-   * table another booking is already sitting at, having said which booking they
-   * are joining. The table stops being available to anybody else without its
-   * guest count being inflated to say so, which is what lets each booking give
-   * back exactly what it took.
+   * Nobody can be sold a seat at a table shoved against somebody's dinner, so
+   * the whole table leaves the room. Said by `wholeFor` rather than by claiming
+   * every seat, so that the count stays the number of people actually at it.
+   */
+  whole?: boolean;
+  /**
+   * The booking already at this table whose claim may be joined.
    *
-   * Ignored when that booking is not actually at this table — then it is an
-   * ordinary table and claimed the ordinary way.
+   * The party being sat with, named by the guest. Without it a table anybody is
+   * at is simply taken; with it, a row can be pushed onto them.
    */
   joiningWith?: string;
 }): Promise<TableClaimRecord> {
-  if (input.guests > input.seats) {
+  /**
+   * A party bigger than the table cannot sit at it — unless the table is one of
+   * a row, where the party is spread across all of them and counted against the
+   * first. What the row seats between them is settled before this, by
+   * `findPlanCombination`, which is the only place that knows what the join
+   * costs in chairs.
+   */
+  if (!input.whole && input.guests > input.seats) {
     throw new TableClaimError("TABLE_TOO_SMALL");
   }
 
@@ -129,25 +138,38 @@ export async function claimTable(input: {
 
   await connectToDatabase();
 
-  if (input.joiningWith) {
+  if (input.whole) {
     /**
-     * Join the claim of the party being sat with, and hold the table whole.
-     * Conditional like everything else here: it matches only a claim that
-     * booking is actually on, so a made-up number cannot take a stranger's
-     * table, and `$ne` keeps a retried request from adding itself twice.
+     * A table of a row pushed together. Taken entirely — nobody can be sold a
+     * seat at a table shoved against somebody's dinner — which is said by
+     * `wholeFor` rather than by inflating the count of who is sitting there.
      */
-    const shared = await TableClaimModel.findOneAndUpdate(
-      {
-        date: input.date,
-        tableId: input.tableId,
-        reservationNumbers: { $all: [input.joiningWith], $ne: input.reservationNumber },
-      },
-      { $addToSet: { reservationNumbers: input.reservationNumber, wholeFor: input.reservationNumber } },
-      { returnDocument: "after" },
-    ).lean();
+    if (input.joiningWith) {
+      /**
+       * Onto the party being sat with. Conditional like everything else here:
+       * it matches only a claim that booking is actually on, so a made-up
+       * number cannot take a stranger's table, and `$ne` keeps a retried
+       * request from adding itself twice.
+       */
+      const shared = await TableClaimModel.findOneAndUpdate(
+        {
+          date: input.date,
+          tableId: input.tableId,
+          reservationNumbers: { $all: [input.joiningWith], $ne: input.reservationNumber },
+        },
+        {
+          $inc: { guests: input.guests },
+          $addToSet: {
+            reservationNumbers: input.reservationNumber,
+            wholeFor: input.reservationNumber,
+          },
+        },
+        { returnDocument: "after" },
+      ).lean();
 
-    if (shared) {
-      return toRecord(shared);
+      if (shared) {
+        return toRecord(shared);
+      }
     }
 
     const already = await TableClaimModel.findOne({
@@ -160,8 +182,29 @@ export async function claimTable(input: {
       return toRecord(already);
     }
 
-    // They are not at this one. It is an ordinary table of the row, claimed the
-    // ordinary way below.
+    /**
+     * Nobody here yet. The unique index decides the race, exactly as it does
+     * for an ordinary table — and a duplicate now means somebody else has the
+     * table, which for a row is the end of it: half a table cannot be pushed
+     * against a stranger.
+     */
+    try {
+      const created = await TableClaimModel.create({
+        date: input.date,
+        tableId: input.tableId,
+        guests: input.guests,
+        reservationNumbers: [input.reservationNumber],
+        wholeFor: [input.reservationNumber],
+      });
+
+      return toRecord(created.toObject());
+    } catch (error) {
+      if (isDuplicateKey(error)) {
+        throw new TableClaimError("TABLE_TAKEN");
+      }
+
+      throw error;
+    }
   }
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -268,41 +311,23 @@ export async function releaseTable(input: {
   await connectToDatabase();
 
   /**
-   * Written as a pipeline so that giving the seats back and letting go of the
-   * table happen in one conditional step.
+   * Gives back exactly what was taken, and lets go of the table.
    *
-   * A booking holding the table **whole** never added to `guests` — that is the
-   * whole point of `wholeFor` — so it must not subtract from it either, or
-   * cancelling would wipe out the party that was there first. Which of the two
-   * it is has to be decided from the document as it stands at that instant, and
-   * a read followed by a write is exactly the race this file exists to avoid.
+   * Plain again, and symmetric by construction: what a booking counted against
+   * a table is `seatsToClaim`, and its caller passes that same number back
+   * here. `wholeFor` is pulled alongside, so the last row to let go of a table
+   * is what puts it back in the room.
    */
-  const held = { $ifNull: ["$wholeFor", []] };
-  const mine = { $in: [input.reservationNumber, held] };
-
   const updated = await TableClaimModel.findOneAndUpdate(
     { date: input.date, tableId: input.tableId, reservationNumbers: input.reservationNumber },
-    [
-      {
-        $set: {
-          guests: {
-            $max: [0, { $subtract: ["$guests", { $cond: [mine, 0, input.guests] }] }],
-          },
-          reservationNumbers: {
-            $filter: {
-              input: "$reservationNumbers",
-              cond: { $ne: ["$$this", input.reservationNumber] },
-            },
-          },
-          wholeFor: {
-            $filter: { input: held, cond: { $ne: ["$$this", input.reservationNumber] } },
-          },
-        },
+    {
+      $inc: { guests: -input.guests },
+      $pull: {
+        reservationNumbers: input.reservationNumber,
+        wholeFor: input.reservationNumber,
       },
-    ],
-    // Mongoose refuses an array update without being told it is a pipeline,
-    // rather than quietly treating it as a document.
-    { returnDocument: "after", updatePipeline: true },
+    },
+    { returnDocument: "after" },
   ).lean();
 
   if (updated && (updated as { reservationNumbers?: string[] }).reservationNumbers?.length === 0) {
@@ -352,22 +377,33 @@ function toRecord(value: unknown): TableClaimRecord {
 export type HeldTable = { id: string; label: string; seats: number };
 
 /**
- * How many seats one table of a booking's holding is claimed for.
+ * How many people one table of a booking's holding is counted for.
  *
  * **One table: the party.** Which is what it has always been, and what lets two
  * rooms share a four-top — the second books the same table and joins the claim.
  *
- * **Several tables: all of them.** A table pushed against somebody's party
- * cannot be sold to a stranger, so a merged holding takes every seat of every
- * table in it. A party of five on two four-tops claims 4 and 4, not 5 and 0,
- * and the room correctly shows both tables gone.
+ * **A row: the party, once.** Counted against the first table of the row and
+ * nothing against the rest, so that adding up a row gives the number of people
+ * at it and not some multiple of them.
+ *
+ * It used to claim every seat of every table — 4 and 4 for a party of five on
+ * two four-tops — because that was how the row was made unsellable to anybody
+ * else. It said something false to do it. A party of five on three two-tops
+ * recorded as six, and the next question anybody asked of that number got the
+ * wrong answer: a guest wanting to join them was told the table was full when a
+ * chair was empty. Exclusivity is `wholeFor`'s job now, and this is free to be
+ * the truth.
  */
 export function seatsToClaim(
   held: readonly HeldTable[],
   table: HeldTable,
   guests: number,
 ): number {
-  return held.length > 1 ? table.seats : guests;
+  if (held.length <= 1) {
+    return guests;
+  }
+
+  return table.id === held[0].id ? guests : 0;
 }
 
 /**

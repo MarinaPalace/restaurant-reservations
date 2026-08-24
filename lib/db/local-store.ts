@@ -593,6 +593,7 @@ export async function claimLocalTable(input: {
   seats: number;
   guests: number;
   reservationNumber: string;
+  whole?: boolean;
   joiningWith?: string;
 }): Promise<TableClaimRecord> {
   return withStoreLock(async () => {
@@ -623,6 +624,7 @@ function applyTableClaim(
     seats: number;
     guests: number;
     reservationNumber: string;
+    whole?: boolean;
     joiningWith?: string;
   },
 ): TableClaimRecord {
@@ -637,26 +639,43 @@ function applyTableClaim(
     return existing;
   }
 
+  const seated = existing?.guests ?? 0;
+
   /**
-   * Pushing tables together onto one the party being joined is already at.
+   * One table of a row pushed together. Taken entirely — nobody can be sold a
+   * seat at a table shoved against somebody's dinner — which is said by
+   * `wholeFor` rather than by inflating the count of who is sitting there.
    *
-   * The table is held **whole** without its guest count being inflated to say
-   * so, which is what lets each booking give back exactly what it took. Mirrors
-   * the conditional update on the Mongo path: it only applies when that booking
-   * is really on this claim.
+   * A table somebody else is at can only be taken this way when it belongs to
+   * the party being sat with, mirroring the conditional update on the Mongo
+   * path.
    */
-  if (input.joiningWith && existing?.reservationNumbers.includes(input.joiningWith)) {
+  if (input.whole) {
+    const joinable =
+      !existing ||
+      (input.joiningWith !== undefined &&
+        existing.reservationNumbers.includes(input.joiningWith));
+
+    if (!joinable) {
+      throw new TableClaimError("TABLE_TAKEN");
+    }
+
     const next: TableClaimRecord = {
-      ...existing,
-      reservationNumbers: [...existing.reservationNumbers, input.reservationNumber],
-      wholeFor: [...(existing.wholeFor ?? []), input.reservationNumber],
+      date: input.date,
+      tableId: input.tableId,
+      guests: seated + input.guests,
+      reservationNumbers: [...(existing?.reservationNumbers ?? []), input.reservationNumber],
+      wholeFor: [...(existing?.wholeFor ?? []), input.reservationNumber],
     };
 
-    claims[index] = next;
+    if (index === -1) {
+      claims.push(next);
+    } else {
+      claims[index] = next;
+    }
+
     return next;
   }
-
-  const seated = existing?.guests ?? 0;
 
   // Held whole by somebody else: there is no seat at it to be had, whatever
   // the count says.
@@ -710,17 +729,13 @@ export async function releaseLocalTable(input: {
     if (remaining.length === 0) {
       claims.splice(index, 1);
     } else {
-      // A booking holding the table whole never added to the count, so it must
-      // not take from it either — or cancelling would wipe out the party that
-      // was there first.
-      const whole = claims[index].wholeFor ?? [];
-      const held = whole.includes(input.reservationNumber);
-
       claims[index] = {
         ...claims[index],
-        guests: Math.max(0, claims[index].guests - (held ? 0 : input.guests)),
+        guests: Math.max(0, claims[index].guests - input.guests),
         reservationNumbers: remaining,
-        wholeFor: whole.filter((entry) => entry !== input.reservationNumber),
+        wholeFor: (claims[index].wholeFor ?? []).filter(
+          (entry) => entry !== input.reservationNumber,
+        ),
       };
     }
 

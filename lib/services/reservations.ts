@@ -337,6 +337,9 @@ export async function moveReservationTable(input: {
         seats: table.seats,
         guests: seatsToClaim(wanted, table, input.guests),
         reservationNumber: input.reservationNumber,
+        // A row is taken whole here too, and its party is counted against the
+        // first of its tables rather than being made to fit at each of them.
+        whole: wanted.length > 1,
       });
     } catch (error) {
       await releaseHeldTables(input.date, claimed, input.guests, input.reservationNumber, wanted);
@@ -526,11 +529,14 @@ export async function createReservationEntry(input: {
           guests: seatsToClaim(input.tables, table, input.guestCount),
           reservationNumber,
           /**
-           * A party pushing tables together onto a table the booking they are
-           * joining is already at. Only for a row: a single shared table is an
-           * ordinary shared table, where two rooms take a seat each and both
-           * counts are real. Ignored when that booking is not at this one, so
-           * the other tables of the row are claimed the ordinary way.
+           * A row is taken whole; a single shared table is an ordinary shared
+           * table, where two rooms take a seat each and both counts are real.
+           */
+          whole: (input.tables?.length ?? 0) > 1,
+          /**
+           * And when the row is being pushed onto the booking this party said
+           * they are sitting with, their claim is the one to join rather than
+           * a table to be refused.
            */
           joiningWith: (input.tables?.length ?? 0) > 1 ? (tableGroupId ?? undefined) : undefined,
         });
@@ -685,18 +691,26 @@ async function releaseClaimedTable(record: ReservationRecord): Promise<void> {
   }
 
   const plan = await getFloorPlan();
-  const held = allTables(plan).filter((table) => ids.includes(table.id));
+  const onPlan = allTables(plan).filter((table) => ids.includes(table.id));
 
-  for (const id of ids) {
-    const table = held.find((entry) => entry.id === id);
+  /**
+   * In the order the booking holds them, because what a row counted against
+   * each table depends on which one came first (`seatsToClaim`) — and giving
+   * back a different number than was taken is how a table ends up reading busy
+   * with nobody at it.
+   *
+   * A table missing from the plan since the booking was made still has to be
+   * let go of, so it stands in with the seats it was recorded with.
+   */
+  const held = ids.map(
+    (id) => onPlan.find((table) => table.id === id) ?? { id, label: "", seats: 0 },
+  );
 
+  for (const table of held) {
     await releaseTable({
       date: record.date,
-      tableId: id,
-      // A table missing from the plan since the booking was made still has to
-      // be let go of; releasing the party's own count is the closest honest
-      // guess, and the claim is deleted either way once nobody is on it.
-      guests: table?.seats ?? record.guestCount,
+      tableId: table.id,
+      guests: seatsToClaim(held, table, record.guestCount),
       reservationNumber: record.reservationNumber,
     }).catch((error) => {
       console.error("[reservations] failed to release a table on cancellation", error);

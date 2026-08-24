@@ -167,10 +167,19 @@ describe("pushing tables onto a party already seated", () => {
       joinReservationNumber: first.reservationNumber,
     });
 
-    const shared = (await claims.listTableClaims("2026-12-01")).find((c) => c.tableId === ANCHOR.id);
+    const all = await claims.listTableClaims("2026-12-01");
+    const shared = all.find((claim) => claim.tableId === ANCHOR.id);
+    const added = all.find((claim) => claim.tableId === NEXT.id);
 
-    // Still the two people who are actually there, not the table's capacity.
-    expect(shared?.guests).toBe(2);
+    /**
+     * Six people at the row — the two who were there and the four who joined
+     * them — counted once, against the first table of the row. Not the four
+     * seats of a table declared full, which is what the count used to say and
+     * what made a guest asking to join be told there was no room when there
+     * was.
+     */
+    expect(shared?.guests).toBe(6);
+    expect(added?.guests).toBe(0);
     expect(shared?.wholeFor).toHaveLength(1);
     expect(shared?.reservationNumbers).toHaveLength(2);
   });
@@ -259,5 +268,123 @@ describe("pushing tables onto a party already seated", () => {
     // And the first party still has their table.
     const shared = (await claims.listTableClaims("2026-12-04")).find((c) => c.tableId === ANCHOR.id);
     expect(shared?.reservationNumbers).toEqual([first.reservationNumber]);
+  });
+});
+
+/**
+ * The room this was reported from: a row of two-tops, a party of five on three
+ * of them, and the next two parties trying to sit with them.
+ *
+ * Five people on three two-tops is six seats with one chair spare. Every
+ * question anybody asks afterwards is measured against what the claim says is
+ * at that row — so the claim saying six was not a rounding, it was the answer
+ * to "is there room for one more" coming out backwards.
+ */
+describe("a party of five on three two-tops", () => {
+  const ROW = [
+    { id: "f-t2", label: "2", seats: 2 },
+    { id: "f-t3", label: "3", seats: 2 },
+    { id: "f-t4", label: "4", seats: 2 },
+  ];
+
+  async function seatFive(date: string) {
+    const { reservations } = await loadServices();
+    await openDate(date, 40);
+
+    return reservations.createReservationEntry({
+      roomNumber: "402",
+      guestCount: 5,
+      date,
+      guestName: "Petrov",
+      selections: [],
+      tables: ROW,
+    });
+  }
+
+  it("counts five at the row, not six", async () => {
+    const { claims } = await loadServices();
+    await seatFive("2027-01-01");
+
+    const seated = (await claims.listTableClaims("2027-01-01")).reduce(
+      (total, claim) => total + claim.guests,
+      0,
+    );
+
+    expect(seated).toBe(5);
+  });
+
+  it("has room for the one more the spare chair is for", async () => {
+    const { reservations, claims } = await loadServices();
+    const first = await seatFive("2027-01-02");
+
+    const second = await reservations.createReservationEntry({
+      roomNumber: "118",
+      guestCount: 1,
+      date: "2027-01-02",
+      guestName: "Ivanova",
+      selections: [],
+      tables: ROW,
+      joinReservationNumber: first.reservationNumber,
+    });
+
+    expect(second.tableNumber).toBe("2 + 3 + 4");
+
+    const seated = (await claims.listTableClaims("2027-01-02")).reduce(
+      (total, claim) => total + claim.guests,
+      0,
+    );
+
+    // Six at a row of six seats, and both bookings on it.
+    expect(seated).toBe(6);
+  });
+
+  it("takes another table when the party joining does not fit", async () => {
+    const { reservations, claims } = await loadServices();
+    const first = await seatFive("2027-01-03");
+
+    const second = await reservations.createReservationEntry({
+      roomNumber: "118",
+      guestCount: 3,
+      date: "2027-01-03",
+      guestName: "Ivanova",
+      selections: [],
+      // Their three tables, and the free one next to them.
+      tables: [...ROW, { id: "f-t5", label: "5", seats: 2 }],
+      joinReservationNumber: first.reservationNumber,
+    });
+
+    expect(second.tableNumber).toBe("2 + 3 + 4 + 5");
+
+    const all = await claims.listTableClaims("2027-01-03");
+
+    // Eight people across a row of eight seats.
+    expect(all.reduce((total, claim) => total + claim.guests, 0)).toBe(8);
+    // And the table they added is theirs alone.
+    expect(all.find((claim) => claim.tableId === "f-t5")?.wholeFor).toEqual([
+      second.reservationNumber,
+    ]);
+  });
+
+  it("gives the added table back and leaves the five where they were", async () => {
+    const { reservations, claims } = await loadServices();
+    const first = await seatFive("2027-01-04");
+
+    const second = await reservations.createReservationEntry({
+      roomNumber: "118",
+      guestCount: 3,
+      date: "2027-01-04",
+      guestName: "Ivanova",
+      selections: [],
+      tables: [...ROW, { id: "f-t5", label: "5", seats: 2 }],
+      joinReservationNumber: first.reservationNumber,
+    });
+
+    await reservations.cancelReservation(second.reservationNumber);
+
+    const all = await claims.listTableClaims("2027-01-04");
+
+    expect(all.reduce((total, claim) => total + claim.guests, 0)).toBe(5);
+    expect(all.find((claim) => claim.tableId === "f-t5")).toBeUndefined();
+    expect(all.every((claim) => claim.reservationNumbers.length === 1)).toBe(true);
   });
 });

@@ -1395,7 +1395,7 @@ describe("tables pushed together", () => {
     return listTableClaims(DATE);
   }
 
-  it("claims every seat of every table, not just the ones the party fills", async () => {
+  it("takes the whole row out of the room, and counts the party once", async () => {
     const { reservations } = await loadServices();
     await openDate(DATE, 40);
 
@@ -1416,9 +1416,29 @@ describe("tables pushed together", () => {
     expect(booking.tableIds).toEqual(["m1", "m2"]);
 
     const claims = await claimsNow();
-    expect(claims.find((claim) => claim.tableId === "m1")?.guests).toBe(4);
-    // Not 1. The four-top with one guest on it is still gone.
-    expect(claims.find((claim) => claim.tableId === "m2")?.guests).toBe(4);
+    const first = claims.find((claim) => claim.tableId === "m1");
+    const second = claims.find((claim) => claim.tableId === "m2");
+
+    /**
+     * Five people, counted **once** against the first table of the row — not
+     * spread across it, and not multiplied by it.
+     *
+     * It used to record four and four, so that the row read as full and could
+     * not be sold to anybody else. That said something false to say something
+     * true, and the false half was the half everything downstream read: a guest
+     * asking to sit with this party was told the row was full when a chair was
+     * empty.
+     */
+    expect(first?.guests).toBe(5);
+    expect(second?.guests).toBe(0);
+
+    /**
+     * The row is gone from the room all the same, which is `wholeFor`'s job.
+     * The second table has nobody counted at it and is no more available for
+     * it: half a table cannot be pushed against a stranger's dinner.
+     */
+    expect(first?.wholeFor).toEqual([booking.reservationNumber]);
+    expect(second?.wholeFor).toEqual([booking.reservationNumber]);
   });
 
   it("takes neither table when the second one is already gone", async () => {
@@ -1551,8 +1571,9 @@ describe("tables pushed together", () => {
     });
 
     const claims = await claimsNow();
-    expect(claims.find((claim) => claim.tableId === "n1")?.guests).toBe(4);
-    expect(claims.find((claim) => claim.tableId === "n3")?.guests).toBe(4);
+    // The party, counted once against the first table of the row it now holds.
+    expect(claims.find((claim) => claim.tableId === "n1")?.guests).toBe(5);
+    expect(claims.find((claim) => claim.tableId === "n3")?.guests).toBe(0);
     expect(claims.find((claim) => claim.tableId === "n2")).toBeUndefined();
   });
 });

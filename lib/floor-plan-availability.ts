@@ -503,7 +503,18 @@ export function hasOffer(zones: readonly ZoneOffer[]): boolean {
  * `seats` is what it seats with the junctions paid for, so a screen can show
  * the number growing as tables are added.
  */
-export function inspectRun(tables: readonly TableOffer[]): {
+export function inspectRun(
+  tables: readonly TableOffer[],
+  /**
+   * Tables belonging to the party being sat with.
+   *
+   * Somebody being at a table is what stops it joining a row — except when that
+   * somebody is who the guest asked to sit with. Without this, a row could
+   * never be pushed onto them: their tables are occupied by definition, so
+   * every extension was refused and the tap did nothing at all.
+   */
+  pinned: readonly string[] = [],
+): {
   ok: boolean;
   seats: number;
 } {
@@ -521,7 +532,13 @@ export function inspectRun(tables: readonly TableOffer[]): {
    * alone is the whole reason to push tables together, and being held back for
    * a bigger party is an answer about one table standing on its own.
    */
-  if (tables.some((table) => table.occupied || table.unavailable === "out-of-service")) {
+  if (
+    tables.some(
+      (table) =>
+        (table.occupied && !pinned.includes(table.id)) ||
+        table.unavailable === "out-of-service",
+    )
+  ) {
     return { ok: false, seats: 0 };
   }
 
@@ -621,7 +638,7 @@ export function nextSelection(
   const extended = [
     [tapped, ...run],
     [...run, tapped],
-  ].find((candidate) => inspectRun(candidate).ok);
+  ].find((candidate) => inspectRun(candidate, pinned).ok);
 
   if (!extended) {
     // Nowhere near the row: a guest changing their mind about where to sit —
@@ -635,7 +652,7 @@ export function nextSelection(
    * already has its six seats is a stray tap, and losing three chosen tables to
    * one of those is what makes people start again from the beginning.
    */
-  if (inspectRun(run).seats >= guests) {
+  if (inspectRun(run, pinned).seats >= guests) {
     return chosen;
   }
 

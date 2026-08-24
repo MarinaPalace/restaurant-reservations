@@ -244,7 +244,12 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
             );
 
             return (
-              <Tilt key={course.id} maxTilt={2} lift={6} className="reveal rounded-card">
+              <Tilt
+                key={course.id}
+                maxTilt={2}
+                lift={6}
+                className={cx("reveal rounded-card", !aboveTheFold && "deferred-card")}
+              >
               <Card id={`course-${course.id}`} as="section" className="lift overflow-hidden scroll-mt-4">
                 {/*
                   The course announces itself full-bleed, with the title over

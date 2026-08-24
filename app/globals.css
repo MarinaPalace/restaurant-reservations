@@ -459,6 +459,38 @@ body {
 }
 
 /* ---------------------------------------------------------------- *
+ * 2b. Deferred cards — thirty dishes, one screen at a time
+ * ---------------------------------------------------------------- */
+
+/*
+ * The menu puts every course on one page: around thirty photographs, each in a
+ * card with its own options under it. Lazy loading keeps the pictures off the
+ * wire until they are near, but the browser still styles, lays out and paints
+ * all of it before the guest sees the first course — on the cheap phone
+ * somebody is holding outside the restaurant, that is the part that stalls.
+ *
+ * `content-visibility: auto` lets it skip the work for a card that is nowhere
+ * near the viewport, and do it when the card approaches.
+ *
+ * `contain-intrinsic-size: auto <height>` is the important half. Without a
+ * guess the skipped card would claim no height and the scrollbar would lurch;
+ * with a fixed guess, a card that turns out taller shifts everything below it.
+ * `auto` tells the browser to remember what the card actually measured once it
+ * has rendered one, and use that from then on, which is what keeps
+ * `scrollIntoView` on a course landing where it aimed.
+ */
+.deferred-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 34rem;
+}
+
+/*
+ * Never applied to what is already on screen. A card the guest is looking at
+ * has nothing to gain from being skippable, and the first course is the one
+ * thing on this page that must not wait for anything.
+ */
+
+/* ---------------------------------------------------------------- *
  * 3. Press — the only "hover" a phone has
  * ---------------------------------------------------------------- */
 

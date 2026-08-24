@@ -77,7 +77,15 @@ export function DishImage({
     );
   }
 
-  const classes = cx("rounded-control border border-line object-cover", className);
+  /*
+   * The tone behind the photograph, showing until it paints.
+   *
+   * An `img` with no bytes yet is a hole in the page, and on a first visit the
+   * guest sees a screen of them. The same sunken tone the empty state uses
+   * reads as a card that is filling rather than a card that failed, and it
+   * costs nothing: it is painted by the element already in the layout.
+   */
+  const classes = cx("rounded-control border border-line bg-surface-sunken object-cover", className);
 
   if (isOptimisable(src)) {
     return (

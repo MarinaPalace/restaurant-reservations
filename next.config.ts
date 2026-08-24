@@ -24,6 +24,19 @@ const nextConfig: NextConfig = {
      * gain from expiring these sooner.
      */
     minimumCacheTTL: ONE_YEAR_SECONDS,
+    /**
+     * Next refuses to optimise a local image carrying a query string unless it
+     * is named here — the default is `[{ pathname: "**", search: "" }]`, and an
+     * uploaded dish photo is `/api/menu/images/<id>?v=<hash>`, so every one of
+     * them came back a 400 (`INVALID_IMAGE_OPTIMIZE_REQUEST` on Vercel).
+     *
+     * Omitting `search` on the first entry is what allows any `?v=`: the check
+     * is skipped when a pattern does not state one. It stays narrow to the
+     * route that serves our own uploads. The second entry is the default,
+     * restated because declaring this list replaces it — without it, every
+     * other local image would silently stop being optimised.
+     */
+    localPatterns: [{ pathname: "/api/menu/images/**" }, { pathname: "**", search: "" }],
   },
 };
 

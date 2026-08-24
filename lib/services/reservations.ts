@@ -25,6 +25,7 @@ import {
   reservationNumberExists,
   deleteLocalReservation,
   restoreLocalReservation,
+  setLocalGroupTables,
   setLocalReservationGroup,
   updateLocalReservationDetails,
   setLocalReservationTable,
@@ -241,6 +242,42 @@ async function resolveTableGroup(joinReservationNumber: string | undefined, date
   const groupId = target.reservationNumber;
   await setReservationGroup(target.reservationNumber, groupId);
   return groupId;
+}
+
+/**
+ * Puts every booking of a table group at the same tables.
+ *
+ * Only ever widens what the group holds: it is called when a party joins and
+ * pushes another table against the row, and the row it names is the whole of
+ * what the group now sits at.
+ *
+ * The claims are untouched. A booking whose `tableIds` gain a table it never
+ * claimed releases nothing for it — releasing requires the claim to still name
+ * the booking, so it is a no-op rather than a table handed back twice.
+ */
+async function spreadTableAcrossGroup(
+  tableGroupId: string,
+  tables: readonly HeldTable[],
+): Promise<void> {
+  const tableIds = tables.map((table) => table.id);
+
+  if (!isMongoConfigured()) {
+    await setLocalGroupTables(tableGroupId, tableIds, tableNumberFrom(tables) ?? "");
+    return;
+  }
+
+  await connectToDatabase();
+  await ReservationModel.updateMany(
+    { tableGroupId },
+    bumped({
+      $set: {
+        tableNumber: tableNumberFrom(tables),
+        tableId: tableIds[0],
+        // One table is not a list, the same as everywhere else this is written.
+        tableIds: tableIds.length > 1 ? tableIds : [],
+      },
+    }),
+  );
 }
 
 async function setReservationGroup(reservationNumber: string, tableGroupId: string) {
@@ -587,6 +624,24 @@ export async function createReservationEntry(input: {
       // record written before versions existed.
       version: 1,
     });
+
+    /**
+     * Everybody sharing the table is at the same tables.
+     *
+     * A party joining another and pushing a table against theirs leaves the
+     * two bookings describing different furniture — 12 + 13 for the party who
+     * were there, 12 + 13 + 14 for the one that arrived — when they are sitting
+     * at one table. The sheet and the board key on that string, so they showed
+     * the same table twice, once under each name, and staff laying the room
+     * would have had to work out that it was one.
+     *
+     * Written across the group rather than only onto this booking, because the
+     * row is a fact about the group and the last party to join is the one who
+     * knows all of it.
+     */
+    if (tableGroupId && input.tables?.length) {
+      await spreadTableAcrossGroup(tableGroupId, input.tables);
+    }
 
     return toReservationRecord(created.toObject() as MongoReservationDocument);
   } catch (error) {

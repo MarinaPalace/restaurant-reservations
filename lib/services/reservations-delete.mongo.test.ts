@@ -388,3 +388,88 @@ describe("a party of five on three two-tops", () => {
     expect(all.every((claim) => claim.reservationNumbers.length === 1)).toBe(true);
   });
 });
+
+/**
+ * What the sheet reads after a party joins and widens the row.
+ *
+ * The two bookings are at one table. They must say so in the same words: the
+ * sheet, the board and `groupRoomRowsByTable` all key on that string, so two
+ * spellings of one row is the same table listed twice, once under each name.
+ */
+describe("both bookings of a widened row", () => {
+  const ROW = [
+    { id: "f-t12", label: "12", seats: 2 },
+    { id: "f-t13", label: "13", seats: 2 },
+  ];
+  const NEXT = { id: "f-t14", label: "14", seats: 2 };
+
+  it("name the same tables once the row has grown", async () => {
+    const { reservations } = await loadServices();
+    await openDate("2027-02-01", 40);
+
+    const first = await reservations.createReservationEntry({
+      roomNumber: "402",
+      guestCount: 3,
+      date: "2027-02-01",
+      guestName: "Petrov",
+      selections: [],
+      tables: ROW,
+    });
+
+    expect(first.tableNumber).toBe("12 + 13");
+
+    const second = await reservations.createReservationEntry({
+      roomNumber: "118",
+      guestCount: 3,
+      date: "2027-02-01",
+      guestName: "Ivanova",
+      selections: [],
+      tables: [...ROW, NEXT],
+      joinReservationNumber: first.reservationNumber,
+    });
+
+    const anchor = await reservations.getReservationByNumber(first.reservationNumber);
+
+    expect(second.tableNumber).toBe("12 + 13 + 14");
+    // The party who were there first are at the widened row too, and say so.
+    expect(anchor?.tableNumber).toBe("12 + 13 + 14");
+    expect(anchor?.tableIds).toEqual(["f-t12", "f-t13", "f-t14"]);
+  });
+
+  it("still give back only what each of them took", async () => {
+    // The anchor's tables now include one it never claimed. Releasing it must
+    // be a no-op rather than handing back a table somebody is sitting at.
+    const { reservations, claims } = await loadServices();
+    await openDate("2027-02-02", 40);
+
+    const first = await reservations.createReservationEntry({
+      roomNumber: "402",
+      guestCount: 3,
+      date: "2027-02-02",
+      guestName: "Petrov",
+      selections: [],
+      tables: ROW,
+    });
+
+    const second = await reservations.createReservationEntry({
+      roomNumber: "118",
+      guestCount: 3,
+      date: "2027-02-02",
+      guestName: "Ivanova",
+      selections: [],
+      tables: [...ROW, NEXT],
+      joinReservationNumber: first.reservationNumber,
+    });
+
+    await reservations.cancelReservation(first.reservationNumber);
+
+    const after = await claims.listTableClaims("2027-02-02");
+
+    // The table the joining party added is still theirs.
+    expect(after.find((claim) => claim.tableId === NEXT.id)?.reservationNumbers).toEqual([
+      second.reservationNumber,
+    ]);
+    // And three people are left at the row, not none.
+    expect(after.reduce((total, claim) => total + claim.guests, 0)).toBe(3);
+  });
+});

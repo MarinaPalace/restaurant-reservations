@@ -1323,3 +1323,32 @@ edge, and the viewport allowed 20 cm around the drawing. A table against a wall
 had its chairs cut in half by the edge of the picture — which reads as a room
 drawn wrong rather than as a picture that stops short. The margin is a chair
 wide now.
+
+### Both bookings are at one table, so both say so
+
+A party joining another and pushing a table against theirs left the two
+bookings describing different furniture — `12 + 13` for the party who were
+there and `12 + 13 + 14` for the one that arrived. The sheet, the board and
+`groupRoomRowsByTable` all key on that string, so one table was listed twice,
+once under each name, and staff laying the room would have had to work out that
+it was one.
+
+The row is written across the whole group, because it is a fact about the group
+and the last party to join is the one who knows all of it. The claims are
+untouched: a booking whose `tableIds` gain a table it never claimed releases
+nothing for it, since releasing requires the claim to still name the booking.
+
+### Smaller things, while it was open
+
+- **The list said nothing was chosen** while three tables were lit up on the
+  plan beside it. It was comparing a table id with `t1+t2+t3`; it marks every
+  table *in* the row now, and tapping one there builds the row exactly as the
+  plan does.
+- **"You can push more tables against it"** was offered to a party who already
+  fitted at the table they were joining. A row stops growing once it seats
+  everybody, so the next tap would have refused — the offer promised something
+  that could not happen.
+- **The lookup fired before the browser had the booking.** The evening and the
+  party size come from the session, which is empty until hydration, and asking
+  then sent a blank date and got back a refusal about the reservation number —
+  a lie about which of the three was missing.

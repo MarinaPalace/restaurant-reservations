@@ -3,7 +3,12 @@
 import { useState } from "react";
 import { cx } from "@/components/ui/utils";
 import { PlanView, refusalOf, refusalSentence } from "@/app/booking/table/plan-view";
-import { inspectRun, type TableOffer, type ZoneOffer } from "@/lib/floor-plan-availability";
+import {
+  inspectRun,
+  nextSelection,
+  type TableOffer,
+  type ZoneOffer,
+} from "@/lib/floor-plan-availability";
 
 /**
  * Choosing a table: the zones, the plan, and the same tables as a list.
@@ -151,7 +156,7 @@ export function TableChooser({
         </p>
       ) : null}
 
-      <TableList zone={zone} chosen={chosen} onChoose={choose} />
+      <TableList zone={zone} chosen={chosen} needed={needed ?? guestCount} onTap={select} onChoose={choose} />
     </>
   );
 }
@@ -170,12 +175,20 @@ export function TableChooser({
 function TableList({
   zone,
   chosen,
+  needed,
+  onTap,
   onChoose,
 }: {
   zone: ZoneOffer;
   chosen: string | null;
+  needed: number;
+  /** A table tapped in the list builds the row, exactly as on the plan. */
+  onTap: (next: string | null) => void;
   onChoose: (id: string) => void;
 }) {
+  /** Every table the current choice covers: one, or a row of them. */
+  const chosenIds = new Set((chosen ?? "").split("+").filter(Boolean));
+
   const ordered = [...zone.tables].sort((a, b) => {
     const free = Number(Boolean(a.unavailable)) - Number(Boolean(b.unavailable));
     if (free !== 0) return free;
@@ -240,7 +253,17 @@ function TableList({
       <ul className="mt-2 grid gap-2 sm:grid-cols-2">
         {ordered.map((table) => (
           <li key={table.id}>
-            <TableRow table={table} chosen={chosen === table.id} onChoose={() => onChoose(table.id)} />
+            <TableRow
+              table={table}
+              /**
+               * Chosen when it is **in** the row, not only when it is the whole
+               * of it. A guest who taps three tables together sees three tables
+               * lit on the plan; the list beside it showed none of them chosen,
+               * because it was comparing a table id with `t1+t2+t3`.
+               */
+              chosen={chosenIds.has(table.id)}
+              onChoose={() => onTap(nextSelection(zone.tables, chosen, table.id, needed))}
+            />
           </li>
         ))}
       </ul>
@@ -257,7 +280,9 @@ function TableRow({
   chosen: boolean;
   onChoose: () => void;
 }) {
-  const free = !table.unavailable;
+  // A table already in the row is pickable whatever its own refusal says: being
+  // too small alone is why it is in a row, and tapping it takes it back out.
+  const free = !table.unavailable || chosen;
 
   return (
     <button
@@ -276,7 +301,7 @@ function TableRow({
     >
       <span className="font-medium">Table {table.label}</span>
       <span className={cx("text-xs", chosen ? "text-accent-ink" : "text-ink-muted")}>
-        {free ? `Seats ${table.seats}${chosen ? " · chosen" : ""}` : refusalOf(table)}
+        {chosen ? `Seats ${table.seats} · chosen` : free ? `Seats ${table.seats}` : refusalOf(table)}
       </span>
     </button>
   );

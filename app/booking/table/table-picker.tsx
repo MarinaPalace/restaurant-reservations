@@ -86,6 +86,17 @@ function ShareWith({
       return;
     }
 
+    /**
+     * The evening and the party size come from the booking session, which is
+     * empty until the browser has hydrated. Asking before then sends a blank
+     * date and gets back a refusal about the reservation number, which is a
+     * lie about which of the three is missing.
+     */
+    if (!date || guestCount < 1) {
+      setProblem("One moment — still loading your booking. Please try again.");
+      return;
+    }
+
     setChecking(true);
     setProblem("");
 
@@ -96,7 +107,7 @@ function ShareWith({
         const data = await response.json().catch(() => ({}));
 
         if (!response.ok) {
-          setProblem(data.error ?? "We could not check that reservation.");
+          setProblem(data.error ?? `We could not check that reservation (${response.status}).`);
           onShare(null);
           return;
         }
@@ -144,7 +155,7 @@ function ShareWith({
           </Field>
 
           <div>
-            <Button variant="secondary" onClick={check} disabled={checking}>
+            <Button variant="secondary" onClick={check} disabled={checking || !date || guestCount < 1}>
               {checking ? "Checking…" : "Find their table"}
             </Button>
           </div>
@@ -159,7 +170,10 @@ function ShareWith({
             <Alert tone={sharing.fits ? "info" : "warning"}>
               {sharing.tableNumber
                 ? sharing.fits
-                  ? `Reservation ${sharing.number} is at table ${sharing.tableNumber}, and there is room for you there. Their table is kept below; you can push more tables against it if you would rather have the space.`
+                  ? // Room for them there, so there is nothing to add: a row
+                    // stops growing once it seats everybody, and offering it
+                    // promises something the next tap will refuse.
+                    `Reservation ${sharing.number} is at table ${sharing.tableNumber}, and there is room for you there. You will be seated with them.`
                   : `Reservation ${sharing.number} is at table ${sharing.tableNumber}, which does not have room for ${guestCount} more. Tap a table beside theirs on the plan to push it together with them.`
                 : `Reservation ${sharing.number} has no table yet, so you will be seated together on the night.`}
             </Alert>

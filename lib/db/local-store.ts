@@ -406,6 +406,42 @@ export async function findLocalReservationsByPassKey(passKeyId: string): Promise
  * Records that a reservation now anchors a shared table. The first booker's
  * own number becomes the group id, so guests can read it out to each other.
  */
+/**
+ * Puts every booking of a table group at the same tables.
+ *
+ * The local half of `spreadTableAcrossGroup`: a party joining another and
+ * pushing a table against theirs leaves the two bookings naming different
+ * furniture when they are sitting at one table.
+ */
+export async function setLocalGroupTables(
+  tableGroupId: string,
+  tableIds: string[],
+  tableNumber: string,
+) {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    let touched = false;
+
+    for (let index = 0; index < reservations.length; index += 1) {
+      if (reservations[index].tableGroupId !== tableGroupId) {
+        continue;
+      }
+
+      reservations[index] = {
+        ...reservations[index],
+        tableNumber,
+        tableId: tableIds[0],
+        tableIds: tableIds.length > 1 ? tableIds : undefined,
+      };
+      touched = true;
+    }
+
+    if (touched) {
+      await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    }
+  });
+}
+
 export async function setLocalReservationGroup(reservationNumber: string, tableGroupId: string) {
   return withStoreLock(async () => {
     const reservations = await readReservations();

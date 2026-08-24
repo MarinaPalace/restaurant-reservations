@@ -306,11 +306,33 @@ async function resolveTable(
     return undefined;
   }
 
+  /**
+   * Every way out of here drops the guest's table and takes the booking anyway,
+   * which is the right behaviour and a terrible thing to do quietly.
+   *
+   * A guest who picked three tables, was shown them, and got a booking with no
+   * table has hit one of the five refusals below, and until this said which,
+   * finding out which meant guessing. So each one names itself. It is one line
+   * on a path that is meant never to run, and it is the difference between a
+   * five-minute answer and an afternoon.
+   *
+   * `console.warn` rather than an audit entry: nothing here is about the guest
+   * or the booking, it is about a screen and a plan disagreeing, and that is a
+   * thing for whoever runs the server to read.
+   */
+  const dropped = (reason: string) => {
+    console.warn(
+      `[reservations] table choice dropped (${reason}) date=${date} guests=${guestCount} tableId=${tableId}`,
+    );
+
+    return undefined;
+  };
+
   const evening = await getRestaurantDate(date);
   const features = await getEveningFeatures(evening);
 
   if (features.tableSelection === "off") {
-    return undefined;
+    return dropped("selection-off");
   }
 
   /**
@@ -320,7 +342,7 @@ async function resolveTable(
    * and "your table went while you were choosing" is not a booking failure.
    */
   if (!canGuestChooseTable(evening, new Date()).allowed) {
-    return undefined;
+    return dropped("past-cutoff");
   }
 
   /**
@@ -331,7 +353,7 @@ async function resolveTable(
   const combination = findPlanCombination(await getFloorPlan(), tableId);
 
   if (!combination) {
-    return undefined;
+    return dropped("not-on-plan");
   }
 
   /**
@@ -347,7 +369,7 @@ async function resolveTable(
    * means a stale screen or a made-up request, and the guest asked to eat.
    */
   if (combination.seats < guestCount) {
-    return undefined;
+    return dropped(`too-small seats=${combination.seats}`);
   }
 
   return combination.tables.map((table) => ({

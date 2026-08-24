@@ -270,16 +270,35 @@ export function seatsToClaim(
 }
 
 /**
- * What a booking's tables are called between them: `7`, or `7 + 8`.
+ * What a booking's tables are called between them: `7`, or `11 + 12 + 13`.
  *
  * This becomes `tableNumber`, which is the string the service sheet, the board
  * and `groupRoomRowsByTable` have always keyed on — the continuity point the
  * whole floor-plan feature rests on (`docs/floor-plan.md` §3).
+ *
+ * ## The lowest number first, and every number kept
+ *
+ * **Lowest first**, so a booking is filed under the table staff would call it
+ * by. The tables arrive in the order they physically stand, which for a row
+ * running right to left reads `13 + 12 + 11` — accurate about the room and
+ * wrong on a sheet, where a party is looked up by the first number written.
+ *
+ * **Every number kept**, joined by `+`. Writing only the lowest would file it
+ * correctly and hide that two more tables are gone: staff reading `11` would
+ * lay one table and sell the other two. The `+` is also what the board splits
+ * on to light up every table of a merged party, so the whole string has to
+ * survive.
+ *
+ * Sorted the way people read table numbers, not the way strings sort — `2`
+ * before `11`, and a label like `A3` still lands somewhere sensible.
  */
 export function tableNumberFrom(held: readonly HeldTable[] | undefined): string | undefined {
   if (!held?.length) {
     return undefined;
   }
 
-  return held.map((table) => table.label).join(" + ");
+  return held
+    .map((table) => table.label)
+    .sort((one, other) => one.localeCompare(other, undefined, { numeric: true }))
+    .join(" + ");
 }

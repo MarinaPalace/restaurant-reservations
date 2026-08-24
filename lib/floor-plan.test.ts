@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { floorPlanSchema } from "@/lib/validation/booking";
+import { tableNumberFrom } from "@/lib/services/table-claims";
 import {
   DEFAULT_FEATURE_SIZE,
   DEFAULT_TABLE_SIZE,
@@ -1168,5 +1169,48 @@ describe("a plan saved the way the designer saves it", () => {
 
     expect(plan.zones[0].tables[0].chairSides).toEqual(["top", "bottom"]);
     expect(plan.zones[0].tables[0].seats).toBe(2);
+  });
+});
+
+/**
+ * What a merged booking is filed under.
+ *
+ * The string staff read off the sheet, and the one the board splits on to light
+ * up every table of a party. Both of its properties are load-bearing.
+ */
+describe("the table number a merged booking carries", () => {
+  it("puts the lowest number first, however the row runs", () => {
+    // The tables arrive in the order they stand, and a row running right to
+    // left arrives as 13, 12, 11 — accurate about the room, and wrong on a
+    // sheet where a party is looked up by the first number written.
+    const held = [
+      { id: "c", label: "13", seats: 2 },
+      { id: "b", label: "12", seats: 2 },
+      { id: "a", label: "11", seats: 2 },
+    ];
+
+    expect(tableNumberFrom(held)).toBe("11 + 12 + 13");
+  });
+
+  it("keeps every table in it", () => {
+    // Writing only the lowest would file it correctly and hide that two more
+    // tables are gone, and staff would sell them.
+    expect(tableNumberFrom([
+      { id: "a", label: "11", seats: 2 },
+      { id: "b", label: "12", seats: 2 },
+    ])).toBe("11 + 12");
+  });
+
+  it("reads numbers the way people do, not the way strings sort", () => {
+    expect(tableNumberFrom([
+      { id: "a", label: "11", seats: 2 },
+      { id: "b", label: "2", seats: 2 },
+    ])).toBe("2 + 11");
+  });
+
+  it("is just the table when there is one, and nothing when there is none", () => {
+    expect(tableNumberFrom([{ id: "a", label: "7", seats: 4 }])).toBe("7");
+    expect(tableNumberFrom([])).toBeUndefined();
+    expect(tableNumberFrom(undefined)).toBeUndefined();
   });
 });

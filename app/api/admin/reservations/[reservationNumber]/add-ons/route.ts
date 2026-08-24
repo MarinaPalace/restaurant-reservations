@@ -3,9 +3,9 @@ import { isDenied, requireStaff } from "@/lib/auth/guard";
 import { recordAuditEntry } from "@/lib/services/audit-log";
 import { describeReservationChanges } from "@/lib/reservation-changes";
 import { getReservationByNumber, updateReservationAddOns } from "@/lib/services/reservations";
-import { getPromoCatalog, priceOfPromoOption } from "@/lib/services/restaurant";
+import { getPromoCatalog } from "@/lib/services/restaurant";
+import { resolvePromotionSelection } from "@/lib/services/promotion-selection";
 import { staffAddOnsSchema } from "@/lib/validation/booking";
-import type { ReservationAddOn } from "@/types/booking";
 import { reportError } from "@/lib/observability";
 
 /**
@@ -48,31 +48,52 @@ export async function POST(request: Request, { params }: { params: Promise<{ res
       return NextResponse.json({ error: "Reservation not found." }, { status: 404 });
     }
 
-    const catalog = await getPromoCatalog("en");
-    const chosenGroups = new Set<string>();
-    const addOns: ReservationAddOn[] = [];
-
-    for (const requested of parsed.data.addOns) {
-      if (chosenGroups.has(requested.courseId)) {
-        return NextResponse.json({ error: "Choose at most one product from each group." }, { status: 400 });
-      }
-
-      const course = catalog.find((entry) => entry.id === requested.courseId);
-      const option = course?.options.find((entry) => entry.id === requested.optionId);
-
-      if (!course || !option) {
-        return NextResponse.json({ error: "That product is no longer in the promotions menu." }, { status: 409 });
-      }
-
-      chosenGroups.add(requested.courseId);
-      addOns.push({
-        courseId: course.id,
-        courseName: course.name,
-        optionId: option.id,
-        optionName: option.name,
-        ...priceOfPromoOption(option),
-      });
+    /**
+     * A cancelled booking is not a bill, so nothing may be added to it.
+     *
+     * This used to answer 200 and write the line, which then vanished from
+     * every report — they all exclude cancelled bookings. Nobody was
+     * over-charged, which is why it survived: it failed in the safe direction
+     * and silently. Reception put a bottle on a bill, was told it worked, and
+     * the money never appeared.
+     *
+     * Refused rather than warned about, because the useful thing reception can
+     * do is restore the booking first — and then the line is real. The message
+     * says so, since "no" without "instead, do this" is how a rule ends up
+     * worked around on paper.
+     */
+    if (existing.status !== "confirmed") {
+      return NextResponse.json(
+        {
+          error: "That booking is cancelled. Restore it first, then add the promotion.",
+          code: "RESERVATION_NOT_CONFIRMED",
+        },
+        { status: 409 },
+      );
     }
+
+    const selection = resolvePromotionSelection({
+      requested: parsed.data.addOns,
+      // Lines the booking already holds are carried through as they were
+      // agreed: adding a dessert must not reprice the wine beside it, and a
+      // product the bar has stopped selling must not freeze the whole booking.
+      held: existing.addOns ?? [],
+      catalog: await getPromoCatalog("en"),
+    });
+
+    if (!selection.ok) {
+      return NextResponse.json(
+        {
+          error:
+            selection.status === 409
+              ? "That product is no longer in the promotions menu."
+              : selection.error,
+        },
+        { status: selection.status },
+      );
+    }
+
+    const addOns = selection.addOns;
 
     const updated = await updateReservationAddOns(reservationNumber, addOns);
     if (!updated) {

@@ -261,25 +261,15 @@ describe("staff setting promotions on a booking", () => {
 });
 
 /**
- * Two gaps found while writing the tests above. Both are recorded as they
- * behave today rather than as they should, so that changing either one has to
- * change a test that says why — see docs/upsell-lifecycle.md.
+ * An agreed line is a record, not a query.
+ *
+ * These three were found as gaps and pinned as they behaved; this is what they
+ * assert now that they are fixed. The third was the expensive one and was not
+ * in the original list — it fell out of fixing the second.
  */
-describe("known gaps, pinned so a fix has to be deliberate", () => {
-  /**
-   * **Gap 1 — a cancelled booking still accepts a chargeable item.**
-   *
-   * The guest route refuses anything but a confirmed booking; this one never
-   * checks. Reception adds a bottle to a booking that was cancelled, gets a
-   * cheerful 200, and the line is written to the document — where every report
-   * then ignores it, because reports exclude cancelled bookings. Nothing is
-   * over-charged, which is why it has survived: it fails silently in the safe
-   * direction. But the screen said yes and the money never appears, and the
-   * only way to find out is to notice the absence.
-   */
-  it("accepts a promotion on a cancelled booking, and the revenue is then ignored", async () => {
+describe("what a booking already holds", () => {
+  it("refuses a promotion on a cancelled booking, and says what to do instead", async () => {
     const { POST } = await import("@/app/api/admin/reservations/[reservationNumber]/add-ons/route");
-    const { buildTotals } = await import("@/lib/analytics/metrics");
     const { wines, reservations } = await setUp();
 
     await reservations.cancelReservation("VDM-AAA111");
@@ -289,33 +279,21 @@ describe("known gaps, pinned so a fix has to be deliberate", () => {
       { params },
     );
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(409);
+
+    const body = await response.json();
+    expect(body.code).toBe("RESERVATION_NOT_CONFIRMED");
+    // "No" without "instead, do this" is how a rule gets worked around on paper.
+    expect(body.error).toContain("Restore it first");
 
     const stored = await reservations.getReservationByNumber("VDM-AAA111");
-    expect(stored?.status).toBe("cancelled");
-    expect(stored?.addOns).toHaveLength(1);
-
-    // Written, and worth nothing.
-    const evening = { date: "2026-08-18", isOpen: true, capacity: 40, reservedSeats: 0, remainingSeats: 40 };
-    expect(buildTotals([stored!], [evening]).promotionRevenue).toBe(0);
+    expect(stored?.addOns ?? []).toHaveLength(0);
   });
 
-  /**
-   * **Gap 2 — a withdrawn product freezes the whole booking.**
-   *
-   * Every item in the request is re-resolved against the live catalogue, and
-   * one miss rejects the set. So once the bar stops offering a wine somebody
-   * already agreed to, that booking can never have anything else added: asking
-   * for the dessert means re-sending the wine, and the wine is gone.
-   *
-   * The only way through is to drop the wine — silently repricing a booking to
-   * add a dessert to it. That is the wrong trade, and it is the one the API
-   * forces.
-   */
-  it("refuses to add a dessert to a booking holding a withdrawn wine", async () => {
+  it("adds a dessert to a booking holding a withdrawn wine, and keeps the wine", async () => {
     const { POST } = await import("@/app/api/admin/reservations/[reservationNumber]/add-ons/route");
     const restaurant = await import("@/lib/services/restaurant");
-    const { wines, desserts } = await setUp();
+    const { wines, desserts, reservations } = await setUp();
 
     await POST(post({ addOns: [{ courseId: wines.id, optionId: wines.options[0].id }] }), { params });
 
@@ -335,6 +313,70 @@ describe("known gaps, pinned so a fix has to be deliberate", () => {
       { params },
     );
 
-    expect(response.status).toBe(409);
+    expect(response.status).toBe(200);
+
+    const stored = await reservations.getReservationByNumber("VDM-AAA111");
+    expect(stored?.addOns?.map((addOn) => addOn.optionName).sort()).toEqual([
+      "Chardonnay",
+      "Fondant",
+    ]);
+  });
+
+  /**
+   * The one that costs money. Reception adding a dessert, touching nothing
+   * about the wine, used to move that wine from the 30 the guest agreed to to
+   * whatever the bar charges today — silently, with nothing on screen to say
+   * the bill had changed.
+   */
+  it("does not reprice a line the guest already agreed to", async () => {
+    const { POST } = await import("@/app/api/admin/reservations/[reservationNumber]/add-ons/route");
+    const restaurant = await import("@/lib/services/restaurant");
+    const { wines, desserts, reservations } = await setUp();
+
+    await POST(post({ addOns: [{ courseId: wines.id, optionId: wines.options[0].id }] }), { params });
+
+    await restaurant.saveMenuCatalog(
+      [{ ...wines, options: [{ ...wines.options[0], price: 90, discountPercent: 0 }] }, desserts],
+      "promo",
+    );
+
+    await POST(
+      post({
+        addOns: [
+          { courseId: wines.id, optionId: wines.options[0].id },
+          { courseId: desserts.id, optionId: desserts.options[0].id },
+        ],
+      }),
+      { params },
+    );
+
+    const stored = await reservations.getReservationByNumber("VDM-AAA111");
+    const wine = stored?.addOns?.find((addOn) => addOn.courseId === wines.id);
+
+    expect(wine).toMatchObject({ price: 40, discountPercent: 25, finalPrice: 30 });
+
+    // The dessert, chosen just now, is priced at what it costs now.
+    const dessert = stored?.addOns?.find((addOn) => addOn.courseId === desserts.id);
+    expect(dessert?.finalPrice).toBe(12);
+  });
+
+  /** Repricing stays possible — it just has to be meant. */
+  it("takes the new price when the product is removed and put back", async () => {
+    const { POST } = await import("@/app/api/admin/reservations/[reservationNumber]/add-ons/route");
+    const restaurant = await import("@/lib/services/restaurant");
+    const { wines, desserts, reservations } = await setUp();
+
+    await POST(post({ addOns: [{ courseId: wines.id, optionId: wines.options[0].id }] }), { params });
+
+    await restaurant.saveMenuCatalog(
+      [{ ...wines, options: [{ ...wines.options[0], price: 90, discountPercent: 0 }] }, desserts],
+      "promo",
+    );
+
+    await POST(post({ addOns: [] }), { params });
+    await POST(post({ addOns: [{ courseId: wines.id, optionId: wines.options[0].id }] }), { params });
+
+    const stored = await reservations.getReservationByNumber("VDM-AAA111");
+    expect(stored?.addOns?.[0].finalPrice).toBe(90);
   });
 });

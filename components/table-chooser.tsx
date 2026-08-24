@@ -96,7 +96,7 @@ export function TableChooser({
       <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-xs text-ink-muted">
         <Key className="border-line-strong bg-surface" label="Free" />
         <Key className="border-accent bg-primary" label="Yours" />
-        <Key className="border-line bg-surface-sunken" label="Taken or too small" />
+        <Key className="border-line bg-surface-sunken" label="Not free for your party" />
       </div>
 
       {refused ? (
@@ -149,7 +149,8 @@ function TableList({
         <div className="mb-4">
           <h2 className="text-sm font-medium text-ink-muted">Tables pushed together for your party</h2>
           <p className="mt-0.5 text-xs text-ink-subtle">
-            No single table in {zone.name} seats your party, so these are joined for you.
+            No single table in {zone.name} seats your party, so these are joined for you. The seats
+            shown are what they seat pushed together, which is fewer than their two totals added up.
           </p>
           <ul className="mt-2 grid gap-2 sm:grid-cols-2">
             {zone.combinations.map((combination) => (

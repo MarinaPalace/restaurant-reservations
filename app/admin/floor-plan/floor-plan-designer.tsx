@@ -15,7 +15,6 @@ import {
   FLOOR_PLAN_MODE_LABELS,
   GRID,
   MAX_FEATURES_PER_ZONE,
-  MAX_MERGE_GROUP_LENGTH,
   MAX_SEATS_PER_TABLE,
   MAX_SIZE,
   MAX_TABLES_PER_ZONE,
@@ -38,6 +37,10 @@ import {
   clampZoneSize,
   countPlan,
   countZone,
+  forgetTable,
+  joinedSeats,
+  linkTables,
+  rowThrough,
   describePlanProblems,
   duplicateLabels,
   formatLength,
@@ -368,10 +371,30 @@ export function FloorPlanDesigner({
 
     editZone((current) =>
       selection.kind === "table"
-        ? { ...current, tables: current.tables.filter((table) => table.id !== selection.id) }
+        ? // Out of the room and out of every row it stood in: neighbours left
+          // pointing at a table that is gone would draw a join that is not
+          // there until the plan had been saved and read back.
+          { ...current, tables: forgetTable(current.tables, selection.id) }
         : { ...current, features: current.features.filter((feature) => feature.id !== selection.id) },
     );
     setSelection(null);
+  };
+
+  /**
+   * Says which table stands on one side of the selected one.
+   *
+   * Handled here rather than in the properties panel because a join is a fact
+   * about **two** tables and the panel only ever holds one. `linkTables` writes
+   * both ends, so the neighbour learns it has a table on its facing side
+   * without anybody having to go and tell it.
+   */
+  const linkSelected = (side: ChairSide, neighbourId: string | null) => {
+    if (!selection || selection.kind !== "table") return;
+
+    editZone((current) => ({
+      ...current,
+      tables: linkTables(current.tables, selection.id, side, neighbourId),
+    }));
   };
 
   const duplicateSelected = () => {
@@ -393,9 +416,13 @@ export function FloorPlanDesigner({
     };
 
     if (selection.kind === "table") {
-      // A copied table keeps everything but its label: two tables answering to
-      // the same number is the one thing a save refuses.
-      editZone((current) => ({ ...current, tables: [...current.tables, { ...(copy as FloorTable), label: "" }] }));
+      // A copied table keeps everything but its label and its neighbours: two
+      // tables answering to the same number is the one thing a save refuses,
+      // and the copy is standing somewhere else in the room, touching nothing.
+      editZone((current) => ({
+        ...current,
+        tables: [...current.tables, { ...(copy as FloorTable), label: "", neighbours: undefined }],
+      }));
     } else {
       editZone((current) => ({ ...current, features: [...current.features, copy as FloorFeature] }));
     }
@@ -798,6 +825,7 @@ export function FloorPlanDesigner({
                     : false
                 }
                 onChange={editSelected}
+                onLink={linkSelected}
                 onRemove={removeSelected}
                 onDuplicate={duplicateSelected}
               />
@@ -1193,6 +1221,72 @@ function FeatureShape({
   );
 }
 
+/**
+ * Which table stands on one side of this one.
+ *
+ * ## Why a list of tables and not a checkbox
+ *
+ * A join is between two named tables, and the thing staff know is "12 is on my
+ * left" — not "I am joinable". Picking the table by name is the same sentence,
+ * and it cannot be typed wrong: the old group name was a string, and a typo was
+ * a group of one that silently offered nothing for the rest of the evening.
+ *
+ * ## What is left out of the list
+ *
+ * This table itself, and any table already standing on one of its other sides —
+ * a table cannot be on two sides of the same one at once. Everything else in
+ * the hall is offered, **including tables that already have a neighbour on the
+ * facing side**: choosing one moves it, which is what somebody rearranging a
+ * room means, and `linkTables` unpicks whatever it displaced from both ends.
+ *
+ * Tables in other halls are not here at all. They cannot be pushed together
+ * across a wall, and `toFloorZone` would drop the link anyway.
+ */
+function NeighbourPicker({
+  side,
+  table,
+  zoneTables,
+  canEdit,
+  onLink,
+}: {
+  side: ChairSide;
+  table: FloorTable;
+  zoneTables: FloorTable[];
+  canEdit: boolean;
+  onLink: (side: ChairSide, neighbourId: string | null) => void;
+}) {
+  const links = table.neighbours ?? [];
+  const here = links.find((link) => link.side === side)?.tableId ?? "";
+
+  const options = zoneTables.filter(
+    (entry) =>
+      entry.id !== table.id &&
+      // Already standing on another side of this table.
+      !links.some((link) => link.tableId === entry.id && link.side !== side),
+  );
+
+  return (
+    <Field label={`${CHAIR_SIDE_LABELS[side]} side`}>
+      {(fieldProps) => (
+        <Select
+          {...fieldProps}
+          disabled={!canEdit}
+          value={here}
+          onChange={(event) => onLink(side, event.target.value || null)}
+        >
+          <option value="">Nothing</option>
+          {options.map((entry) => (
+            <option key={entry.id} value={entry.id}>
+              {entry.label.trim() ? `Table ${entry.label.trim()}` : "Unlabelled table"} · seats{" "}
+              {entry.seats}
+            </option>
+          ))}
+        </Select>
+      )}
+    </Field>
+  );
+}
+
 /* ------------------------------------------------------------------ *
  * The properties panel
  * ------------------------------------------------------------------ */
@@ -1205,17 +1299,20 @@ function ElementProperties({
   canEdit,
   clashing,
   onChange,
+  onLink,
   onRemove,
   onDuplicate,
 }: {
   element: FloorTable | FloorFeature | null;
   kind: "table" | "feature" | null;
   zone: ZoneSize;
-  /** Everything else in this hall, for the merge groups already in use. */
+  /** Everything in this hall, since a neighbour is one of them. */
   zoneTables: FloorTable[];
   canEdit: boolean;
   clashing: boolean;
   onChange: (edit: <T extends Placed>(element: T) => T) => void;
+  /** Both ends of a join at once, which `onChange` cannot do. */
+  onLink: (side: ChairSide, neighbourId: string | null) => void;
   onRemove: () => void;
   onDuplicate: () => void;
 }) {
@@ -1232,23 +1329,25 @@ function ElementProperties({
   const tags = table?.tags ?? [];
   const sides = table ? chairSidesOf(table) : [];
 
-  /** Every merge group already used in this zone, for the suggestion list. */
-  const mergeGroups = [
-    ...new Set(zoneTables.map((entry) => (entry.mergeGroup ?? "").trim()).filter(Boolean)),
-  ].sort();
-
   /**
-   * The tables this one would actually be joined with. Naming them is the whole
-   * confirmation: a group is a string, and a typo is a group of one that says
-   * nothing about why no combination is ever offered.
+   * The rows this table stands in, and what each seats pushed together.
+   *
+   * The whole confirmation that the links are right: staff say "12 is on my
+   * left", and this says back "1 + 11 + 12 + 13, seats 10" — the number a guest
+   * will be offered, junctions already paid for. Getting that wrong is how a
+   * party of eight is sold two four-tops that seat six.
    */
-  const mergeMates = table?.mergeGroup?.trim()
-    ? zoneTables
-        .filter(
-          (entry) =>
-            entry.id !== table.id && (entry.mergeGroup ?? "").trim() === table.mergeGroup?.trim(),
-        )
-        .map((entry) => entry.label.trim() || "an unlabelled table")
+  const rows = table
+    ? (["horizontal", "vertical"] as const)
+        .map((axis) => rowThrough(zoneTables, table.id, axis))
+        .filter((row) => row.length > 1)
+        .map((row) => ({
+          labels: row.map((entry) => entry.label.trim() || "?").join(" + "),
+          seats: joinedSeats(row),
+          // What the tables seat apart, so the cost of joining them is visible
+          // rather than something staff have to work out from two numbers.
+          apart: row.reduce((total, entry) => total + entry.seats, 0),
+        }))
     : [];
 
   /**
@@ -1296,40 +1395,51 @@ function ElementProperties({
           />
 
           {/*
-            Which tables may be pushed together, and it has to be said rather
+            Which tables stand next to this one, and it has to be said rather
             than measured: two tables 30 cm apart may have a pillar between them,
             and two a metre apart may be joined every Saturday. Whoever draws the
             room knows; the software does not.
+
+            Said side by side rather than as a group name because a group cannot
+            tell a row from a heap: 11 and 12 can be pushed together, 1 and 12
+            cannot, and only the sides say which is which.
           */}
-          <Field
-            label="May be pushed together with"
-            hint={
-              mergeMates.length > 0
-                ? `Joins with ${mergeMates.join(", ")} when a party is too big for one table.`
-                : "Give two or more tables the same name here and guests too many for one table can book them together."
-            }
-          >
-            {(fieldProps) => (
-              <Input
-                {...fieldProps}
-                list="merge-groups"
-                maxLength={MAX_MERGE_GROUP_LENGTH}
-                placeholder="e.g. window, or leave empty"
-                disabled={!canEdit}
-                value={table.mergeGroup ?? ""}
-                onChange={(event) =>
-                  onChange((current) => ({ ...current, mergeGroup: event.target.value || undefined }))
-                }
-              />
-            )}
-          </Field>
-          {/* The groups already in use, so a second table joins one by picking
-              it rather than by spelling it identically. */}
-          <datalist id="merge-groups">
-            {mergeGroups.map((group) => (
-              <option key={group} value={group} />
-            ))}
-          </datalist>
+          <fieldset className="flex flex-col gap-3">
+            <legend className="text-sm font-medium text-ink">Tables next to this one</legend>
+            <p className="text-xs text-ink-subtle">
+              Which table stands on each side. Sides are the table&rsquo;s own, so they turn with it.
+              Guests too many for one table can book a row of these together.
+            </p>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              {CHAIR_SIDES.map((side) => (
+                <NeighbourPicker
+                  key={side}
+                  side={side}
+                  table={table}
+                  zoneTables={zoneTables}
+                  canEdit={canEdit}
+                  onLink={onLink}
+                />
+              ))}
+            </div>
+
+            {rows.length > 0 ? (
+              <ul className="flex flex-col gap-1 text-xs text-ink-muted">
+                {rows.map((row) => (
+                  <li key={row.labels}>
+                    <span className="font-medium text-ink">{row.labels}</span> seats {row.seats}{" "}
+                    pushed together
+                    {row.apart > row.seats ? (
+                      // The lost chairs, named. Two four-tops seat six, and
+                      // staff who expect eight should find out here.
+                      <> — {row.apart - row.seats} seat(s) lost where they meet</>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </fieldset>
 
           <Field label="Shape">
             {(fieldProps) => (

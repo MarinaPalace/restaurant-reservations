@@ -785,10 +785,17 @@ tracking — asked for, deliberately not built, and written down so the next ses
 decision rather than a blank page.
 
 **Tables pushed together.** A party of five in a room of four-tops books two
-tables joined — which tables may be joined is written on the plan as a
-`mergeGroup`, never guessed from coordinates, and a merged holding **claims both
-tables whole** because nobody can be seated at a table pushed against a
-stranger's party. `docs/floor-plan.md` §21. Guests also stop choosing tables at
+tables joined. Which tables may be joined is written on the plan as
+`neighbours` — *11 is on 1's left*, stored from both ends and never guessed from
+coordinates — and a combination is a **contiguous stretch of one row**, so 1 and
+12 cannot be joined with 11 standing between them, and a table somebody is
+already on breaks the row in two. A merged holding **claims every table whole**
+because nobody can be seated at a table pushed against a stranger's party, and
+it **seats less than the sum of its tables**: the chairs where two tables meet
+are standing where the other table now is, so two four-tops seat six.
+A table that fits but wastes seats another free table would not is
+`kept-for-larger`, so a party of two cannot take a four-top while a two-top is
+free. `docs/floor-plan.md` §21 and §23. Guests also stop choosing tables at
 the evening's own `tableCutoffHours`, which is **off unless somebody sets it**
 (§22).
 

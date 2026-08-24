@@ -115,13 +115,39 @@ export const CHAIR_SIDE_LABELS: Record<ChairSide, string> = {
   left: "Left",
 };
 
+/**
+ * The side facing the other way.
+ *
+ * Two tables standing side by side meet on opposite sides of themselves: if 11
+ * is on 1's left, then 1 is on 11's right. Every link is stored from both ends
+ * (`toFloorZone`), and this is what says what the other end reads.
+ */
+export const OPPOSITE_SIDE: Record<ChairSide, ChairSide> = {
+  top: "bottom",
+  right: "left",
+  bottom: "top",
+  left: "right",
+};
+
+/** The two axes a run of tables can be pushed together along. */
+export const JOIN_AXES = {
+  horizontal: ["left", "right"],
+  vertical: ["top", "bottom"],
+} as const satisfies Record<string, readonly [ChairSide, ChairSide]>;
+
+export type JoinAxis = keyof typeof JOIN_AXES;
+
 /** What the rotation control steps by. Free entry is allowed in between. */
 export const ROTATION_STEP = 15;
 
 export const MAX_SEATS_PER_TABLE = 20;
 export const MAX_TABLES_PER_ZONE = 200;
 /** Long enough for "By the window" and short enough for a badge. */
-export const MAX_MERGE_GROUP_LENGTH = 24;
+/**
+ * At most one table per side, so four. Not a limit anybody will reach — it is
+ * what "next to" means: a table has four sides and a neighbour stands on one.
+ */
+export const MAX_NEIGHBOURS_PER_TABLE = 4;
 export const MAX_FEATURES_PER_ZONE = 300;
 export const MAX_ZONES = 12;
 
@@ -188,26 +214,52 @@ export type FloorTable = Placed & {
    */
   chairSides?: ChairSide[];
   /**
-   * Tables that may be pushed together, named.
+   * The tables standing next to this one, and which side each stands on.
    *
    * A restaurant of four-tops cannot seat a party of five, and the honest
    * answer is not "no" — it is the two tables staff would actually push
    * together. Which two is a fact about the *room*, not something software can
    * work out from coordinates: two tables 30 cm apart may have a pillar between
    * them, and two a metre apart may be routinely joined. So whoever draws the
-   * plan says so, by giving them the same group name.
+   * plan says so.
    *
-   * Any non-empty string; tables sharing one may be combined. Absent — which is
-   * every table drawn before this — means the table stands alone, so no
-   * existing plan changes behaviour.
+   * ## Why a side, and not a group name
+   *
+   * A group name says "these four may be joined" and nothing more, which is not
+   * enough to push tables together honestly. Tables stand in a row — 1, 11, 12,
+   * 13 — and only *neighbours* meet: 11 and 12 can be pushed together, 1 and 12
+   * cannot, and 1 + 11 + 12 is a row while 1 + 11 + 13 is two tables and a gap.
+   * Naming the side is what makes the row a row, and it is also what says which
+   * chairs are lost where two tables meet.
+   *
+   * Sides are the table's **own**, named before rotation like `chairSides`: turn
+   * a table and the side its neighbour stands on turns with it.
+   *
+   * Stored from both ends — 1 says 11 is on its left, 11 says 1 is on its right
+   * — and `toFloorZone` makes that true on the way in, so no read anywhere has
+   * to wonder whether a link it cannot see from this side exists.
+   *
+   * Absent means the table stands alone.
    *
    * **A merged table is taken whole.** You cannot seat strangers at a table
    * pushed against somebody's party, so a combination claims every seat of
    * every table in it. `docs/floor-plan.md` §21.
    */
-  mergeGroup?: string;
+  neighbours?: TableLink[];
   /** Window, quiet, by the music. Nothing reads these yet (§8.4). */
   tags?: string[];
+};
+
+/**
+ * One table standing next to another.
+ *
+ * `side` is the side of the table **holding** the link that the other table
+ * stands on, so the same join reads `{ tableId: "11", side: "left" }` from
+ * table 1 and `{ tableId: "1", side: "right" }` from table 11.
+ */
+export type TableLink = {
+  tableId: string;
+  side: ChairSide;
 };
 
 export type FloorFeature = Placed & {
@@ -591,6 +643,111 @@ export function chairPositions(
  * Read back to staff as "12 tables · 48 seats" and never applied silently —
  * that would change every existing date the moment somebody drew a zone (§5).
  */
+/**
+ * How many of a table's seats sit on each of its sides.
+ *
+ * ## Why this exists: pushing two tables together loses chairs
+ *
+ * Two four-tops pushed together do not seat eight. The chairs on the sides
+ * where they meet are standing where the other table now is, and they get
+ * taken away — so the pair seats six. Selling it as eight would seat two people
+ * on furniture that is not there, which is the kind of error a guest discovers
+ * standing in the room.
+ *
+ * ## Derived from the drawing, not a second opinion about it
+ *
+ * The seats are shared out by `chairPositions` — the very function that draws
+ * them — asked for exactly `seats` chairs. So the number this returns is the
+ * number of chairs staff can count in the picture, and the two cannot drift
+ * apart. A side staff have already cleared with `chairSides` (the note there
+ * says it: "two tables pushed together are not laid where they meet") holds no
+ * seats and therefore costs nothing when a table is joined onto it.
+ *
+ * Each seat is placed on the side it is nearest to, measured against the
+ * table's own half-width and half-height so that a long thin table's ends are
+ * still its ends. Round tables come out the same way: a seat's quarter of the
+ * circle is the side it belongs to.
+ */
+export function seatsPerSide(
+  table: Pick<FloorTable, "seats" | "shape" | "width" | "height"> & {
+    chairSides?: ChairSide[];
+  },
+): Record<ChairSide, number> {
+  const perSide: Record<ChairSide, number> = { top: 0, right: 0, bottom: 0, left: 0 };
+
+  // Asked for the seat count rather than the drawn chair count: `chairCount` is
+  // what the room looks like, `seats` is what may be booked, and it is seats
+  // that a join takes away.
+  const seats = chairPositions({ ...table, chairCount: table.seats });
+  const half = CHAIR_SIZE / 2;
+
+  for (const seat of seats) {
+    const dx = seat.x + half - table.width / 2;
+    const dy = seat.y + half - table.height / 2;
+
+    // Against the table's own half-extents, so "past the end" beats "along the
+    // side" on a table that is much wider than it is deep.
+    if (Math.abs(dx) / Math.max(table.width, 1) > Math.abs(dy) / Math.max(table.height, 1)) {
+      perSide[dx < 0 ? "left" : "right"] += 1;
+    } else {
+      perSide[dy < 0 ? "top" : "bottom"] += 1;
+    }
+  }
+
+  return perSide;
+}
+
+/** How many of a table's seats sit on one side of it. */
+export function seatsOnSide(
+  table: Pick<FloorTable, "seats" | "shape" | "width" | "height"> & { chairSides?: ChairSide[] },
+  side: ChairSide,
+): number {
+  return seatsPerSide(table)[side];
+}
+
+/**
+ * What one junction costs, in seats.
+ *
+ * Both tables lose the chairs where they meet: `side` is the side of `table`
+ * the other stands on, and the other loses the side facing back. Two 70 cm
+ * four-tops joined side to side lose one seat each, which is the six-seat pair
+ * anybody who has pushed two tables together expects.
+ */
+export function seatsLostJoining(
+  table: FloorTable,
+  side: ChairSide,
+  neighbour: FloorTable,
+): number {
+  return seatsOnSide(table, side) + seatsOnSide(neighbour, OPPOSITE_SIDE[side]);
+}
+
+/**
+ * What a row of tables pushed together actually seats.
+ *
+ * The sum of the tables, less the chairs lost at every junction along the row.
+ * `tables` must already be in the order they stand in — each one linked to the
+ * one before it — which is what `runsOfTables` produces and what
+ * `findPlanCombination` insists on before it will resolve a combination.
+ */
+export function joinedSeats(tables: readonly FloorTable[]): number {
+  let seats = tables.reduce((total, table) => total + table.seats, 0);
+
+  for (let index = 1; index < tables.length; index += 1) {
+    const previous = tables[index - 1];
+    const link = (previous.neighbours ?? []).find((entry) => entry.tableId === tables[index].id);
+
+    // Not linked: not a row, and not something to guess a seat count for.
+    if (!link) {
+      return 0;
+    }
+
+    seats -= seatsLostJoining(previous, link.side, tables[index]);
+  }
+
+  // A join that eats every seat is not a table anybody can sit at.
+  return Math.max(0, seats);
+}
+
 export function countZone(zone: FloorZone): { tables: number; seats: number } {
   const live = zone.tables.filter((table) => table.active);
 
@@ -752,10 +909,12 @@ function toFloorZone(value: unknown): FloorZone | null {
     id: asId(zone.id),
     name: asText(zone.name, 60) || "Main hall",
     ...size,
-    tables: (Array.isArray(zone.tables) ? zone.tables : [])
-      .slice(0, MAX_TABLES_PER_ZONE)
-      .map((table) => toFloorTable(table, size))
-      .filter((table): table is FloorTable => table !== null),
+    tables: reciprocalLinks(
+      (Array.isArray(zone.tables) ? zone.tables : [])
+        .slice(0, MAX_TABLES_PER_ZONE)
+        .map((table) => toFloorTable(table, size))
+        .filter((table): table is FloorTable => table !== null),
+    ),
     // Absent on a plan drawn before features existed, which reads as a zone of
     // bare tables rather than as an unreadable zone.
     features: (Array.isArray(zone.features) ? zone.features : [])
@@ -763,6 +922,81 @@ function toFloorZone(value: unknown): FloorZone | null {
       .map((feature) => toFloorFeature(feature, size))
       .filter((feature): feature is FloorFeature => feature !== null),
   };
+}
+
+/**
+ * Every link written from both ends, and the ones pointing nowhere dropped.
+ *
+ * A join is a fact about two tables, so it has to read the same from either of
+ * them. Storing it twice is a redundancy that has to be maintained, and this is
+ * where it is maintained: say once that 11 is on 1's left and 11 is told that 1
+ * is on its right.
+ *
+ * Doing it on the way in rather than at every read is what lets the rest of the
+ * code — offering combinations, walking a row, drawing the designer — treat a
+ * table's own `neighbours` as the whole truth about what it touches. A run
+ * could otherwise be a row from one end and a gap from the other.
+ *
+ * Dropped rather than kept: links to tables that are not in this zone. Tables
+ * in different halls cannot be pushed together, and a link to a table somebody
+ * deleted is a row with a hole in it.
+ *
+ * Where the two ends disagree about the side, the table that names it first in
+ * the zone wins — arbitrary, but decided, and both ends end up saying the same
+ * thing rather than each believing itself.
+ */
+function reciprocalLinks(tables: FloorTable[]): FloorTable[] {
+  const byId = new Map(tables.map((table) => [table.id, table]));
+  const agreed = new Map<string, Map<ChairSide, string>>(tables.map((table) => [table.id, new Map()]));
+
+  const claim = (fromId: string, side: ChairSide, toId: string): boolean => {
+    const sides = agreed.get(fromId);
+
+    // Occupied by an earlier link, which wins: one table per side.
+    if (!sides || (sides.has(side) && sides.get(side) !== toId)) {
+      return false;
+    }
+
+    for (const [taken, holder] of sides) {
+      // Already standing on another side of this table — it cannot be on two.
+      if (holder === toId && taken !== side) {
+        return false;
+      }
+    }
+
+    sides.set(side, toId);
+    return true;
+  };
+
+  for (const table of tables) {
+    for (const link of table.neighbours ?? []) {
+      const other = byId.get(link.tableId);
+
+      if (!other || other.id === table.id) {
+        continue;
+      }
+
+      const back = OPPOSITE_SIDE[link.side];
+
+      // Both ends or neither: a half-written link is not a join.
+      if (claim(table.id, link.side, other.id) && !claim(other.id, back, table.id)) {
+        agreed.get(table.id)!.delete(link.side);
+      }
+    }
+  }
+
+  return tables.map((table) => {
+    const sides = agreed.get(table.id)!;
+
+    const neighbours = [...sides.entries()]
+      .map(([side, tableId]) => ({ side, tableId }))
+      // Ordered so the same plan always serialises the same way.
+      .sort((a, b) => CHAIR_SIDES.indexOf(a.side) - CHAIR_SIDES.indexOf(b.side));
+
+    // Absent, not empty: a table that touches nothing grows no field, the same
+    // habit as `chairSides` and `tags`.
+    return { ...table, neighbours: neighbours.length > 0 ? neighbours : undefined };
+  });
 }
 
 /** Position, size and rotation, made sane. Shared by tables and features. */
@@ -809,9 +1043,9 @@ function toFloorTable(value: unknown, zone: ZoneSize): FloorTable | null {
         ? undefined
         : Math.min(Math.max(Math.round(asNumber(table.chairCount)), 0), MAX_CHAIRS_PER_TABLE),
     chairSides: toChairSides(table.chairSides),
-    // Trimmed to nothing reads as "stands alone", so a group cleared in the
-    // designer is a table that is no longer merged with anything.
-    mergeGroup: asText(table.mergeGroup, MAX_MERGE_GROUP_LENGTH) || undefined,
+    // Read here, but only made reciprocal in `toFloorZone`, which is the first
+    // place that knows what other tables exist to point at.
+    neighbours: toNeighbours(table.neighbours),
     tags: Array.isArray(table.tags)
       ? [...new Set(table.tags.map((tag) => asText(tag, 24)).filter(Boolean))].slice(0, 8)
       : undefined,
@@ -840,6 +1074,52 @@ function toFloorFeature(value: unknown, zone: ZoneSize): FloorFeature | null {
     kind,
     label: label || undefined,
   };
+}
+
+/**
+ * The links on one table, made sane on their own.
+ *
+ * Anything unrecognisable is dropped rather than guessed at: a link is a
+ * statement that two tables may be pushed together, and inventing one puts a
+ * party at furniture that does not meet. Whether the tables named actually
+ * exist is settled in `toFloorZone`, which is the first place that knows.
+ *
+ * One table per side, first mention winning — two tables cannot both stand on
+ * the left, and a plan that says so is answered rather than believed.
+ */
+function toNeighbours(value: unknown): TableLink[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const links: TableLink[] = [];
+  const sides = new Set<ChairSide>();
+  const tables = new Set<string>();
+
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+
+    const link = entry as { tableId?: unknown; side?: unknown };
+    const tableId = asText(link.tableId, 64);
+    const side = CHAIR_SIDES.includes(link.side as ChairSide) ? (link.side as ChairSide) : null;
+
+    // A table linked to itself would be a row of one that seats it twice.
+    if (!tableId || !side || sides.has(side) || tables.has(tableId)) {
+      continue;
+    }
+
+    sides.add(side);
+    tables.add(tableId);
+    links.push({ tableId, side });
+
+    if (links.length === MAX_NEIGHBOURS_PER_TABLE) {
+      break;
+    }
+  }
+
+  return links.length > 0 ? links : undefined;
 }
 
 /**
@@ -895,6 +1175,153 @@ function freeSpot(
   }
 
   return { x: GRID, y: GRID };
+}
+
+/**
+ * Puts one table next to another, from both ends at once.
+ *
+ * For the designer, where a link is made by saying "table 11 is on this one's
+ * left" — one sentence that has to become two stored facts, and sometimes has
+ * to break others. A side holds one table, so saying something new stands there
+ * says the old one does not; and the table being put there stops standing
+ * wherever it was.
+ *
+ * **Every break is made from both ends too.** Leaving the other half of a
+ * displaced link behind would not merely be untidy: `toFloorZone` settles a
+ * disagreement in favour of whichever table it reads first, so a half-erased
+ * link could win against the one that was just made, and the join would come
+ * back on the next save.
+ *
+ * Passing `null` as the neighbour clears the side.
+ */
+export function linkTables(
+  tables: readonly FloorTable[],
+  tableId: string,
+  side: ChairSide,
+  neighbourId: string | null,
+): FloorTable[] {
+  const table = tables.find((entry) => entry.id === tableId);
+  const neighbour = neighbourId ? tables.find((entry) => entry.id === neighbourId) : null;
+
+  if (!table || tableId === neighbourId || (neighbourId && !neighbour)) {
+    return [...tables];
+  }
+
+  /** Which tables stop touching, as pairs, since a join has no direction. */
+  const broken = new Set<string>();
+  const pair = (one: string, other: string) => [one, other].sort().join("\u0000");
+
+  const displaced = (table.neighbours ?? []).find((link) => link.side === side)?.tableId;
+
+  if (displaced) {
+    broken.add(pair(tableId, displaced));
+  }
+
+  if (neighbour) {
+    const facing = (neighbour.neighbours ?? []).find(
+      (link) => link.side === OPPOSITE_SIDE[side],
+    )?.tableId;
+
+    if (facing) {
+      broken.add(pair(neighbour.id, facing));
+    }
+
+    // However these two were joined before, they are joined this way now.
+    broken.add(pair(tableId, neighbour.id));
+  }
+
+  const cleared = tables.map((entry) => {
+    const links = (entry.neighbours ?? []).filter(
+      (link) => !broken.has(pair(entry.id, link.tableId)),
+    );
+
+    return { ...entry, neighbours: links.length > 0 ? links : undefined };
+  });
+
+  if (!neighbour) {
+    return cleared;
+  }
+
+  return cleared.map((entry) => {
+    if (entry.id === tableId) {
+      return {
+        ...entry,
+        neighbours: [...(entry.neighbours ?? []), { tableId: neighbour.id, side }],
+      };
+    }
+
+    if (entry.id === neighbour.id) {
+      return {
+        ...entry,
+        neighbours: [...(entry.neighbours ?? []), { tableId, side: OPPOSITE_SIDE[side] }],
+      };
+    }
+
+    return entry;
+  });
+}
+
+/**
+ * Takes a table out of the room and out of every row it stood in.
+ *
+ * A deleted table that is still named by its neighbours leaves them pointing at
+ * nothing. `toFloorZone` would drop those links on the next read, but the
+ * designer draws from what is in front of it, so it would show a join that is
+ * no longer there until the plan was saved and loaded again.
+ */
+export function forgetTable(tables: readonly FloorTable[], tableId: string): FloorTable[] {
+  return tables
+    .filter((table) => table.id !== tableId)
+    .map((table) => {
+      const links = (table.neighbours ?? []).filter((link) => link.tableId !== tableId);
+      return { ...table, neighbours: links.length > 0 ? links : undefined };
+    });
+}
+
+/**
+ * The whole row a table stands in, along one axis, in the order it stands.
+ *
+ * Walks back to the end of the row and then forward through it, so it makes no
+ * difference which table of the row is asked. `stop` leaves a table out — how
+ * a row of free tables is walked without stepping through a taken one, since a
+ * row with somebody else's dinner in the middle of it is two rows.
+ */
+export function rowThrough(
+  tables: readonly FloorTable[],
+  tableId: string,
+  axis: JoinAxis,
+  stop: (table: FloorTable) => boolean = () => false,
+): FloorTable[] {
+  const byId = new Map(tables.map((table) => [table.id, table]));
+  const start = byId.get(tableId);
+
+  if (!start || stop(start)) {
+    return [];
+  }
+
+  const [back, forward] = JOIN_AXES[axis];
+
+  const walk = (side: ChairSide): FloorTable[] => {
+    const out: FloorTable[] = [];
+    // A plan whose links somehow form a ring would otherwise walk for ever.
+    const seen = new Set([start.id]);
+    let table = start;
+
+    for (;;) {
+      const next = (table.neighbours ?? []).find((link) => link.side === side)?.tableId;
+      const neighbour = next ? byId.get(next) : undefined;
+
+      if (!neighbour || seen.has(neighbour.id) || stop(neighbour)) {
+        return out;
+      }
+
+      seen.add(neighbour.id);
+      out.push(neighbour);
+      table = neighbour;
+    }
+  };
+
+  return [...walk(back).reverse(), start, ...walk(forward)];
 }
 
 export function newTable(zone: FloorZone, shape: TableShape = "round"): FloorTable {

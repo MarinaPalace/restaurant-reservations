@@ -321,6 +321,8 @@ export function refusalOf(table: TableOffer): string {
       return "Already taken";
     case "out-of-service":
       return "Not in use that evening";
+    case "kept-for-larger":
+      return `Seats ${table.seats} — kept for a larger party`;
     default:
       return `Seats ${table.seats}`;
   }
@@ -335,6 +337,8 @@ export function refusalSentence(table: TableOffer): string {
       return `Table ${table.label} is already taken.`;
     case "out-of-service":
       return `Table ${table.label} is not in use that evening.`;
+    case "kept-for-larger":
+      return `Table ${table.label} seats ${table.seats}, so it is kept for a larger party — please take one of the smaller tables.`;
     default:
       return `Table ${table.label} seats ${table.seats}.`;
   }

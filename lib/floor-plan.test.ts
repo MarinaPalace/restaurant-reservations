@@ -32,6 +32,12 @@ import {
   newFeature,
   newTable,
   newZone,
+  forgetTable,
+  joinedSeats,
+  linkTables,
+  rowThrough,
+  seatsOnSide,
+  seatsPerSide,
   snap,
   zoneArea,
   toFloorPlan,
@@ -822,5 +828,271 @@ describe("who chooses the table", () => {
 
   it("stays off however full the room is", () => {
     expect(resolveFloorPlanMode("off", withTable({}))).toBe("off");
+  });
+});
+
+
+/**
+ * Tables standing next to each other.
+ *
+ * The room this is all about: 1, 11, 12 and 13 in a row, each linked to the
+ * next, which is what says staff may push them together — and, just as
+ * importantly, what says 1 and 12 are not two tables anybody can push together,
+ * because 11 is standing between them.
+ */
+describe("which tables stand next to which", () => {
+  /** A row linked rightwards, so the array reads the way the room does. */
+  function standing(...ids: string[]): FloorTable[] {
+    return ids.map((id, index) => ({
+      ...table({ id, label: id, seats: 4, shape: "square" }),
+      neighbours: [
+        ...(ids[index + 1] ? [{ tableId: ids[index + 1], side: "right" as const }] : []),
+        ...(ids[index - 1] ? [{ tableId: ids[index - 1], side: "left" as const }] : []),
+      ],
+    }));
+  }
+
+  it("writes a link from both ends, however it arrived", () => {
+    // Said once, in one direction. The other table has to learn it, or a row
+    // would be a row from one end and a gap from the other.
+    const plan = toFloorPlan({
+      zones: [
+        {
+          id: "z1",
+          name: "Main hall",
+          tables: [
+            { id: "a", label: "1", seats: 4, neighbours: [{ tableId: "b", side: "left" }] },
+            { id: "b", label: "11", seats: 4 },
+          ],
+        },
+      ],
+    });
+
+    expect(plan.zones[0].tables[0].neighbours).toEqual([{ tableId: "b", side: "left" }]);
+    expect(plan.zones[0].tables[1].neighbours).toEqual([{ tableId: "a", side: "right" }]);
+  });
+
+  it("drops a link to a table that is not in the hall", () => {
+    // Tables cannot be pushed together through a wall, and a link to a table
+    // somebody deleted is a row with a hole in it.
+    const plan = toFloorPlan({
+      zones: [
+        {
+          id: "z1",
+          name: "Main hall",
+          tables: [{ id: "a", label: "1", seats: 4, neighbours: [{ tableId: "gone", side: "left" }] }],
+        },
+      ],
+    });
+
+    expect(plan.zones[0].tables[0].neighbours).toBeUndefined();
+  });
+
+  it("refuses to stand two tables on the same side of one", () => {
+    const plan = toFloorPlan({
+      zones: [
+        {
+          id: "z1",
+          name: "Main hall",
+          tables: [
+            {
+              id: "a",
+              label: "1",
+              seats: 4,
+              neighbours: [
+                { tableId: "b", side: "left" },
+                { tableId: "c", side: "left" },
+              ],
+            },
+            { id: "b", label: "11", seats: 4 },
+            { id: "c", label: "12", seats: 4 },
+          ],
+        },
+      ],
+    });
+
+    expect(plan.zones[0].tables[0].neighbours).toEqual([{ tableId: "b", side: "left" }]);
+    expect(plan.zones[0].tables[2].neighbours).toBeUndefined();
+  });
+
+  it("never links a table to itself", () => {
+    const plan = toFloorPlan({
+      zones: [
+        {
+          id: "z1",
+          name: "Main hall",
+          tables: [{ id: "a", label: "1", seats: 4, neighbours: [{ tableId: "a", side: "left" }] }],
+        },
+      ],
+    });
+
+    expect(plan.zones[0].tables[0].neighbours).toBeUndefined();
+  });
+
+  it("walks the whole row from any table in it", () => {
+    const tables = standing("t13", "t12", "t11", "t1");
+
+    for (const start of ["t13", "t12", "t11", "t1"]) {
+      expect(rowThrough(tables, start, "horizontal").map((entry) => entry.id)).toEqual([
+        "t13",
+        "t12",
+        "t11",
+        "t1",
+      ]);
+    }
+  });
+
+  it("stops the row where it is told to", () => {
+    // How a row of free tables is walked without stepping through somebody
+    // else's dinner: a taken table in the middle is two rows, not one.
+    const tables = standing("t13", "t12", "t11", "t1");
+    const walked = rowThrough(tables, "t11", "horizontal", (entry) => entry.id === "t12");
+
+    expect(walked.map((entry) => entry.id)).toEqual(["t11", "t1"]);
+  });
+
+  it("does not confuse a row across with a row down", () => {
+    const tables = standing("a", "b");
+
+    expect(rowThrough(tables, "a", "vertical").map((entry) => entry.id)).toEqual(["a"]);
+  });
+
+  it("links both ends at once, and displaces whoever stood there", () => {
+    const tables = standing("a", "b");
+    const linked = linkTables([...tables, table({ id: "c", label: "3" })], "a", "right", "c");
+
+    expect(linked.find((entry) => entry.id === "a")?.neighbours).toEqual([
+      { tableId: "c", side: "right" },
+    ]);
+    expect(linked.find((entry) => entry.id === "c")?.neighbours).toEqual([
+      { tableId: "a", side: "left" },
+    ]);
+    // b was standing there and no longer is — from its own side too.
+    expect(linked.find((entry) => entry.id === "b")?.neighbours).toBeUndefined();
+  });
+
+  it("unlinks the table it displaces from both ends", () => {
+    /**
+     * c already had b on its left. Putting a there pushes b out, and b has to
+     * stop naming c as well — a half-erased link wins the disagreement in
+     * `toFloorZone` if it is read first, and the join comes back on the save.
+     */
+    const moved = linkTables([...standing("b", "c"), table({ id: "a", label: "3" })], "a", "right", "c");
+
+    expect(moved.find((entry) => entry.id === "b")?.neighbours).toBeUndefined();
+    expect(moved.find((entry) => entry.id === "c")?.neighbours).toEqual([
+      { tableId: "a", side: "left" },
+    ]);
+  });
+
+  it("survives being saved and read back", () => {
+    // The check that the two halves agree: whatever `linkTables` leaves behind
+    // has to come back out of `toFloorPlan` unchanged.
+    const moved = linkTables([...standing("b", "c"), table({ id: "a", label: "3" })], "a", "right", "c");
+    const read = toFloorPlan({ zones: [{ id: "z1", name: "Main hall", tables: moved }] });
+
+    expect(read.zones[0].tables.map((entry) => entry.neighbours)).toEqual([
+      undefined,
+      [{ tableId: "a", side: "left" }],
+      [{ tableId: "c", side: "right" }],
+    ]);
+  });
+
+  it("clears a side when nothing is put on it", () => {
+    const cleared = linkTables(standing("a", "b"), "a", "right", null);
+
+    expect(cleared.find((entry) => entry.id === "a")?.neighbours).toBeUndefined();
+    expect(cleared.find((entry) => entry.id === "b")?.neighbours).toBeUndefined();
+  });
+
+  it("takes a deleted table out of the rows it stood in", () => {
+    const left = forgetTable(standing("a", "b", "c"), "b");
+
+    expect(left.map((entry) => entry.id)).toEqual(["a", "c"]);
+    expect(left.every((entry) => !entry.neighbours)).toBe(true);
+  });
+});
+
+/**
+ * The chairs lost where two tables meet.
+ *
+ * Two four-tops pushed together seat six. The other answer — eight — seats two
+ * people on chairs that are standing where the other table now is, which is the
+ * kind of mistake a guest discovers on the night.
+ */
+describe("what a row of tables actually seats", () => {
+  it("lays a square table on all four sides", () => {
+    expect(seatsPerSide(table({ seats: 4, shape: "square" }))).toEqual({
+      top: 1,
+      right: 1,
+      bottom: 1,
+      left: 1,
+    });
+  });
+
+  it("puts a long table's seats along its length", () => {
+    // Which is how anybody lays a table up, and it means joining two of them
+    // end to end costs far less than joining them side by side.
+    const long = table({ seats: 6, shape: "rectangle", width: 120, height: 70 });
+
+    expect(seatsOnSide(long, "top")).toBe(2);
+    expect(seatsOnSide(long, "left")).toBe(1);
+  });
+
+  it("leaves nothing on a side that was cleared", () => {
+    const banquette = table({ seats: 4, shape: "square", chairSides: ["top", "bottom"] });
+
+    expect(seatsPerSide(banquette)).toEqual({ top: 2, right: 0, bottom: 2, left: 0 });
+  });
+
+  it("takes the meeting chairs off a pair", () => {
+    const [a, b] = [
+      { ...table({ id: "a", seats: 4, shape: "square" }), neighbours: [{ tableId: "b", side: "right" as const }] },
+      { ...table({ id: "b", seats: 4, shape: "square" }), neighbours: [{ tableId: "a", side: "left" as const }] },
+    ];
+
+    expect(joinedSeats([a, b])).toBe(6);
+  });
+
+  it("pays for every junction in a longer row", () => {
+    const ids = ["a", "b", "c"];
+    const row = ids.map((id, index) => ({
+      ...table({ id, seats: 4, shape: "square" }),
+      neighbours: [
+        ...(ids[index + 1] ? [{ tableId: ids[index + 1], side: "right" as const }] : []),
+        ...(ids[index - 1] ? [{ tableId: ids[index - 1], side: "left" as const }] : []),
+      ],
+    }));
+
+    // Twelve seats, two junctions, two seats lost at each.
+    expect(joinedSeats(row)).toBe(8);
+  });
+
+  it("loses nothing where the tables were never laid", () => {
+    // Staff who lay two-tops knowing they meet left and right have already
+    // taken those chairs away, so pushing them together costs nothing.
+    const sides = ["top", "bottom"] as const;
+    const [a, b] = [
+      {
+        ...table({ id: "a", seats: 2, shape: "square", chairSides: [...sides] }),
+        neighbours: [{ tableId: "b", side: "right" as const }],
+      },
+      {
+        ...table({ id: "b", seats: 2, shape: "square", chairSides: [...sides] }),
+        neighbours: [{ tableId: "a", side: "left" as const }],
+      },
+    ];
+
+    expect(joinedSeats([a, b])).toBe(4);
+  });
+
+  it("refuses to put a number on tables that do not touch", () => {
+    const strangers = [table({ id: "a", seats: 4 }), table({ id: "b", seats: 4 })];
+
+    expect(joinedSeats(strangers)).toBe(0);
+  });
+
+  it("is just the table when there is only one", () => {
+    expect(joinedSeats([table({ seats: 4 })])).toBe(4);
   });
 });

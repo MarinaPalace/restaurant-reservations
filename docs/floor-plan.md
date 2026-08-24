@@ -933,6 +933,12 @@ furniture it could have moved.
 
 ### Which tables may be joined is written down, not measured
 
+> **Superseded by §23.** The merge group described here was replaced before any
+> restaurant drew one: a shared name says *these may be joined* and cannot say
+> *these two are next to each other*, which is the thing that decides whether a
+> combination is a row or a heap. Everything below about claiming a merged table
+> whole still stands.
+
 `FloorTable.mergeGroup` — any name; tables sharing one may be pushed together.
 Deliberately **not** worked out from coordinates: two tables 30 cm apart may
 have a pillar between them, and two a metre apart may be joined every Saturday.
@@ -1024,3 +1030,118 @@ Verified against a running server: with the cutoff four hours out and service at
 19:00 it was still open at 02:45; set to 24 hours it answered `closed: "cutoff"`
 with the deadline, a booking naming a table came back with none, and a guest
 trying to move got the 409.
+
+---
+
+## 23. Which table is next to which, and the chairs lost between them
+
+§21 shipped a merge **group**: a name written on two or more tables, any subset
+of which could be pushed together. It was replaced before a restaurant had drawn
+one, because a group cannot answer the question staff actually ask.
+
+### A group cannot tell a row from a heap
+
+Tables stand in a row. 1, 11, 12, 13 along a wall: 11 is next to 1, 12 is next
+to 11, 13 is next to 12. A group containing all four says any two of them may be
+joined — including **1 and 13**, which are at opposite ends with two tables
+between them. Staff cannot push those together, so neither may the software.
+
+What is written down now is the adjacency itself: `FloorTable.neighbours`, a
+list of `{ tableId, side }`. Sides are the table's **own**, named before
+rotation exactly as `chairSides` are, so they turn with the table.
+
+Every link is stored **from both ends** — 1 says 11 is on its left, 11 says 1 is
+on its right — and `toFloorZone` is what makes that true on the way in. Saying
+it once in the designer is enough; the neighbour is told. A link naming a table
+that is not in the hall is dropped, because tables cannot be pushed together
+through a wall and a link to a deleted table is a row with a hole in it.
+
+### A combination is a stretch of one row
+
+`rowThrough` walks a table's row — back to one end, then forward through it —
+so it makes no difference which table of the row is asked. A combination is a
+**contiguous stretch** of that walk:
+
+| Asked for | Answer |
+| --- | --- |
+| 11 + 12 | yes — they touch |
+| 11 + 12 + 13 | yes — a stretch of the row |
+| 1 + 12 | no — 11 is standing between them |
+| 1 + 11 + 13 | no — a row with a gap in it |
+
+A table somebody is already on **breaks the row**: with 12 sold, 11 and 13 are
+not two tables pushed together, they are two tables with a stranger's dinner
+between them. That falls out of the walk rather than being checked separately —
+the row simply stops there.
+
+`findPlanCombination` enforces the same thing on the way in, and it is the
+enforcement that matters: it requires every consecutive pair to be linked **on
+the same side**, so a request cannot name a row that doubles back on itself, nor
+one given out of the order the tables stand in. Rule 2.6, again — the plan
+decides, never the request.
+
+Rows run both ways: left-and-right is one axis, top-and-bottom another. Two rows
+can cross at a table without being one row.
+
+### Two four-tops seat six
+
+The mistake the group model was quietly making. Push two four-tops together and
+the chair on one's right and the chair on the other's left are standing where
+the other table now is. They get taken away. **The pair seats six, and selling
+it as eight seats two people on furniture that is not in the room.**
+
+`seatsPerSide` works out where a table's seats are by asking `chairPositions` —
+*the function that draws them* — for exactly `seats` chairs and sorting them onto
+the side each is nearest. Derived from the drawing rather than being a second
+opinion about it, so the number can never drift from what staff can count in the
+picture. `joinedSeats` then sums a row and subtracts each junction.
+
+Three things follow for free:
+
+- A **long table joined end to end** costs one seat each; joined along its
+  length it costs two or three. Which is correct, and nobody had to say so.
+- A side staff had **already cleared** costs nothing. The note on `chairSides`
+  always said "two tables pushed together are not laid where they meet" — so two
+  two-tops laid top-and-bottom push together and still seat four.
+- The **designer shows it**: pick a table and it names the row and what it
+  seats, with the seats lost where they meet spelled out. Staff who expect eight
+  find out at the plan and not on the night.
+
+`combineTables` searches stretches shortest-first and takes the fewest seats
+among them, and it has to *try* them rather than reason about them: adding a
+table to a stretch can add fewer seats than that table has.
+
+One real gap this closed. The booking route never checked the party against the
+combination's seats, and nothing below it would: a merged holding claims each
+table **whole**, so `claimTable` only ever compares a table's seats with its own
+and never with the party. Harmless while 4 + 4 was 8 and wrong the moment it was
+6, so `resolveTable` now checks — and drops the table rather than refusing the
+booking, the same as every other thing it cannot resolve.
+
+### A party of two may not take a four-top
+
+Asked for alongside the rework, and the same kind of waste from the other end: a
+guest booking for two would take the nicest table on the plan, and the party of
+four arriving after them found nothing.
+
+A table now carries `kept-for-larger` when it fits, is free, and **something
+that fits the party better is free too**. Measured as the seats it would leave
+spare — `(seats − taken) − guests` — and only the tightest are offered.
+
+Three things about the measure:
+
+- It counts the seats **still free**, not the table's size, so a party joining
+  others at a shared table is judged on what is left of it. Joining is the use
+  of a room that costs it least, and it stays offered.
+- Some table always holds the minimum, so this can **never refuse every table**.
+  A room of nothing but eight-tops still seats a party of two.
+- It is decided **hall by hall**. A guest who wants the terrace is not told the
+  terrace is closed to them because the main hall has a smaller table; within one
+  hall the choice costs the restaurant a table, between halls it is the guest
+  choosing where to sit.
+
+It deliberately does **not** feed the decision to push tables together. That
+question is "could this party sit here at all", and a four-top being held back
+for a larger party is still a four-top that fits — a room of them must not start
+joining tables for a party of two. `hardRefusal` answers the first question and
+`reasonUnavailable` layers the right-sizing on top of it.

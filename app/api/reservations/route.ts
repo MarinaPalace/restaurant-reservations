@@ -205,7 +205,7 @@ export async function POST(request: Request) {
      *   booking's `tableNumber` and an unlabelled table could not be named on
      *   the service sheet afterwards.
      */
-    const table = await resolveTable(parsed.data.date, parsed.data.tableId);
+    const table = await resolveTable(parsed.data.date, parsed.data.tableId, parsed.data.guestCount);
 
     const reservation = await createReservationEntry({
       tables: table,
@@ -300,6 +300,7 @@ export async function POST(request: Request) {
 async function resolveTable(
   date: string,
   tableId: string | undefined,
+  guestCount: number,
 ): Promise<{ id: string; label: string; seats: number }[] | undefined> {
   if (!tableId) {
     return undefined;
@@ -330,6 +331,22 @@ async function resolveTable(
   const combination = findPlanCombination(await getFloorPlan(), tableId);
 
   if (!combination) {
+    return undefined;
+  }
+
+  /**
+   * And it has to be big enough, which for tables pushed together is not the
+   * sum of them: two four-tops seat six, because the chairs where they meet are
+   * standing where the other table now is. Nothing below would catch it — a
+   * merged holding claims each table whole, so `claimTable` only ever compares
+   * a table's seats with its own, and a party of eight would be seated at six
+   * chairs without a single check failing.
+   *
+   * Dropped rather than refused, like every other thing this function cannot
+   * resolve: the picker never offers a combination too small, so getting here
+   * means a stale screen or a made-up request, and the guest asked to eat.
+   */
+  if (combination.seats < guestCount) {
     return undefined;
   }
 

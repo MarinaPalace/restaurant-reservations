@@ -4,7 +4,7 @@ import { useState } from "react";
 import { cx } from "@/components/ui/utils";
 import { PlanViewport, usePlanDragged } from "@/components/plan-viewport";
 import { FEATURE_LABELS, type FloorFeature } from "@/lib/floor-plan";
-import type { TableOffer, ZoneOffer } from "@/lib/floor-plan-availability";
+import { inspectRun, type TableOffer, type ZoneOffer } from "@/lib/floor-plan-availability";
 
 /**
  * The room, drawn, with a way to move around it.
@@ -94,6 +94,82 @@ export function PlanView({
     return inCombination.get(tableId) ?? null;
   };
 
+  /**
+   * What tapping a table does when a row is already being built.
+   *
+   * The picker offers ready-made stretches, and for most guests that is the
+   * whole interaction. But a guest who wants a *different* three tables — the
+   * ones by the window, not the ones the arithmetic preferred — has no way to
+   * say so except by pointing at them. So the room is not only a set of buttons
+   * for prepared answers: tables can be added to a row one at a time.
+   *
+   * ## What a tap may do
+   *
+   * - **Extend the row**, when the table stands at either end of it. Only at an
+   *   end, because a row is a row: tables that do not touch cannot be pushed
+   *   together, and a gap in the middle is two rows with somebody else between.
+   * - **Shorten it**, when the table tapped is the end of it — the way anybody
+   *   undoes the last thing they did.
+   * - **Start again** with that table alone, for anything else. Tapping a table
+   *   across the room is not a mistake to be refused; it is a guest changing
+   *   their mind about where to sit.
+   *
+   * ## What it will not do
+   *
+   * Add a table to a row that **already seats the party**. The guest is not
+   * being economical on the restaurant's behalf and should not have to be, but
+   * a party of four holding six tables is a room sold out by mid-evening. The
+   * row stops growing when it is big enough, which also means the seat count
+   * cannot be run up by accident.
+   */
+  const runAfterTapping = (table: TableOffer): string | null => {
+    const current = (chosen ?? "").split("+").filter(Boolean);
+    const byId = new Map(zone.tables.map((entry) => [entry.id, entry]));
+    const run = current.map((id) => byId.get(id)).filter((entry): entry is TableOffer => Boolean(entry));
+
+    const alone = table.unavailable ? null : table.id;
+
+    if (run.length === 0) {
+      return alone;
+    }
+
+    const at = run.findIndex((entry) => entry.id === table.id);
+
+    if (at === 0) {
+      // The near end: let it go, and the row that is left stands on its own.
+      return run.slice(1).map((entry) => entry.id).join("+") || null;
+    }
+
+    if (at === run.length - 1) {
+      return run.slice(0, -1).map((entry) => entry.id).join("+") || null;
+    }
+
+    // Somewhere in the middle of the row: not an end, so not something to
+    // remove without tearing the row in two. Start again from it instead.
+    if (at > 0) {
+      return alone;
+    }
+
+    // Big enough already — see above.
+    if (inspectRun(run).seats >= guestCount) {
+      return alone;
+    }
+
+    const extended = [
+      [table, ...run],
+      [...run, table],
+    ].find((candidate) => inspectRun(candidate).ok);
+
+    return extended ? extended.map((entry) => entry.id).join("+") : alone;
+  };
+
+  /** What the row being built seats, for the line under the plan. */
+  const building = (chosen ?? "").split("+").filter(Boolean);
+  const buildingRun = building
+    .map((id) => zone.tables.find((entry) => entry.id === id))
+    .filter((entry): entry is TableOffer => Boolean(entry));
+  const buildingSeats = buildingRun.length > 1 ? inspectRun(buildingRun).seats : 0;
+
   /** Every table the current choice covers. One, or two pushed together. */
   const chosenTables = new Set((chosen ?? "").split("+").filter(Boolean));
 
@@ -154,6 +230,8 @@ export function PlanView({
             table={table}
             chosen={chosenTables.has(table.id)}
             joinWith={combinationFor(table.id)}
+            buildRun={() => runAfterTapping(table)}
+            building={building.length > 1}
             onChoose={onChoose}
             onRefuse={onRefuse}
             onFocus={() => setReveal(table)}
@@ -161,8 +239,27 @@ export function PlanView({
         ))}
       </PlanViewport>
 
+      {/*
+        What the row being built comes to, as it is built. A guest adding tables
+        one at a time is answering "will we all fit", and the number has to move
+        under their finger — finding out at the summary that three two-tops seat
+        six is finding out too late.
+      */}
+      {buildingRun.length > 1 ? (
+        <p className="mt-2 text-center text-sm text-ink" role="status">
+          <span className="font-medium">
+            Tables {buildingRun.map((entry) => entry.label).join(" + ")}
+          </span>{" "}
+          seat {buildingSeats} pushed together
+          {buildingSeats < guestCount ? (
+            <span className="text-ink-muted"> — tap a table at either end to add it</span>
+          ) : null}
+        </p>
+      ) : null}
+
       <p className="mt-2 text-center text-xs text-ink-subtle">
-        Drag to move around the room, pinch or scroll to zoom — or pick from the list below.
+        Drag to move around the room, pinch or scroll to zoom — or pick from the list below. Tap a
+        table beside the ones you have to push more together.
       </p>
     </div>
   );
@@ -211,6 +308,8 @@ function PickableTable({
   table,
   chosen,
   joinWith,
+  buildRun,
+  building,
   onChoose,
   onRefuse,
   onFocus,
@@ -222,6 +321,10 @@ function PickableTable({
    * pushed together. Tapping it takes the whole combination.
    */
   joinWith: string | null;
+  /** The row this tap would leave behind, once one is being built by hand. */
+  buildRun: () => string | null;
+  /** Whether a row is being built, in which case a tap adjusts it. */
+  building: boolean;
   onChoose: (id: string) => void;
   onRefuse: (table: TableOffer) => void;
   onFocus: () => void;
@@ -230,14 +333,35 @@ function PickableTable({
 
   /**
    * A table too small on its own is still pickable when it is half of an
-   * offered pair — that is the entire point of pushing two together. Anything
-   * taken or out of service is not, whatever group it is in.
+   * offered pair — that is the entire point of pushing two together. The same
+   * goes for one being added to a row the guest is building by hand, and for
+   * one kept back for a larger party, which is an answer about a table standing
+   * on its own.
+   *
+   * Anything taken or out of service is not pickable, in any of those cases.
    */
-  const free = !table.unavailable || Boolean(joinWith);
+  const held = table.occupied || table.unavailable === "out-of-service";
+  const free = !table.unavailable || (!held && (Boolean(joinWith) || building));
 
   const onActivate = () => {
     // Sliding the room past a table must never book it.
     if (dragged()) return;
+
+    /**
+     * Once a row is being built by hand, every tap adjusts *that* row — adding
+     * a table at either end, taking one off, or starting again somewhere else.
+     * The prepared combination is only what a tap means when nothing is being
+     * built yet, or it would take the row away from a guest halfway through
+     * choosing it.
+     */
+    if (building) {
+      const next = buildRun();
+
+      if (next) {
+        onChoose(next);
+        return;
+      }
+    }
 
     if (joinWith) {
       onChoose(joinWith);

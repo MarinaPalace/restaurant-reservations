@@ -1130,6 +1130,42 @@ a guest who does not care takes the one that costs the room least, and capped at
 `MAX_COMBINATIONS_PER_ROW`, since a dozen near-identical buttons is a list to
 get lost in rather than a choice.
 
+### And the guest can tap the tables out themselves
+
+The prepared stretches are what most guests want and they are still what the
+list offers. But a guest who wants a *different* three tables — the ones by the
+window, not the ones the arithmetic preferred — has no way to say so except by
+pointing at them. So the room is not only a set of buttons for prepared answers:
+tapping a table beside the ones already picked adds it to the row.
+
+A tap **extends** the row at either end, **shortens** it when the end table is
+tapped again, and otherwise **starts again** from the table tapped — pointing
+across the room is a guest changing their mind, not a mistake to refuse. It will
+not extend a row that already seats the party: the guest should not have to be
+economical on the restaurant's behalf, but a party of four holding six tables is
+a room sold out by mid-evening.
+
+`inspectRun` is the client's half of the rule, and deliberately the same rule as
+`findPlanCombination`: every table free, each linked to the next, the row running
+one way. A guest must never be able to assemble on screen something the booking
+would then refuse — or, worse, silently drop.
+
+Two things had to travel to the browser for that: which tables each one stands
+against, and **where its seats are**, side by side. The second cannot be worked
+out on the client — it depends on `chairSides`, which is a fact about the room
+and not something a guest is told — and without it the seat count could not
+follow the guest's finger. Finding out at the summary that three two-tops seat
+six is finding out too late.
+
+It also needed the offer to say plainly whether **anybody is already at a table**.
+`unavailable` answers a different question and answers it with the most useful
+reason rather than every reason: a four-top with two people on it reads
+*too small* to a party of five, which is true and hides that it is not free. That
+was enough to let it into a row — and a row is claimed whole, so the booking
+would have failed at the claim with the other tables already taken. `occupied` is
+a plain yes or no; how many are on it stays unsaid, since that would say
+something about a stranger's party.
+
 Offered stretches overlap, and the plan had to answer for it: table 3 above is
 in three of the four offers. Tapping a table takes the **first** stretch holding
 it — the tightest — rather than the last, which would have depended on the order

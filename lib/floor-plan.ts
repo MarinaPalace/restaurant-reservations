@@ -722,30 +722,67 @@ export function seatsLostJoining(
 }
 
 /**
+ * The least a thing needs to be to be pushed together with another.
+ *
+ * Not `FloorTable`, because the guest's browser has to do this arithmetic too —
+ * it is what lets somebody building a row table by table watch the seat count
+ * follow their finger — and the browser is never given a plan. It is given
+ * offers, which carry these three fields and none of the rest of the plan.
+ *
+ * `perSide` is where the table's seats are, worked out once by `seatsPerSide`
+ * on the server. It travels rather than being recomputed because it depends on
+ * `chairSides`, which is a fact about the room and not something a guest needs
+ * to be told.
+ */
+export type JoinableTable = {
+  id: string;
+  seats: number;
+  neighbours?: TableLink[];
+  perSide: Record<ChairSide, number>;
+};
+
+/**
  * What a row of tables pushed together actually seats.
  *
  * The sum of the tables, less the chairs lost at every junction along the row.
  * `tables` must already be in the order they stand in — each one linked to the
- * one before it — which is what `runsOfTables` produces and what
+ * one before it — which is what `rowThrough` produces and what
  * `findPlanCombination` insists on before it will resolve a combination.
+ *
+ * Anything not linked to the one before it answers **0** rather than a sum: a
+ * set of tables that is not a row does not seat anybody, and guessing a number
+ * for it would put a party at furniture that does not meet.
  */
-export function joinedSeats(tables: readonly FloorTable[]): number {
+export function joinedSeatsOf(tables: readonly JoinableTable[]): number {
   let seats = tables.reduce((total, table) => total + table.seats, 0);
 
   for (let index = 1; index < tables.length; index += 1) {
     const previous = tables[index - 1];
-    const link = (previous.neighbours ?? []).find((entry) => entry.tableId === tables[index].id);
+    const next = tables[index];
+    const link = (previous.neighbours ?? []).find((entry) => entry.tableId === next.id);
 
     // Not linked: not a row, and not something to guess a seat count for.
     if (!link) {
       return 0;
     }
 
-    seats -= seatsLostJoining(previous, link.side, tables[index]);
+    seats -= previous.perSide[link.side] + next.perSide[OPPOSITE_SIDE[link.side]];
   }
 
   // A join that eats every seat is not a table anybody can sit at.
   return Math.max(0, seats);
+}
+
+/** The same, for tables read straight off the plan. */
+export function joinedSeats(tables: readonly FloorTable[]): number {
+  return joinedSeatsOf(
+    tables.map((table) => ({
+      id: table.id,
+      seats: table.seats,
+      neighbours: table.neighbours,
+      perSide: seatsPerSide(table),
+    })),
+  );
 }
 
 export function countZone(zone: FloorZone): { tables: number; seats: number } {

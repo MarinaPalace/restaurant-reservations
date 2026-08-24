@@ -1,12 +1,17 @@
 import {
   allTables,
   joinedSeats,
+  joinedSeatsOf,
+  seatsPerSide,
   JOIN_AXES,
   rowThrough,
+  type ChairSide,
   type FloorPlan,
   type FloorTable,
   type FloorZone,
   type JoinAxis,
+  type JoinableTable,
+  type TableLink,
 } from "@/lib/floor-plan";
 import type { TableClaimRecord } from "@/lib/services/table-claims";
 
@@ -60,6 +65,43 @@ export type TableOffer = {
   rotation: number;
   /** Absent when the table can be picked. */
   unavailable?: TableUnavailable;
+  /**
+   * Whether anybody at all is already at this table.
+   *
+   * Separate from `unavailable`, which answers a different question and answers
+   * it with the **most useful** reason rather than every reason: a four-top with
+   * two people on it reads "too small" to a party of five, which is true, and
+   * hides that it is also not free. That was enough to let a guest add it to a
+   * row they were building — and a row is claimed whole, so the booking would
+   * have failed at the claim with the tables already half taken.
+   *
+   * A plain yes or no. How many are on it stays unsaid: "table 7 has two of its
+   * four seats gone" tells a guest something about a stranger's party.
+   */
+  occupied: boolean;
+  /**
+   * The tables this one stands against, so a guest can build a row themselves.
+   *
+   * The picker offers ready-made stretches, and a guest who wants a different
+   * three tables has to be able to say so by tapping them. Deciding whether the
+   * next tap is even allowed — is that table next to the ones already picked? —
+   * is a question about the plan, and this is the part of the plan the answer
+   * needs.
+   *
+   * Says nothing about anybody: which tables touch is furniture, and the room
+   * is already drawn on the screen.
+   */
+  neighbours?: TableLink[];
+  /**
+   * Where this table's seats are, side by side.
+   *
+   * Sent because the browser has to do the same arithmetic the server does:
+   * two four-tops pushed together seat six, and a guest adding a third table
+   * should watch the number follow their finger rather than find out when the
+   * booking is refused. It cannot be worked out on the client — it depends on
+   * `chairSides`, which is not sent and should not be.
+   */
+  perSide: Record<ChairSide, number>;
 };
 
 /**
@@ -201,6 +243,9 @@ export function offerTables(
           height: table.height,
           rotation: table.rotation,
           unavailable: reasonUnavailable(table, taken, guests, tightest),
+          occupied: taken > 0,
+          neighbours: table.neighbours,
+          perSide: seatsPerSide(table),
         };
       }),
       combinations: combineTables(zone.tables, seated, guests),
@@ -428,6 +473,62 @@ export function hasOffer(zones: readonly ZoneOffer[]): boolean {
   return zones.some(
     (zone) => zone.tables.some((table) => !table.unavailable) || zone.combinations.length > 0,
   );
+}
+
+/**
+ * Whether a set of offered tables is a row a guest may actually have, and what
+ * it seats.
+ *
+ * The client's half of the rule the server enforces in `findPlanCombination`,
+ * and deliberately the same rule: a guest building a row table by table must
+ * never be able to assemble something the booking would then refuse. Both ask
+ * the same three questions — is every table free, is each one linked to the
+ * next, and does the row run one way — off the same data.
+ *
+ * `seats` is what it seats with the junctions paid for, so a screen can show
+ * the number growing as tables are added.
+ */
+export function inspectRun(tables: readonly TableOffer[]): {
+  ok: boolean;
+  seats: number;
+} {
+  if (tables.length === 0) {
+    return { ok: false, seats: 0 };
+  }
+
+  /**
+   * Whole tables only, and in service. Somebody already seated stops it however
+   * the refusal happens to read — `occupied` rather than `unavailable`, because
+   * a half-filled four-top reads "too small" to a party of five and that would
+   * let it into a row that is claimed whole.
+   *
+   * "Too small" and "kept for a larger party" do not stop it: being too small
+   * alone is the whole reason to push tables together, and being held back for
+   * a bigger party is an answer about one table standing on its own.
+   */
+  if (tables.some((table) => table.occupied || table.unavailable === "out-of-service")) {
+    return { ok: false, seats: 0 };
+  }
+
+  const sides = new Set<ChairSide>();
+
+  for (let index = 1; index < tables.length; index += 1) {
+    const link = (tables[index - 1].neighbours ?? []).find(
+      (entry) => entry.tableId === tables[index].id,
+    );
+
+    if (!link) {
+      return { ok: false, seats: 0 };
+    }
+
+    sides.add(link.side);
+  }
+
+  if (sides.size > 1) {
+    return { ok: false, seats: 0 };
+  }
+
+  return { ok: true, seats: joinedSeatsOf(tables as readonly JoinableTable[]) };
 }
 
 /**

@@ -134,6 +134,21 @@ export function TablePicker() {
       return;
     }
 
+    /**
+     * A row the guest built by hand can be too small for their party — they
+     * are pointing at tables, not doing arithmetic. Caught here because the
+     * booking route drops a table it cannot seat and takes the reservation
+     * anyway: correct on that side, and silent, so a guest who walked on with
+     * two tables for a party of six would have found out by receiving a
+     * booking with no table at all.
+     */
+    if (chosenTable && chosenTable.seats < guestCount) {
+      setError(
+        `Tables ${chosenTable.label} seat ${chosenTable.seats} pushed together, which is not enough for ${guestCount}. Add another table, or choose somewhere else.`,
+      );
+      return;
+    }
+
     goOn(chosen);
   };
 

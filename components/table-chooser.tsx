@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { cx } from "@/components/ui/utils";
 import { PlanView, refusalOf, refusalSentence } from "@/app/booking/table/plan-view";
-import type { TableOffer, ZoneOffer } from "@/lib/floor-plan-availability";
+import { inspectRun, type TableOffer, type ZoneOffer } from "@/lib/floor-plan-availability";
 
 /**
  * Choosing a table: the zones, the plan, and the same tables as a list.
@@ -274,5 +274,38 @@ export function findOffer(
     };
   }
 
-  return null;
+  /**
+   * A row the guest built themselves, which is in no list of prepared offers.
+   *
+   * Worked out from the tables instead. Without this the summary line said
+   * "no table chosen" to a guest looking at three tables lit up on the plan —
+   * and the continue button, which asks the same question, would have let them
+   * walk on believing they had chosen nothing.
+   */
+  const ids = id.split("+").filter(Boolean);
+
+  if (ids.length < 2) {
+    return null;
+  }
+
+  const offers = zones.flatMap((zone) => zone.tables);
+  const run = ids
+    .map((entry) => offers.find((candidate) => candidate.id === entry))
+    .filter((entry): entry is TableOffer => Boolean(entry));
+
+  if (run.length !== ids.length) {
+    return null;
+  }
+
+  const inspected = inspectRun(run);
+
+  if (!inspected.ok) {
+    return null;
+  }
+
+  return {
+    label: run.map((entry) => entry.label).join(" + "),
+    seats: inspected.seats,
+    tables: run.length,
+  };
 }

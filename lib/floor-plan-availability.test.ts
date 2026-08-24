@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_COMBINATIONS_PER_ROW,
   findPlanCombination,
+  inspectRun,
   offerTables,
 } from "@/lib/floor-plan-availability";
 import type { ChairSide, FloorPlan, FloorTable } from "@/lib/floor-plan";
@@ -431,5 +432,74 @@ describe("resolving a combination back from the plan", () => {
     expect(findPlanCombination(ROW, "nope")).toBeNull();
     expect(findPlanCombination(ROW, "t13+nope")).toBeNull();
     expect(findPlanCombination(ROW, "")).toBeNull();
+  });
+});
+
+
+/**
+ * A row the guest builds themselves, table by table, on the plan.
+ *
+ * The client's half of the rule the booking route enforces, and it has to be
+ * the same rule: a guest must never be able to assemble on screen something the
+ * booking would then refuse — or, worse, silently drop.
+ */
+describe("inspecting a row a guest has tapped out", () => {
+  const offered = (guests: number) => offerTables(ROW, [], guests)[0].tables;
+  const pick = (guests: number, ...labels: string[]) =>
+    labels.map((label) => offered(guests).find((entry) => entry.label === label)!);
+
+  it("accepts neighbours in the order they stand, and counts the join", () => {
+    expect(inspectRun(pick(5, "13", "12"))).toEqual({ ok: true, seats: 6 });
+  });
+
+  it("accepts a longer row and pays for every junction", () => {
+    expect(inspectRun(pick(7, "13", "12", "11"))).toEqual({ ok: true, seats: 8 });
+  });
+
+  it("refuses tables that do not touch", () => {
+    expect(inspectRun(pick(5, "13", "11")).ok).toBe(false);
+  });
+
+  it("refuses a row given out of order", () => {
+    expect(inspectRun(pick(5, "12", "13", "11")).ok).toBe(false);
+  });
+
+  it("refuses a table somebody is already on", () => {
+    const zone = offerTables(ROW, [claim("t12", 2)], 5)[0].tables;
+    const run = ["13", "12"].map((label) => zone.find((entry) => entry.label === label)!);
+
+    expect(inspectRun(run).ok).toBe(false);
+  });
+
+  it("accepts a table that is only too small on its own", () => {
+    // Being too small alone is the entire reason to push tables together, so it
+    // must not be what stops a guest adding it to a row.
+    const run = pick(5, "13", "12");
+
+    expect(run.every((entry) => entry.unavailable === "too-small")).toBe(true);
+    expect(inspectRun(run).ok).toBe(true);
+  });
+
+  it("accepts a table kept back for a larger party", () => {
+    // That answer is about a table standing on its own, and a row is not.
+    const zone = offerTables(ROW, [], 2)[0].tables;
+    const run = ["13", "12"].map((label) => zone.find((entry) => entry.label === label)!);
+
+    expect(run.some((entry) => entry.unavailable === "kept-for-larger")).toBe(true);
+    expect(inspectRun(run).ok).toBe(true);
+  });
+
+  it("says nothing is a row on its own or empty", () => {
+    expect(inspectRun([]).ok).toBe(false);
+    expect(inspectRun(pick(4, "13"))).toEqual({ ok: true, seats: 4 });
+  });
+
+  it("agrees with the booking route about the same tables", () => {
+    // The two must never disagree: whatever a guest can build, the booking has
+    // to accept, and with the same seat count.
+    const run = pick(7, "13", "12", "11");
+    const resolved = findPlanCombination(ROW, run.map((entry) => entry.id).join("+"));
+
+    expect(resolved?.seats).toBe(inspectRun(run).seats);
   });
 });

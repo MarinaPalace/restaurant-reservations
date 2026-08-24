@@ -4,6 +4,7 @@ import { AdminConfigError, ENVIRONMENT_ADMIN_ID, startAdminSession } from "@/lib
 import { verifyStaffCredentials } from "@/lib/services/staff-users";
 import { adminLoginSchema } from "@/lib/validation/booking";
 import { checkRateLimit, clientKeyFrom } from "@/lib/rate-limit";
+import { reportError } from "@/lib/observability";
 
 export async function POST(request: Request) {
   // Slower than the guest limits: a member of staff mistyping a password a
@@ -49,7 +50,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid credentials." }, { status: 401 });
   } catch (error) {
     if (error instanceof AdminConfigError) {
-      console.error("[admin] misconfigured deployment:", error.message);
+      reportError({ scope: "auth", event: "login:misconfigured", error });
       // The specific variable is named so staff can fix the deployment. No
       // secret material is exposed, and a 503 already reveals that the admin
       // area is unconfigured.
@@ -59,7 +60,7 @@ export async function POST(request: Request) {
       );
     }
 
-    console.error("[admin] login failed", error);
+    reportError({ scope: "auth", event: "login:failed", error });
     return NextResponse.json({ error: "Unable to sign in." }, { status: 500 });
   }
 }

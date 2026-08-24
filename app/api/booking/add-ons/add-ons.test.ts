@@ -536,3 +536,98 @@ describe("changing promotions later", () => {
     expect((await reservations.getReservationByNumber("VDM-AAA111"))?.addOns).toHaveLength(2);
   });
 });
+
+/**
+ * A guest changing one product must not disturb the one beside it. The manage
+ * screen only lets them touch groups the booking already holds, so every such
+ * request re-sends the lines they are keeping — and those used to be looked up
+ * again, and repriced.
+ */
+describe("changing one thing does not change another", () => {
+  it("keeps the price agreed for a product the guest is not touching", async () => {
+    const { POST } = await import("@/app/api/booking/add-ons/route");
+    const restaurant = await import("@/lib/services/restaurant");
+    const { key, wines, desserts, reservations } = await setUp();
+
+    // Both taken on the confirmation screen, at today's prices.
+    await POST(
+      post({
+        passKey: key.code,
+        reservationNumber: "VDM-AAA111",
+        addOns: [
+          { courseId: wines.id, optionId: wines.options[0].id },
+          { courseId: desserts.id, optionId: desserts.options[0].id },
+        ],
+      }),
+    );
+
+    // The bar reprices the dessert overnight.
+    await restaurant.saveMenuCatalog(
+      [wines, { ...desserts, options: [{ ...desserts.options[0], price: 50 }] }],
+      "promo",
+    );
+
+    // The guest comes back and swaps only the wine.
+    const response = await POST(
+      post({
+        passKey: key.code,
+        reservationNumber: "VDM-AAA111",
+        mode: "manage",
+        addOns: [
+          { courseId: wines.id, optionId: wines.options[1].id },
+          { courseId: desserts.id, optionId: desserts.options[0].id },
+        ],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+
+    const stored = await reservations.getReservationByNumber("VDM-AAA111");
+    const dessert = stored?.addOns?.find((addOn) => addOn.courseId === desserts.id);
+    const wine = stored?.addOns?.find((addOn) => addOn.courseId === wines.id);
+
+    // Untouched, so unchanged.
+    expect(dessert?.finalPrice).toBe(12);
+    // Genuinely a new choice, so priced from the catalogue.
+    expect(wine?.optionName).toBe("Merlot");
+    expect(wine?.finalPrice).toBe(28);
+  });
+
+  it("still lets a guest keep a product the bar has since stopped offering", async () => {
+    const { POST } = await import("@/app/api/booking/add-ons/route");
+    const restaurant = await import("@/lib/services/restaurant");
+    const { key, wines, desserts, reservations } = await setUp();
+
+    await POST(
+      post({
+        passKey: key.code,
+        reservationNumber: "VDM-AAA111",
+        addOns: [
+          { courseId: wines.id, optionId: wines.options[0].id },
+          { courseId: desserts.id, optionId: desserts.options[0].id },
+        ],
+      }),
+    );
+
+    await restaurant.saveMenuCatalog(
+      [{ ...wines, options: [{ ...wines.options[0], active: false }, wines.options[1]] }, desserts],
+      "promo",
+    );
+
+    // Giving the dessert back, keeping the withdrawn wine they already have.
+    const response = await POST(
+      post({
+        passKey: key.code,
+        reservationNumber: "VDM-AAA111",
+        mode: "manage",
+        addOns: [{ courseId: wines.id, optionId: wines.options[0].id }],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+
+    const stored = await reservations.getReservationByNumber("VDM-AAA111");
+    expect(stored?.addOns?.map((addOn) => addOn.optionName)).toEqual(["Chardonnay"]);
+  });
+});
+

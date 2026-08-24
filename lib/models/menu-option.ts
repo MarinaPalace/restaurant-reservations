@@ -18,5 +18,12 @@ const menuOptionSchema = new Schema(
   { timestamps: true },
 );
 
+/**
+ * Options are read by the course that owns them, and deleted by it on save.
+ * The collection is small enough that a scan has never mattered, which is
+ * exactly why it is worth declaring before somebody's menu is not small.
+ */
+menuOptionSchema.index({ courseId: 1 });
+
 export const MenuOptionModel =
   mongoose.models.MenuOption || mongoose.model("MenuOption", menuOptionSchema);

@@ -45,3 +45,6 @@ next-env.d.ts
 
 # local scratch
 /lines.py
+
+# database backups: unencrypted guest data, never committed
+/backups

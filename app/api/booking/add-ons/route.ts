@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
 import { getPassKeyByCode } from "@/lib/services/pass-keys";
 import { getReservationByNumber, updateReservationAddOns } from "@/lib/services/reservations";
-import { getPromoCatalog, getRestaurantDate, priceOfPromoOption } from "@/lib/services/restaurant";
+import { getPromoCatalog, getRestaurantDate } from "@/lib/services/restaurant";
+import { resolvePromotionSelection } from "@/lib/services/promotion-selection";
 import { getEveningFeatures } from "@/lib/services/settings";
 import { updateAddOnsSchema } from "@/lib/validation/booking";
 import { checkRateLimit, clientKeyFrom } from "@/lib/rate-limit";
 import { toGuestReservation } from "@/lib/guest-reservation";
 import { recordAuditEntry } from "@/lib/services/audit-log";
 import { describeReservationChanges, summariseChanges } from "@/lib/reservation-changes";
-import type { ReservationAddOn } from "@/types/booking";
+import { reportError } from "@/lib/observability";
 
 /**
  * Takes, changes or drops the promotions on a confirmed booking.
@@ -124,36 +125,19 @@ export async function POST(request: Request) {
      * language, but what is stored is what staff read off the service sheet —
      * the same rule the dinner selections follow (rule 2.6).
      */
-    const catalog = await getPromoCatalog("en");
-    const chosenGroups = new Set<string>();
-    const addOns: ReservationAddOn[] = [];
+    const selection = resolvePromotionSelection({
+      requested: parsed.data.addOns,
+      // What the guest already has is carried through untouched, so swapping
+      // one product cannot reprice or invalidate the one beside it.
+      held: reservation.addOns ?? [],
+      catalog: await getPromoCatalog("en"),
+    });
 
-    for (const requested of parsed.data.addOns) {
-      if (chosenGroups.has(requested.courseId)) {
-        return NextResponse.json({ error: "Choose at most one product from each group." }, { status: 400 });
-      }
-
-      const course = catalog.find((entry) => entry.id === requested.courseId);
-      const option = course?.options.find((entry) => entry.id === requested.optionId);
-
-      /**
-       * 409, not 400: the request was well formed and was true when the screen
-       * rendered it. The product has since been withdrawn, and the screen has
-       * to reload to find out what is on offer now.
-       */
-      if (!course || !option) {
-        return NextResponse.json({ error: "That product is no longer available." }, { status: 409 });
-      }
-
-      chosenGroups.add(requested.courseId);
-      addOns.push({
-        courseId: course.id,
-        courseName: course.name,
-        optionId: option.id,
-        optionName: option.name,
-        ...priceOfPromoOption(option),
-      });
+    if (!selection.ok) {
+      return NextResponse.json({ error: selection.error }, { status: selection.status });
     }
+
+    const addOns = selection.addOns;
 
     const updated = await updateReservationAddOns(reservation.reservationNumber, addOns);
 
@@ -189,7 +173,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ reservation: toGuestReservation(updated) });
   } catch (error) {
-    console.error("[booking] failed to save promotions", error);
+    reportError({ scope: "booking", event: "promotions:save", error });
     return NextResponse.json({ error: "Unable to save your choices." }, { status: 500 });
   }
 }

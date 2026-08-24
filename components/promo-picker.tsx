@@ -313,6 +313,8 @@ function PromoCard({
             alt=""
             width={640}
             height={360}
+            // Full width of the card, which is the column it sits in.
+            sizes="(min-width: 1024px) 340px, (min-width: 640px) 50vw, 100vw"
             className={cx(
               "absolute inset-0 !rounded-none !border-0 size-full object-cover",
               "transition-transform duration-[--motion-hero] ease-[--ease-settle] group-hover:scale-[1.06]",

@@ -1,6 +1,8 @@
+import { revalidatePath, revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
 import { isDenied, requireStaff } from "@/lib/auth/guard";
 import { recordAuditEntry } from "@/lib/services/audit-log";
+import { MENU_CACHE_TAG } from "@/lib/services/menu-cache";
 import { getFullMenuCatalog, saveMenuCatalog } from "@/lib/services/restaurant";
 import { bumpMenuVersion } from "@/lib/services/settings";
 import { menuCatalogSchema, saveMenuSchema } from "@/lib/validation/booking";
@@ -49,6 +51,16 @@ export async function POST(request: Request) {
     const kind = parsed.data.menu ?? "standard";
     const menu = await saveMenuCatalog(courses, kind);
     const version = await bumpMenuVersion(kind);
+
+    /**
+     * The guest-facing catalogue is held between requests, so a save has to
+     * say so — otherwise staff press publish, look at the booking flow, and
+     * see the old menu. Dropping it here is what makes it safe to cache at
+     * all: the window never has to be short, because it never has to expire.
+     */
+    // `{ expire: 0 }`: staff must see their own publish, not a stale copy.
+    revalidateTag(MENU_CACHE_TAG, { expire: 0 });
+    revalidatePath("/booking/menu");
 
     await recordAuditEntry({
       action: "menu:save",

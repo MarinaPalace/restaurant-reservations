@@ -42,3 +42,6 @@ next-env.d.ts
 
 # local JSON store (seeded automatically when MONGODB_URI is not set)
 /data
+
+# local scratch
+/lines.py

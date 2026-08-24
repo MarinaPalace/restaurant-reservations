@@ -9,10 +9,26 @@
  * while still looking good on a retina screen.
  */
 
-export const MAX_IMAGE_EDGE = 1200;
+export const MAX_IMAGE_EDGE = 1600;
 export const TARGET_IMAGE_BYTES = 220 * 1024;
 /** Hard ceiling; a save carrying several of these still fits in one request. */
 export const MAX_STORED_IMAGE_BYTES = 700 * 1024;
+
+/**
+ * The quality ladder, walked until the file fits.
+ *
+ * It used to stop at 0.4, and a detailed photograph — a busy plate, a crowded
+ * table — reached the end of it still around 500 KB and was stored anyway,
+ * because the only thing that rejected an image was the 700 KB ceiling. Thirty
+ * of those is what the menu was actually serving.
+ *
+ * The stored file is now a master rather than the thing guests download:
+ * `next/image` re-encodes it per device, so the edge here is larger (a retina
+ * phone paints a full-bleed hero at more than 1200px) while the bytes are
+ * pushed harder. Losing a little fidelity in the master costs less than
+ * shipping half a megabyte to someone standing outside on mobile data.
+ */
+const QUALITY_LADDER = [0.82, 0.72, 0.62, 0.5, 0.4, 0.32, 0.25];
 
 export class ImageCompressionError extends Error {}
 
@@ -77,7 +93,7 @@ export async function compressImageFile(
   context.drawImage(image, 0, 0, width, height);
 
   let result = "";
-  for (const quality of [0.82, 0.72, 0.62, 0.5, 0.4]) {
+  for (const quality of QUALITY_LADDER) {
     result = canvas.toDataURL("image/jpeg", quality);
     // A base64 string is roughly 4/3 the size of the bytes it encodes.
     if (result.length * 0.75 <= targetBytes) {

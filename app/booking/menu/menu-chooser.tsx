@@ -231,7 +231,14 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
             </div>
           ) : null}
 
-          {localizedCourses.map((course) => {
+          {localizedCourses.map((course, courseIndex) => {
+            /*
+              Only the first course is on screen when the page opens; the rest
+              are scrolled to. Making every photograph eager would put thirty
+              of them in one queue and the guest would wait longer for the one
+              they can see, not less.
+            */
+            const aboveTheFold = courseIndex === 0;
             const selection = selections.find(
               (entry) => entry.guestIndex === activeGuestIndex && entry.courseId === course.id,
             );
@@ -251,6 +258,9 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
                     alt=""
                     width={1200}
                     height={640}
+                    priority={aboveTheFold}
+                    // Full-bleed inside a card that stops at the shell's width.
+                    sizes="(min-width: 1024px) 960px, 100vw"
                     className="absolute inset-0 !rounded-none !border-0 size-full object-cover"
                   />
 
@@ -328,6 +338,8 @@ export function MenuChooser({ courses }: { courses: MenuCourse[] }) {
                               alt=""
                               width={640}
                               height={480}
+                              // Two or three to a row on a desktop, one on a phone.
+                              sizes="(min-width: 1024px) 320px, (min-width: 640px) 50vw, 100vw"
                               className={cx(
                                 "absolute inset-0 !rounded-none !border-0 size-full object-cover",
                                 // A slow push in on hover: the dish comes to

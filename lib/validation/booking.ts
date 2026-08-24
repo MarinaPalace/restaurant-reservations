@@ -19,6 +19,23 @@ import {
 export const MAX_GUESTS_PER_RESERVATION = 6;
 
 /**
+ * How long the thing a guest sends to name where they want to sit may be.
+ *
+ * Not one table id but possibly several, joined with `+` — the room of two-tops
+ * where a party of six needs three tables pushed together. A plan table id may
+ * itself be 64 characters, so a cap of 64 fitted exactly one table and silently
+ * cut the last id off any real combination. What arrived then was a table id
+ * with its tail missing, which resolves to nothing, and the booking was written
+ * with **no table at all** rather than refused — the worst way for it to fail,
+ * because nothing anywhere says it happened.
+ *
+ * Sized for a combination of every table a party could conceivably need. It is
+ * only a bound on the string: `findPlanCombination` still has to resolve every
+ * id in it against the plan.
+ */
+export const MAX_TABLE_SELECTION_LENGTH = (64 + 1) * MAX_GUESTS_PER_RESERVATION;
+
+/**
  * Rooms that may be added alongside the first on one booking. A ticket has
  * space for three room numbers, which is also as many parties as a table of six
  * realistically holds.
@@ -88,7 +105,7 @@ export const createReservationSchema = z.object({
    * (rule 2.6's habit), because a request that named its own seat count could
    * claim a two-top for six.
    */
-  tableId: z.string().trim().max(64).optional(),
+  tableId: z.string().trim().max(MAX_TABLE_SELECTION_LENGTH).optional(),
 });
 
 export type CreateReservationInput = z.infer<typeof createReservationSchema>;
@@ -179,7 +196,7 @@ export const updateSelectionsSchema = manageReservationSchema.extend({
  * change their mind back to.
  */
 export const changeTableSchema = manageReservationSchema.extend({
-  tableId: z.string().trim().max(64),
+  tableId: z.string().trim().max(MAX_TABLE_SELECTION_LENGTH),
 });
 
 /**

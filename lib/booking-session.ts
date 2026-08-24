@@ -1,7 +1,7 @@
 import { isValidDateKey } from "@/lib/date";
 import { isValidPassKeyFormat, normalizePassKey } from "@/lib/pass-key";
 import { isValidRoomNumber, normalizeRoomNumber } from "@/lib/room";
-import { MAX_GUESTS_PER_RESERVATION } from "@/lib/validation/booking";
+import { MAX_GUESTS_PER_RESERVATION, MAX_TABLE_SELECTION_LENGTH } from "@/lib/validation/booking";
 import type { ReservationRecord, ReservationSelection } from "@/types/booking";
 
 export const BOOKING_STORAGE_KEYS = {
@@ -143,10 +143,20 @@ export function readBookingSession(storage: Storage | null | undefined): Booking
     roomNumber: isValidRoomNumber(roomNumber) ? normalizeRoomNumber(roomNumber) : "",
     guestCount: parseGuestCount(storage.getItem(BOOKING_STORAGE_KEYS.guestCount)),
     date: isValidDateKey(date) ? date : "",
-    // Read back as an opaque id: whether it still exists on the plan is the
-    // route's question, and a stale one costs a booking with no table rather
-    // than a wrong table.
-    tableId: (storage.getItem(BOOKING_STORAGE_KEYS.tableId) ?? "").slice(0, 64),
+    /**
+     * Read back as an opaque id: whether it still exists on the plan is the
+     * route's question, and a stale one costs a booking with no table rather
+     * than a wrong table.
+     *
+     * Long enough for tables pushed together, which is several ids joined with
+     * `+`. Cutting the string short does not produce a shorter choice — it
+     * produces an id with its tail missing, which resolves to nothing and books
+     * the guest with no table while telling nobody.
+     */
+    tableId: (storage.getItem(BOOKING_STORAGE_KEYS.tableId) ?? "").slice(
+      0,
+      MAX_TABLE_SELECTION_LENGTH,
+    ),
     selections: normalizeSelections(parseJson(storage.getItem(BOOKING_STORAGE_KEYS.selections))),
     language: storage.getItem(BOOKING_STORAGE_KEYS.language) || "en",
   };

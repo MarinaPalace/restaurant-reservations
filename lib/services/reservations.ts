@@ -1263,10 +1263,28 @@ export async function setReservationCourseServed(
 /**
  * Removes a booking outright. Seats are released only when it was still
  * confirmed, since a cancelled booking already gave them back.
+ *
+ * **The table comes back too**, and unconditionally. Deleting used to give back
+ * the seats and keep the table, which left a claim nobody could ever reach: the
+ * booking that held it no longer existed, so the table read busy for the rest
+ * of the evening with nobody sitting there and nothing on any screen to explain
+ * it. Cancelling had always released both (`releaseClaimedTable`); deleting
+ * simply never called it.
+ *
+ * Not guarded by the status the way the seats are, because releasing is
+ * idempotent by filter — the claim must still name this booking for the update
+ * to match — so a booking that was cancelled first releases nothing here rather
+ * than releasing twice.
  */
 export async function deleteReservation(reservationNumber: string): Promise<ReservationRecord | null> {
   if (!isMongoConfigured()) {
-    return deleteLocalReservation(reservationNumber);
+    const removed = await deleteLocalReservation(reservationNumber);
+
+    if (removed) {
+      await releaseClaimedTable(removed as ReservationRecord);
+    }
+
+    return removed;
   }
 
   await connectToDatabase();
@@ -1280,6 +1298,8 @@ export async function deleteReservation(reservationNumber: string): Promise<Rese
   if (record.status === "confirmed") {
     await RestaurantDateModel.updateOne({ date: record.date }, { $inc: { reservedSeats: -record.guestCount } });
   }
+
+  await releaseClaimedTable(record);
 
   return record;
 }

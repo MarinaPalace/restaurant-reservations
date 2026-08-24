@@ -1,5 +1,8 @@
 import { createHash } from "crypto";
 
+// Re-exported so server code has a single place to import image helpers from.
+export { storedImageIdFrom } from "@/lib/menu-image-ref";
+
 /**
  * Uploaded dish photos are stored on the record as data URLs. Sending those
  * inline in the menu response would mean every guest re-downloads every photo

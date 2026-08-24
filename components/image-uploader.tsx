@@ -4,6 +4,7 @@ import { useId, useRef, useState } from "react";
 import { DishImage } from "@/components/dish-image";
 import { Button } from "@/components/ui/button";
 import { compressImageFile, ImageCompressionError } from "@/lib/image-compression";
+import { storedImageIdFrom } from "@/lib/menu-image-ref";
 
 /**
  * Picture control for a course or an option: drop in a file, paste a URL, or
@@ -27,7 +28,16 @@ export function ImageUploader({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const isUploaded = value.startsWith("data:");
+  /*
+   * A photo we hold, as opposed to an address somebody typed.
+   *
+   * It arrives either as raw base64 — a file chosen a moment ago, not yet
+   * saved — or as `/api/menu/images/<id>`, which is how an already-saved photo
+   * is handed to this screen now that the editor no longer carries the bytes.
+   * Both mean the same thing to the person looking at it: the address box is
+   * theirs to replace or remove, not to type into.
+   */
+  const isUploaded = value.startsWith("data:") || storedImageIdFrom(value) !== null;
 
   const handleFile = async (file: File | undefined) => {
     if (!file) {

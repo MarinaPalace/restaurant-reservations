@@ -31,6 +31,27 @@ const passKeySchema = new Schema(
     usedAt: { type: Date },
     revokedAt: { type: Date },
     note: { type: String },
+    /**
+     * Invitations only: where it was sent, and what happened. Both optional and
+     * absent on every key issued before invitations were emailed, which reads
+     * as "never sent" — no migration.
+     */
+    guestEmail: { type: String },
+    invitation: {
+      type: new Schema(
+        {
+          channel: { type: String, enum: ["email"], required: true },
+          to: { type: String, required: true },
+          at: { type: String, required: true },
+          status: { type: String, enum: ["sent", "failed"], required: true },
+          messageId: { type: String },
+          error: { type: String },
+          attempts: { type: Number, default: 1, min: 1 },
+        },
+        { _id: false },
+      ),
+      required: false,
+    },
   },
   { timestamps: true },
 );

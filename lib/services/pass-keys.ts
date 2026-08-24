@@ -21,6 +21,7 @@ import {
   nightsBetween,
   suggestedUsesForNights,
   type Actor,
+  type InvitationDelivery,
   type MenuKind,
   type PassKeyRecord,
 } from "@/types/booking";
@@ -111,6 +112,8 @@ function toPassKeyRecord(document: MongoPassKeyDocument): PassKeyRecord {
     reservationRef: document.reservationRef ? String(document.reservationRef) : undefined,
     roomNumber: document.roomNumber ? String(document.roomNumber) : undefined,
     guestName: document.guestName ? String(document.guestName) : undefined,
+    guestEmail: document.guestEmail ? String(document.guestEmail) : undefined,
+    invitation: (document.invitation as PassKeyRecord["invitation"]) ?? undefined,
     checkInOn: document.checkInOn ? String(document.checkInOn) : undefined,
     maxGuests: typeof document.maxGuests === "number" ? document.maxGuests : undefined,
     nights: typeof document.nights === "number" ? document.nights : undefined,
@@ -257,6 +260,8 @@ export async function issuePassKey(input: {
   reservationRef?: string;
   roomNumber?: string;
   guestName?: string;
+  /** Invitations only: where the invitation is emailed. */
+  guestEmail?: string;
   checkInOn?: string;
   expiresOn?: string;
   maxGuests?: number;
@@ -292,6 +297,8 @@ export async function issuePassKey(input: {
     reservationRef: input.reservationRef?.trim() || undefined,
     roomNumber: input.roomNumber ? normalizeRoomNumber(input.roomNumber) : undefined,
     guestName: input.guestName?.trim() || undefined,
+    // Lower-cased so a resend, a search and a duplicate check all agree.
+    guestEmail: input.guestEmail?.trim().toLowerCase() || undefined,
     checkInOn: input.checkInOn,
     nights,
     expiresOn: input.expiresOn,
@@ -504,12 +511,50 @@ export class UpdatePassKeyError extends Error {
  * retroactively invalidate a dinner the guest is expecting to eat. Reception
  * has to cancel the booking first, which is the honest order to do it in.
  */
+/**
+ * Records what happened when an invitation was sent.
+ *
+ * Written with a single `$set` rather than read-modify-write: reception may well
+ * press Send twice on a slow evening, and the last attempt is the one worth
+ * keeping. `attempts` is incremented from what the caller read, which is close
+ * enough for a counter that exists to say "this address looks wrong" — it is
+ * never used for a decision.
+ *
+ * A failure here must not be raised to the caller: the send either happened or
+ * it did not, and losing that fact is a smaller problem than an exception
+ * thrown into the middle of issuing a key.
+ */
+export async function recordInvitationDelivery(
+  id: string,
+  delivery: InvitationDelivery,
+): Promise<PassKeyRecord | null> {
+  try {
+    if (!isMongoConfigured()) {
+      return await updateLocalPassKey(id, { invitation: delivery });
+    }
+
+    await connectToDatabase();
+    const saved = await PassKeyModel.findByIdAndUpdate(
+      id,
+      { $set: { invitation: delivery } },
+      { returnDocument: "after" },
+    ).lean();
+
+    return saved ? toPassKeyRecord(saved as MongoPassKeyDocument) : null;
+  } catch (error) {
+    console.error("[invitations] failed to record a delivery attempt", error);
+    return null;
+  }
+}
+
 export async function updatePassKey(
   id: string,
   patch: {
     roomNumber?: string | null;
     reservationRef?: string | null;
     guestName?: string | null;
+    /** Invitations only. A mistyped address is the usual reason a send failed. */
+    guestEmail?: string | null;
     expiresOn?: string | null;
     maxUses?: number;
     maxGuests?: number | null;
@@ -536,6 +581,10 @@ export async function updatePassKey(
     reservationRef:
       patch.reservationRef === undefined ? before.reservationRef : (patch.reservationRef || undefined),
     guestName: patch.guestName === undefined ? before.guestName : (patch.guestName || undefined),
+    guestEmail:
+      patch.guestEmail === undefined
+        ? before.guestEmail
+        : (patch.guestEmail?.trim().toLowerCase() || undefined),
     expiresOn: patch.expiresOn === undefined ? before.expiresOn : (patch.expiresOn ?? undefined),
     maxUses: patch.maxUses ?? before.maxUses,
     maxGuests: patch.maxGuests === undefined ? before.maxGuests : (patch.maxGuests ?? undefined),
@@ -551,6 +600,7 @@ export async function updatePassKey(
       roomNumber: next.roomNumber,
       reservationRef: next.reservationRef,
       guestName: next.guestName,
+      guestEmail: next.guestEmail,
       expiresOn: next.expiresOn,
       maxUses: next.maxUses,
       maxGuests: next.maxGuests,
@@ -576,6 +626,7 @@ export async function updatePassKey(
         ...(patch.roomNumber === undefined ? {} : { roomNumber: next.roomNumber ?? null }),
         ...(patch.reservationRef === undefined ? {} : { reservationRef: next.reservationRef ?? null }),
         ...(patch.guestName === undefined ? {} : { guestName: next.guestName ?? null }),
+        ...(patch.guestEmail === undefined ? {} : { guestEmail: next.guestEmail ?? null }),
         ...(patch.expiresOn === undefined ? {} : { expiresOn: patch.expiresOn ?? null }),
         ...(patch.maxGuests === undefined ? {} : { maxGuests: patch.maxGuests ?? null }),
         ...(patch.note === undefined ? {} : { note: patch.note || null }),

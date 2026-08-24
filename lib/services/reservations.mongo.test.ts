@@ -1106,6 +1106,101 @@ describe("pass-keys against MongoDB", () => {
     return { checkInOn: key(0), expiresOn: key(nights) };
   }
 
+  /**
+   * Invitations are the only keys that are emailed, and the address and the
+   * delivery attempt are both fields added after the fact — so the absence of
+   * them has to read correctly on every key already in the database.
+   */
+  it("keeps the address an invitation was issued for", async () => {
+    const passKeys = await loadPassKeys();
+    const issued = await passKeys.issuePassKey({
+      kind: "premium",
+      guestName: "Maria Petrova",
+      guestEmail: "  Maria@Example.COM ",
+      expiresOn: "2027-06-20",
+      actor,
+    });
+
+    // Lower-cased and trimmed, so a resend and a search agree with each other.
+    expect(issued.guestEmail).toBe("maria@example.com");
+    expect(issued.invitation).toBeUndefined();
+
+    const loaded = await passKeys.getPassKeyById(issued.id);
+    expect(loaded?.guestEmail).toBe("maria@example.com");
+  });
+
+  it("records a delivery attempt, and the next one replaces it", async () => {
+    const passKeys = await loadPassKeys();
+    const issued = await passKeys.issuePassKey({
+      kind: "premium",
+      guestEmail: "guest@example.com",
+      actor,
+    });
+
+    await passKeys.recordInvitationDelivery(issued.id, {
+      channel: "email",
+      to: "guest@example.com",
+      at: new Date().toISOString(),
+      status: "failed",
+      error: "Mailbox unavailable",
+      attempts: 1,
+    });
+
+    const failed = await passKeys.getPassKeyById(issued.id);
+    expect(failed?.invitation?.status).toBe("failed");
+    expect(failed?.invitation?.error).toBe("Mailbox unavailable");
+
+    await passKeys.recordInvitationDelivery(issued.id, {
+      channel: "email",
+      to: "corrected@example.com",
+      at: new Date().toISOString(),
+      status: "sent",
+      messageId: "msg_9",
+      attempts: 2,
+    });
+
+    const sent = await passKeys.getPassKeyById(issued.id);
+    expect(sent?.invitation?.status).toBe("sent");
+    expect(sent?.invitation?.to).toBe("corrected@example.com");
+    expect(sent?.invitation?.attempts).toBe(2);
+    // The failure is gone, not merged: only the last attempt is kept.
+    expect(sent?.invitation?.error).toBeUndefined();
+  });
+
+  it("reads a key issued before invitations were emailed as never sent", async () => {
+    const passKeys = await loadPassKeys();
+    const { PassKeyModel } = await import("@/lib/models/pass-key");
+
+    await PassKeyModel.collection.insertOne({
+      code: "OLDINVITE1",
+      kind: "premium",
+      guestName: "Older Invitation",
+      status: "active",
+      maxUses: 1,
+      usedCount: 0,
+      reservationNumbers: [],
+    });
+
+    const loaded = await passKeys.getPassKeyByCode("OLDINVITE1");
+    expect(loaded?.guestEmail).toBeUndefined();
+    expect(loaded?.invitation).toBeUndefined();
+  });
+
+  it("corrects a mistyped invitation address", async () => {
+    const passKeys = await loadPassKeys();
+    const issued = await passKeys.issuePassKey({
+      kind: "premium",
+      guestEmail: "typo@example.com",
+      actor,
+    });
+
+    const { after } = await passKeys.updatePassKey(issued.id, { guestEmail: "Right@Example.com" });
+    expect(after.guestEmail).toBe("right@example.com");
+
+    const cleared = await passKeys.updatePassKey(issued.id, { guestEmail: null });
+    expect(cleared.after.guestEmail).toBeUndefined();
+  });
+
   it("issues a key that can be found by however the guest types it", async () => {
     const passKeys = await loadPassKeys();
     const issued = await passKeys.issuePassKey({ roomNumber: "402", ...stay(7), actor });

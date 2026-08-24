@@ -305,7 +305,16 @@ export async function updateLocalPassKey(
   patch: Partial<
     Pick<
       PassKeyRecord,
-      "roomNumber" | "reservationRef" | "guestName" | "expiresOn" | "maxUses" | "maxGuests" | "note" | "status"
+      | "roomNumber"
+      | "reservationRef"
+      | "guestName"
+      | "guestEmail"
+      | "expiresOn"
+      | "maxUses"
+      | "maxGuests"
+      | "note"
+      | "status"
+      | "invitation"
     >
   >,
 ): Promise<PassKeyRecord | null> {

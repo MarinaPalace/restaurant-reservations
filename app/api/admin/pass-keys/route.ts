@@ -7,6 +7,7 @@ import { headers } from "next/headers";
 import { formatPassKey } from "@/lib/pass-key";
 import { absoluteUrl, passKeyTargetUrl } from "@/lib/pass-key-links";
 import { qrDataUris } from "@/lib/qr";
+import { sendInvitationEmail } from "@/lib/services/invitations";
 import { MINIMUM_STAY_NIGHTS } from "@/types/booking";
 
 export async function GET() {
@@ -96,6 +97,48 @@ export async function POST(request: Request) {
      */
     const headerList = await headers();
     const host = headerList.get("x-forwarded-host") ?? headerList.get("host") ?? "";
+
+    /**
+     * Invitations are emailed here, after the keys exist and after they have
+     * been logged.
+     *
+     * Order matters: the key is the thing that must survive. A mail provider
+     * that is slow, refusing, or simply unconfigured must not cost reception the
+     * key they just issued — so sending happens last, cannot throw, and its
+     * outcome rides back in the response beside the keys rather than replacing
+     * them. Where it failed, the panel offers the link to copy.
+     *
+     * Sent one at a time on purpose: a batch of invitations is a handful, and
+     * each one gets its own line in the log and its own result on screen.
+     */
+    const invitations: Record<string, { ok: boolean; message: string; invitationUrl: string }> = {};
+
+    for (const [index, passKey] of passKeys.entries()) {
+      if (!rows[index].sendInvitation) {
+        continue;
+      }
+
+      const outcome = await sendInvitationEmail({ passKey, host });
+      invitations[passKey.id] = {
+        ok: outcome.ok,
+        message: outcome.message,
+        invitationUrl: outcome.invitationUrl,
+      };
+
+      if (outcome.delivery) {
+        passKey.invitation = outcome.delivery;
+      }
+
+      await recordAuditEntry({
+        action: "passkey:issue",
+        actor: auth.actor,
+        summary:
+          `${outcome.ok ? "Emailed" : "Failed to email"} the invitation for ` +
+          `${formatPassKey(passKey.code)} to ${outcome.delivery?.to ?? passKey.guestEmail ?? "no address"}` +
+          (outcome.ok ? "." : ` — ${outcome.message}`),
+      });
+    }
+
     const qrCodes = await qrDataUris(
       passKeys.map((passKey) => ({
         id: passKey.id,
@@ -107,7 +150,7 @@ export async function POST(request: Request) {
 
     // `passKey` is kept alongside the list so a caller expecting one still
     // works; the UI reads `passKeys`.
-    return NextResponse.json({ passKeys, passKey: passKeys[0], qrCodes }, { status: 201 });
+    return NextResponse.json({ passKeys, passKey: passKeys[0], qrCodes, invitations }, { status: 201 });
   } catch (error) {
     if (error instanceof ShortStayError) {
       return NextResponse.json(

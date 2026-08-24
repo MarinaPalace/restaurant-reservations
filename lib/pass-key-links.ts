@@ -36,7 +36,19 @@ export function manageHref(code?: string | null) {
   return normalized ? `/booking/manage?k=${encodeURIComponent(normalized)}` : "/booking/manage";
 }
 
-/** The same address, absolute, which is what a QR code has to encode. */
+/**
+ * The same address, absolute, which is what a QR code has to encode — and now
+ * what an emailed invitation carries, where a wrong scheme is not something the
+ * guest can work around.
+ *
+ * A local address stays on `http`: `https://localhost:3000` is a dead link, and
+ * development is exactly where these get tested.
+ */
 export function absoluteUrl(url: string) {
-  return url.startsWith("http://") || url.startsWith("https://") ? url : `https://${url}`;
+  if (url.startsWith("http://") || url.startsWith("https://")) {
+    return url;
+  }
+
+  const isLocal = /^(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(url);
+  return `${isLocal ? "http" : "https"}://${url}`;
 }

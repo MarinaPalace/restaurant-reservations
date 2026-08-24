@@ -3,6 +3,7 @@ import {
   MAX_COMBINATIONS_PER_ROW,
   findPlanCombination,
   inspectRun,
+  nextSelection,
   offerTables,
 } from "@/lib/floor-plan-availability";
 import type { ChairSide, FloorPlan, FloorTable } from "@/lib/floor-plan";
@@ -501,5 +502,104 @@ describe("inspecting a row a guest has tapped out", () => {
     const resolved = findPlanCombination(ROW, run.map((entry) => entry.id).join("+"));
 
     expect(resolved?.seats).toBe(inspectRun(run).seats);
+  });
+});
+
+
+/**
+ * Tapping tables on the plan to build a row.
+ *
+ * Written twice inside the screen that draws the room and wrong both times —
+ * once taking the whole prepared stretch on the first tap, so a guest could
+ * never begin a row of their own, and once refusing to select a table that was
+ * "too small" alone, which is every table anybody would want to push against
+ * another. Neither could be tested where it lived. This is why it is here.
+ */
+describe("tapping tables out on the plan", () => {
+  /** Six two-tops in a line, and a party of five, which is the room reported. */
+  const TWOS = plan(
+    row(["1", "2", "3", "4", "5", "6"].map((label) => table({ id: `t${label}`, label, seats: 2 }))),
+  );
+
+  const tables = (guests: number) => offerTables(TWOS, [], guests)[0].tables;
+
+  it("selects the one table tapped, even though it is too small alone", () => {
+    // The bug: every table worth merging is "too small" for the party, and the
+    // first tap answered null, so nothing was ever selected and no row could be
+    // started at all.
+    const offered = tables(5);
+
+    expect(offered.find((entry) => entry.id === "t1")?.unavailable).toBe("too-small");
+    expect(nextSelection(offered, null, "t1", 5)).toBe("t1");
+  });
+
+  it("adds the next table along", () => {
+    expect(nextSelection(tables(5), "t1", "t2", 5)).toBe("t1+t2");
+  });
+
+  it("builds a row of three, one tap at a time", () => {
+    const offered = tables(5);
+    let chosen: string | null = null;
+
+    for (const id of ["t1", "t2", "t3"]) {
+      chosen = nextSelection(offered, chosen, id, 5);
+    }
+
+    expect(chosen).toBe("t1+t2+t3");
+    expect(inspectRun(["t1", "t2", "t3"].map((id) => offered.find((e) => e.id === id)!)).seats).toBe(6);
+  });
+
+  it("adds at the near end as well as the far one", () => {
+    expect(nextSelection(tables(5), "t3+t4", "t2", 5)).toBe("t2+t3+t4");
+  });
+
+  it("takes a table off either end", () => {
+    expect(nextSelection(tables(5), "t1+t2+t3", "t3", 5)).toBe("t1+t2");
+    expect(nextSelection(tables(5), "t1+t2+t3", "t1", 5)).toBe("t2+t3");
+  });
+
+  it("lets a single table go again", () => {
+    expect(nextSelection(tables(5), "t1", "t1", 5)).toBeNull();
+  });
+
+  it("starts again from a table nowhere near the row", () => {
+    expect(nextSelection(tables(5), "t1+t2", "t5", 5)).toBe("t5");
+  });
+
+  it("starts again from the middle of the row rather than tearing it in two", () => {
+    expect(nextSelection(tables(5), "t1+t2+t3", "t2", 5)).toBe("t2");
+  });
+
+  it("does not grow a row that already seats the party", () => {
+    // Three two-tops seat six, which is enough for five. A stray tap on the
+    // next table along must not throw the three chosen tables away.
+    expect(nextSelection(tables(5), "t1+t2+t3", "t4", 5)).toBe("t1+t2+t3");
+  });
+
+  it("refuses a table somebody is already at", () => {
+    const offered = offerTables(TWOS, [claim("t3", 2)], 5)[0].tables;
+
+    expect(nextSelection(offered, "t1+t2", "t3", 5)).toBe("t1+t2");
+  });
+
+  it("refuses a table kept back for a larger party", () => {
+    // A party of two, where the four-top fits them and a two-top is free.
+    const mixed = plan([table({ id: "big", label: "9", seats: 4 }), table({ id: "small", label: "1", seats: 2 })]);
+    const offered = offerTables(mixed, [], 2)[0].tables;
+
+    expect(offered.find((entry) => entry.id === "big")?.unavailable).toBe("kept-for-larger");
+    expect(nextSelection(offered, null, "big", 2)).toBeNull();
+  });
+
+  it("builds only rows the booking would accept", () => {
+    // The whole point: whatever a guest can tap out, the server has to resolve.
+    const offered = tables(5);
+    let chosen: string | null = null;
+
+    for (const id of ["t4", "t5", "t6"]) {
+      chosen = nextSelection(offered, chosen, id, 5);
+    }
+
+    expect(findPlanCombination(TWOS, chosen!)?.seats).toBe(6);
   });
 });

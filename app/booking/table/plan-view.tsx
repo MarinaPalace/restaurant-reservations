@@ -4,7 +4,13 @@ import { useState } from "react";
 import { cx } from "@/components/ui/utils";
 import { PlanViewport, usePlanDragged } from "@/components/plan-viewport";
 import { FEATURE_LABELS, type FloorFeature } from "@/lib/floor-plan";
-import { inspectRun, type TableOffer, type ZoneOffer } from "@/lib/floor-plan-availability";
+import {
+  canJoinRun,
+  inspectRun,
+  nextSelection,
+  type TableOffer,
+  type ZoneOffer,
+} from "@/lib/floor-plan-availability";
 
 /**
  * The room, drawn, with a way to move around it.
@@ -52,90 +58,6 @@ export function PlanView({
    * the keyboard never lands on something off screen.
    */
   const [reveal, setReveal] = useState<TableOffer | null>(null);
-
-  /**
-   * What tapping a table does when a row is already being built.
-   *
-   * The picker offers ready-made stretches, and for most guests that is the
-   * whole interaction. But a guest who wants a *different* three tables — the
-   * ones by the window, not the ones the arithmetic preferred — has no way to
-   * say so except by pointing at them. So the room is not only a set of buttons
-   * for prepared answers: tables can be added to a row one at a time.
-   *
-   * ## Every tap is about the row, including the first
-   *
-   * - **Start it**, when nothing is chosen — with that one table, and only that
-   *   one. Tapping a table used to take the whole prepared stretch it belonged
-   *   to, which meant a guest could never begin a row of their own: the first
-   *   tap answered the question for them. The prepared stretches are still
-   *   there, named, in the list below.
-   * - **Extend the row**, when the table stands at either end of it. Only at an
-   *   end, because a row is a row: tables that do not touch cannot be pushed
-   *   together, and a gap in the middle is two rows with somebody else between.
-   * - **Shorten it**, when the table tapped is the end of it — the way anybody
-   *   undoes the last thing they did.
-   * - **Start again** with that table alone, for anything else. Tapping a table
-   *   across the room is not a mistake to be refused; it is a guest changing
-   *   their mind about where to sit.
-   *
-   * ## What it will not do
-   *
-   * Add a table to a row that **already seats the party**. The guest is not
-   * being economical on the restaurant's behalf and should not have to be, but
-   * a party of four holding six tables is a room sold out by mid-evening. The
-   * row stops growing when it is big enough, which also means the seat count
-   * cannot be run up by accident.
-   */
-  const runAfterTapping = (table: TableOffer): string | null => {
-    const current = (chosen ?? "").split("+").filter(Boolean);
-    const byId = new Map(zone.tables.map((entry) => [entry.id, entry]));
-    const run = current.map((id) => byId.get(id)).filter((entry): entry is TableOffer => Boolean(entry));
-
-    const alone = table.unavailable ? null : table.id;
-
-    if (run.length === 0) {
-      return alone;
-    }
-
-    const at = run.findIndex((entry) => entry.id === table.id);
-
-    if (at === 0) {
-      // The near end: let it go, and the row that is left stands on its own.
-      return run.slice(1).map((entry) => entry.id).join("+") || null;
-    }
-
-    if (at === run.length - 1) {
-      return run.slice(0, -1).map((entry) => entry.id).join("+") || null;
-    }
-
-    // Somewhere in the middle of the row: not an end, so not something to
-    // remove without tearing the row in two. Start again from it instead.
-    if (at > 0) {
-      return alone;
-    }
-
-    const extended = [
-      [table, ...run],
-      [...run, table],
-    ].find((candidate) => inspectRun(candidate).ok);
-
-    if (!extended) {
-      // Nowhere near the row: a guest changing their mind about where to sit.
-      return alone;
-    }
-
-    /**
-     * Big enough already, so the row does not grow — but the selection is not
-     * thrown away either. Tapping the next table along when a party of six
-     * already has its six seats is a stray tap, and losing three chosen tables
-     * to one of those is the sort of thing that makes people start again.
-     */
-    if (inspectRun(run).seats >= guestCount) {
-      return chosen;
-    }
-
-    return extended.map((entry) => entry.id).join("+");
-  };
 
   /** What the row being built seats, for the line under the plan. */
   const building = (chosen ?? "").split("+").filter(Boolean);
@@ -203,7 +125,7 @@ export function PlanView({
             key={table.id}
             table={table}
             chosen={chosenTables.has(table.id)}
-            buildRun={() => runAfterTapping(table)}
+            buildRun={() => nextSelection(zone.tables, chosen, table.id, guestCount)}
             onSelect={onSelect}
             onRefuse={onRefuse}
             onFocus={() => setReveal(table)}
@@ -298,23 +220,8 @@ function PickableTable({
 }) {
   const dragged = usePlanDragged();
 
-  /**
-   * A table too small on its own is still pickable, because it is a place to
-   * start or continue a row — that is the entire point of pushing tables
-   * together, and refusing the tap would leave the guest nothing to build with.
-   *
-   * Two things are still refused. **Somebody is already there**, in which case
-   * no part of it is anybody else's; and it is **kept back for a larger party**,
-   * which is the right-sizing rule and would be undone by a tap. That second one
-   * never collides with building a row: a table held back for a larger party is
-   * one that fits this party on its own, and stretches are only ever offered
-   * when nothing fits on its own.
-   */
-  const free = !(
-    table.occupied ||
-    table.unavailable === "out-of-service" ||
-    table.unavailable === "kept-for-larger"
-  );
+  /** Whether this table may be part of a row at all — see `canJoinRun`. */
+  const free = canJoinRun(table);
 
   const onActivate = () => {
     // Sliding the room past a table must never book it.

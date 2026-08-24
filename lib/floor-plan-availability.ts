@@ -532,6 +532,135 @@ export function inspectRun(tables: readonly TableOffer[]): {
 }
 
 /**
+ * The selection a tap on the plan leaves behind.
+ *
+ * Every tap is about the row, **including the first**. It starts the row with
+ * the one table tapped, extends it at either end, shortens it when an end table
+ * is tapped again, and otherwise starts again somewhere else.
+ *
+ * ## Why it lives here and not in the screen that draws the room
+ *
+ * It was written twice inside the plan and got it wrong twice — once by taking
+ * the whole prepared stretch on the first tap, so a guest could never begin a
+ * row of their own, and once by refusing to select a table that was "too small"
+ * on its own, which is every table anybody would ever want to push against
+ * another. Neither could be tested where it lived. It is a state machine over
+ * plan data with an answer that can be written down, so it is one here.
+ *
+ * `chosen` and the answer are the same shape the rest of the picker uses: table
+ * ids joined with `+`, in the order the tables stand, or `null` for nothing.
+ */
+export function nextSelection(
+  tables: readonly TableOffer[],
+  chosen: string | null,
+  tappedId: string,
+  guests: number,
+): string | null {
+  const byId = new Map(tables.map((table) => [table.id, table]));
+  const tapped = byId.get(tappedId);
+
+  if (!tapped || !canJoinRun(tapped)) {
+    return chosen;
+  }
+
+  const run = (chosen ?? "")
+    .split("+")
+    .filter(Boolean)
+    .map((id) => byId.get(id))
+    .filter((table): table is TableOffer => Boolean(table));
+
+  const ids = (of: readonly TableOffer[]) => of.map((table) => table.id).join("+") || null;
+
+  if (run.length === 0) {
+    return tapped.id;
+  }
+
+  const at = run.findIndex((table) => table.id === tapped.id);
+
+  // Either end of the row: let it go, the way anybody undoes the last thing
+  // they did. The row that is left still stands.
+  if (at === 0) {
+    return ids(run.slice(1));
+  }
+
+  if (at === run.length - 1) {
+    return ids(run.slice(0, -1));
+  }
+
+  // The middle of the row — not an end, so not something to remove without
+  // tearing the row in two. Start again from it instead.
+  if (at > 0) {
+    return tapped.id;
+  }
+
+  const extended = [
+    [tapped, ...run],
+    [...run, tapped],
+  ].find((candidate) => inspectRun(candidate).ok);
+
+  if (!extended) {
+    // Nowhere near the row: a guest changing their mind about where to sit.
+    return tapped.id;
+  }
+
+  /**
+   * Big enough already, so the row does not grow — and the selection is not
+   * thrown away either. Tapping the next table along when a party of six
+   * already has its six seats is a stray tap, and losing three chosen tables to
+   * one of those is what makes people start again from the beginning.
+   */
+  if (inspectRun(run).seats >= guests) {
+    return chosen;
+  }
+
+  return ids(inRoomOrder(extended));
+}
+
+/**
+ * A row turned to face the way the room is read.
+ *
+ * A row reads correctly from either end — 1, 2, 3 and 3, 2, 1 are the same
+ * three tables — so extending one produces a valid answer in either direction,
+ * and which one fell out depended on whether the tapped table went on the front
+ * or the back. That is invisible until a guest reads "Tables 3 + 2 + 1" on the
+ * summary, or staff read it off the sheet.
+ *
+ * Turned so every link runs `right` or `bottom`, which is left to right and top
+ * to bottom — the same order `rowThrough` walks a row in, so a row a guest taps
+ * out is written the same way as one the picker offered them.
+ */
+function inRoomOrder(tables: readonly TableOffer[]): readonly TableOffer[] {
+  if (tables.length < 2) {
+    return tables;
+  }
+
+  const side = (tables[0].neighbours ?? []).find((link) => link.tableId === tables[1].id)?.side;
+
+  return side === "left" || side === "top" ? [...tables].reverse() : tables;
+}
+
+/**
+ * Whether a table may be part of a row at all.
+ *
+ * "Too small" is emphatically **not** a reason to refuse: a table too small on
+ * its own is the entire reason to push tables together, and refusing it would
+ * leave a guest nothing to build with. What is refused is a table somebody is
+ * already at, one out of service, and one kept back for a larger party — that
+ * last being the right-sizing rule, which a tap would otherwise undo.
+ *
+ * The last of those never collides with building a row: a table held back for a
+ * larger party is one that fits this party on its own, and stretches are only
+ * ever offered when nothing fits on its own.
+ */
+export function canJoinRun(table: TableOffer): boolean {
+  return !(
+    table.occupied ||
+    table.unavailable === "out-of-service" ||
+    table.unavailable === "kept-for-larger"
+  );
+}
+
+/**
  * The tables behind a combination id, for the route that has to claim them.
  *
  * Resolved from the plan, like `findPlanTable` and for the same reason (rule

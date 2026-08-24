@@ -38,19 +38,24 @@ a tidy-up and is not.
 | 10 | What if the price changes after selection? | **Nothing changes on the booking**, including when somebody later edits that booking. The second half was not true until Gap 4 was fixed. |
 | 11 | Is the historical price preserved? | **Yes**, including the name — verified across a rename and a price rise. |
 
-## Gap 1 — there is no quantity, anywhere
+## Gap 1 — there is no quantity, anywhere — **deferred, deliberately**
 
 A promotion has `active`, `price` and `discountPercent`. It has no stock, cap, or
 per-evening allowance. **A promotion cannot be oversold because it cannot be limited**, so
 question 3 has no answer in this codebase rather than a good one.
 
-For the current business — hotel guests choosing a bottle with dinner — unlimited is a
-reasonable model, and the evening-level on/off switch is the only lever anyone has needed.
+**Decided at the freeze: not now.** For the business this was built for — hotel guests choosing
+a bottle with dinner — unlimited is the right model, and the evening-level on/off switch is the
+only lever anyone has ever needed. It is recorded here as a known absence rather than an
+oversight, so that nobody later reads the missing check as a bug and "fixes" it into a half
+implementation.
 
-For a SaaS this is a feature to design, not a bug to fix, and it is the one that will need
-care: a cap means concurrent guests racing for the last unit, which is the same shape as the
-seat accounting in `reservations.ts` and should reuse that lesson (a conditional update that
-claims the unit, never a read-then-write).
+When it does arrive, it is a feature to design rather than a check to add, and it is the one
+that will need care. A cap means concurrent guests racing for the last unit, which is exactly
+the shape of the seat accounting in `reservations.ts` — so it should reuse that lesson rather
+than rediscover it: **a conditional update that claims the unit, never a read-then-write.**
+The count belongs with the thing that claims it, not on the menu document; a catalogue is not
+a ledger.
 
 ## Gap 2 — a cancelled booking accepted a chargeable item — **fixed**
 

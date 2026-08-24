@@ -1138,8 +1138,14 @@ window, not the ones the arithmetic preferred — has no way to say so except by
 pointing at them. So the room is not only a set of buttons for prepared answers:
 tapping a table beside the ones already picked adds it to the row.
 
-A tap **extends** the row at either end, **shortens** it when the end table is
-tapped again, and otherwise **starts again** from the table tapped — pointing
+A tap **starts** the row when nothing is chosen — with that one table, and only
+that one. It first shipped taking the whole prepared stretch the table belonged
+to, which meant a guest could never begin a row of their own: the first tap
+answered the question for them. The prepared stretches are still there, named,
+in the list below.
+
+From there a tap **extends** the row at either end, **shortens** it when the end
+table is tapped again, and otherwise **starts again** from the table tapped — pointing
 across the room is a guest changing their mind, not a mistake to refuse. It will
 not extend a row that already seats the party: the guest should not have to be
 economical on the restaurant's behalf, but a party of four holding six tables is

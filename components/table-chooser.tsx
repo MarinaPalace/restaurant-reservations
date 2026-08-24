@@ -56,6 +56,24 @@ export function TableChooser({
 
   const zone = zones.find((entry) => entry.id === zoneId) ?? zones[0] ?? null;
 
+  /**
+   * The whole selection after a tap on the plan.
+   *
+   * Separate from `choose`, which toggles one prepared offer from the list. The
+   * plan works out the entire row a tap leaves behind — started, extended,
+   * shortened or begun again — so it hands back the answer rather than a thing
+   * to toggle.
+   */
+  const select = (next: string | null) => {
+    if (locked) {
+      setRefused("You are being seated with the booking you named, so the table is already decided.");
+      return;
+    }
+
+    onChoose(next);
+    setRefused("");
+  };
+
   const choose = (id: string) => {
     // Nothing to choose when the table came with the party being joined.
     if (locked) {
@@ -103,7 +121,7 @@ export function TableChooser({
         zone={zone}
         guestCount={guestCount}
         chosen={chosen}
-        onChoose={choose}
+        onSelect={select}
         onRefuse={(table) => setRefused(refusalSentence(table))}
       />
 

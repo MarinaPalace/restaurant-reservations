@@ -2,6 +2,13 @@ import { randomUUID } from "crypto";
 import { getDataFilePath, readJsonFile, writeJsonFile } from "@/lib/db/json-file";
 import { withStoreLock } from "@/lib/db/store-lock";
 import { DEFAULT_MENU, buildDefaultDates } from "@/lib/db/seed-data";
+import { toEveningOverrides, type EveningOverrides } from "@/lib/evening-features";
+import {
+  TableClaimError,
+  seatsToClaim,
+  tableNumberFrom,
+  type TableClaimRecord,
+} from "@/lib/services/table-claims";
 import {
   withRemainingSeats,
   type CancellationRecord,
@@ -9,6 +16,7 @@ import {
   type ReservationRecord,
   type RestaurantDateAvailability,
   type StoredRestaurantDate,
+  type TableSource,
 } from "@/types/booking";
 
 /**
@@ -22,6 +30,7 @@ import {
 const MENU_FILE = "menu.json";
 const DATES_FILE = "dates.json";
 const RESERVATIONS_FILE = "reservations.json";
+const TABLE_CLAIMS_FILE = "table-claims.json";
 
 async function readMenu(): Promise<MenuCourse[]> {
   const menu = await readJsonFile<MenuCourse[]>(getDataFilePath(MENU_FILE), []);
@@ -92,6 +101,9 @@ export async function upsertLocalDate(input: {
   serviceEndTime?: string;
   premium?: boolean;
   bookingCutoffHours?: number;
+  tableCutoffHours?: number;
+  /** Absent leaves whatever the evening already said; null clears it. */
+  features?: EveningOverrides | null;
 }): Promise<RestaurantDateAvailability> {
   return withStoreLock(async () => {
     const dates = await readDates();
@@ -108,6 +120,8 @@ export async function upsertLocalDate(input: {
             serviceEndTime: input.serviceEndTime,
             premium: input.premium ?? false,
             bookingCutoffHours: Math.max(0, Math.round(Number(input.bookingCutoffHours ?? 0))),
+            tableCutoffHours: Math.max(0, Math.round(Number(input.tableCutoffHours ?? 0))),
+            features: toEveningOverrides(input.features),
           }
         : {
             ...dates[index],
@@ -117,6 +131,14 @@ export async function upsertLocalDate(input: {
             serviceEndTime: input.serviceEndTime,
             premium: input.premium ?? false,
             bookingCutoffHours: Math.max(0, Math.round(Number(input.bookingCutoffHours ?? 0))),
+            tableCutoffHours: Math.max(0, Math.round(Number(input.tableCutoffHours ?? 0))),
+            /**
+             * Absent leaves what the evening already said, so a caller that
+             * knows nothing about overrides cannot silently clear them. Null
+             * is how the editor says "follow the restaurant again".
+             */
+            features:
+              input.features === undefined ? dates[index].features : toEveningOverrides(input.features),
           };
 
     if (index === -1) {
@@ -172,6 +194,16 @@ export async function createLocalReservation(input: {
   contact?: ReservationRecord["contact"];
   notes?: string;
   tableNumber?: string;
+  /**
+   * The tables this booking picked, resolved from the plan by the caller.
+   *
+   * Usually one. Several when they were pushed together for a party no single
+   * table could take — and then every seat of every one of them is claimed,
+   * because a merged table cannot be shared with a stranger.
+   */
+  tables?: { id: string; label: string; seats: number }[];
+  /** Who chose it. Only meaningful when there is a table. */
+  tableSource?: TableSource;
   tableGroupId?: string;
   kind?: ReservationRecord["kind"];
   guestName?: string;
@@ -191,6 +223,33 @@ export async function createLocalReservation(input: {
       return { ok: false, reason: "DATE_FULL" };
     }
 
+    /**
+     * The table, claimed inside the same lock as the seats.
+     *
+     * A refusal here leaves the seats untouched, because nothing has been
+     * written yet — the local store gets for free what Mongo has to unwind by
+     * hand.
+     */
+    let claims: TableClaimRecord[] | null = null;
+
+    if (input.tables?.length) {
+      claims = await readTableClaims();
+
+      // Thrown rather than returned, so both stores fail a taken table the
+      // same way and the route has one error to handle. Applied to the same
+      // in-memory list, so a party that fits on the first table and not the
+      // second takes neither.
+      for (const table of input.tables) {
+        applyTableClaim(claims, {
+          date: input.date,
+          tableId: table.id,
+          seats: table.seats,
+          guests: seatsToClaim(input.tables, table, input.guestCount),
+          reservationNumber: input.reservationNumber,
+        });
+      }
+    }
+
     const timestamp = new Date().toISOString();
     const reservation: ReservationRecord = {
       reservationNumber: input.reservationNumber,
@@ -207,10 +266,16 @@ export async function createLocalReservation(input: {
       time: dateEntry.serviceTime,
       endTime: dateEntry.serviceEndTime,
       notes: input.notes,
-      tableNumber: input.tableNumber,
+      tableNumber: tableNumberFrom(input.tables) ?? input.tableNumber,
+      tableId: input.tables?.[0]?.id,
+      tableIds: (input.tables?.length ?? 0) > 1 ? input.tables?.map((table) => table.id) : undefined,
+      // Only when there is a table to attribute.
+      tableSource: tableNumberFrom(input.tables) ?? input.tableNumber ? input.tableSource : undefined,
+      tableSetAt: tableNumberFrom(input.tables) ?? input.tableNumber ? timestamp : undefined,
       tableGroupId: input.tableGroupId,
       status: "confirmed",
       passKeyId: input.passKeyId,
+      version: 1,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -221,6 +286,10 @@ export async function createLocalReservation(input: {
 
     await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
     await writeJsonFile(getDataFilePath(DATES_FILE), dates);
+
+    if (claims) {
+      await writeJsonFile(getDataFilePath(TABLE_CLAIMS_FILE), claims);
+    }
 
     return { ok: true, reservation };
   });
@@ -247,6 +316,7 @@ export async function cancelLocalReservation(
       ...reservation,
       status: "cancelled",
       cancellation,
+      version: nextVersion(reservation),
       updatedAt: new Date().toISOString(),
     };
     reservations[index] = cancelled;
@@ -309,6 +379,7 @@ export async function restoreLocalReservation(reservationNumber: string): Promis
       // The cancellation is undone, so its snapshot goes with it. The audit
       // log keeps both the cancellation and this restore.
       cancellation: undefined,
+      version: nextVersion(reservation),
       updatedAt: new Date().toISOString(),
     };
 
@@ -335,6 +406,42 @@ export async function findLocalReservationsByPassKey(passKeyId: string): Promise
  * Records that a reservation now anchors a shared table. The first booker's
  * own number becomes the group id, so guests can read it out to each other.
  */
+/**
+ * Puts every booking of a table group at the same tables.
+ *
+ * The local half of `spreadTableAcrossGroup`: a party joining another and
+ * pushing a table against theirs leaves the two bookings naming different
+ * furniture when they are sitting at one table.
+ */
+export async function setLocalGroupTables(
+  tableGroupId: string,
+  tableIds: string[],
+  tableNumber: string,
+) {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    let touched = false;
+
+    for (let index = 0; index < reservations.length; index += 1) {
+      if (reservations[index].tableGroupId !== tableGroupId) {
+        continue;
+      }
+
+      reservations[index] = {
+        ...reservations[index],
+        tableNumber,
+        tableId: tableIds[0],
+        tableIds: tableIds.length > 1 ? tableIds : undefined,
+      };
+      touched = true;
+    }
+
+    if (touched) {
+      await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    }
+  });
+}
+
 export async function setLocalReservationGroup(reservationNumber: string, tableGroupId: string) {
   return withStoreLock(async () => {
     const reservations = await readReservations();
@@ -350,7 +457,75 @@ export async function setLocalReservationGroup(reservationNumber: string, tableG
 }
 
 /** Sets the table number on a reservation and everyone sharing its table. */
-export async function setLocalReservationTable(reservationNumber: string, tableNumber: string) {
+/**
+ * The version a booking becomes when it is written.
+ *
+ * Counts recorded writes, creation included, and matches what Mongo's
+ * `$inc: { version: 1 }` produces on the other store — including for a booking
+ * written before versions existed, which has no counter and so lands on 1 with
+ * its next write. That looks like a creation and is not one; what makes it
+ * harmless is that the audit entry for that same write carries the same number,
+ * and the pairing of entry to record is the whole job. `types/booking.ts` says
+ * the same thing where the field is declared.
+ */
+function nextVersion(entry: Pick<ReservationRecord, "version">): number {
+  return (entry.version ?? 0) + 1;
+}
+
+/**
+ * The plan table on one booking — id, label and who chose it — or none.
+ *
+ * Only this booking, unlike `setLocalReservationTable`: a guest changing their
+ * own table must not move the party they are sharing with, and the route
+ * refuses the change for a shared booking rather than relying on this.
+ */
+export async function setLocalReservationPlanTable(
+  reservationNumber: string,
+  tables: readonly { id: string; label: string; seats: number }[],
+  source: TableSource,
+): Promise<ReservationRecord | null> {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    const index = reservations.findIndex((entry) => entry.reservationNumber === reservationNumber);
+    if (index === -1) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    const existing = reservations[index];
+
+    reservations[index] = tables.length
+      ? {
+          ...existing,
+          tableId: tables[0].id,
+          tableIds: tables.length > 1 ? tables.map((table) => table.id) : undefined,
+          tableNumber: tableNumberFrom(tables),
+          tableSource: source,
+          tableSetAt: now,
+          version: nextVersion(existing),
+          updatedAt: now,
+        }
+      : {
+          ...existing,
+          tableId: undefined,
+          tableIds: undefined,
+          tableNumber: undefined,
+          tableSource: undefined,
+          tableSetAt: undefined,
+          version: nextVersion(existing),
+          updatedAt: now,
+        };
+
+    await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    return reservations[index];
+  });
+}
+
+export async function setLocalReservationTable(
+  reservationNumber: string,
+  tableNumber: string,
+  source: TableSource,
+) {
   return withStoreLock(async () => {
     const reservations = await readReservations();
     const target = reservations.find((entry) => entry.reservationNumber === reservationNumber);
@@ -368,7 +543,19 @@ export async function setLocalReservationTable(reservationNumber: string, tableN
         : entry.reservationNumber === reservationNumber;
 
       if (inGroup) {
-        reservations[index] = { ...entry, tableNumber, updatedAt: new Date().toISOString() };
+        const now = new Date().toISOString();
+        // Set together or cleared together — a table with no number cannot have
+        // been chosen by anybody.
+        reservations[index] = tableNumber.trim()
+          ? { ...entry, tableNumber, tableSource: source, tableSetAt: now, version: nextVersion(entry), updatedAt: now }
+          : {
+              ...entry,
+              tableNumber,
+              tableSource: undefined,
+              tableSetAt: undefined,
+              version: nextVersion(entry),
+              updatedAt: now,
+            };
         updated.push(reservations[index]);
       }
     }
@@ -390,7 +577,12 @@ export async function updateLocalReservationSelections(
       return null;
     }
 
-    reservations[index] = { ...reservations[index], selections, updatedAt: new Date().toISOString() };
+    reservations[index] = {
+      ...reservations[index],
+      selections,
+      version: nextVersion(reservations[index]),
+      updatedAt: new Date().toISOString(),
+    };
     await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
     return reservations[index];
   });
@@ -407,9 +599,219 @@ export async function updateLocalReservationAddOns(
       return null;
     }
 
-    reservations[index] = { ...reservations[index], addOns, updatedAt: new Date().toISOString() };
+    reservations[index] = {
+      ...reservations[index],
+      addOns,
+      version: nextVersion(reservations[index]),
+      updatedAt: new Date().toISOString(),
+    };
     await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
     return reservations[index];
+  });
+}
+
+/** The staff-only note. Empty clears it, so unset has one representation. */
+/* ------------------------------------------------------------------ *
+ * Table claims
+ * ------------------------------------------------------------------ */
+
+/**
+ * The local mirror of `lib/services/table-claims.ts`.
+ *
+ * Everything happens **inside the store lock**, which is this store's
+ * equivalent of the conditional update Mongo does: the read and the write
+ * cannot be interleaved by another claim, so two parties racing for the last
+ * place at a table cannot both be told yes.
+ */
+export async function claimLocalTable(input: {
+  date: string;
+  tableId: string;
+  seats: number;
+  guests: number;
+  reservationNumber: string;
+  whole?: boolean;
+  joiningWith?: string;
+}): Promise<TableClaimRecord> {
+  return withStoreLock(async () => {
+    const claims = await readTableClaims();
+    const next = applyTableClaim(claims, input);
+    await writeJsonFile(getDataFilePath(TABLE_CLAIMS_FILE), claims);
+    return next;
+  });
+}
+
+/**
+ * The claim itself, without taking the lock.
+ *
+ * Split out because `createLocalReservation` already holds it, and
+ * `withStoreLock` is a plain mutex rather than a reentrant one — calling the
+ * locking version from inside it would deadlock the whole store rather than
+ * fail. Booking a table locally is therefore one lock covering the seats *and*
+ * the table, which is stronger than the two separate conditional updates Mongo
+ * needs and is the same guarantee.
+ *
+ * Mutates `claims` in place; the caller writes the file.
+ */
+function applyTableClaim(
+  claims: TableClaimRecord[],
+  input: {
+    date: string;
+    tableId: string;
+    seats: number;
+    guests: number;
+    reservationNumber: string;
+    whole?: boolean;
+    joiningWith?: string;
+  },
+): TableClaimRecord {
+  const index = claims.findIndex(
+    (claim) => claim.date === input.date && claim.tableId === input.tableId,
+  );
+  const existing = index === -1 ? null : claims[index];
+
+  // Already on this claim: the same booking asking twice must not be counted
+  // twice, which is what `$addToSet` and the `$ne` filter buy on the Mongo path.
+  if (existing?.reservationNumbers.includes(input.reservationNumber)) {
+    return existing;
+  }
+
+  const seated = existing?.guests ?? 0;
+
+  /**
+   * One table of a row pushed together. Taken entirely — nobody can be sold a
+   * seat at a table shoved against somebody's dinner — which is said by
+   * `wholeFor` rather than by inflating the count of who is sitting there.
+   *
+   * A table somebody else is at can only be taken this way when it belongs to
+   * the party being sat with, mirroring the conditional update on the Mongo
+   * path.
+   */
+  if (input.whole) {
+    const joinable =
+      !existing ||
+      (input.joiningWith !== undefined &&
+        existing.reservationNumbers.includes(input.joiningWith));
+
+    if (!joinable) {
+      throw new TableClaimError("TABLE_TAKEN");
+    }
+
+    const next: TableClaimRecord = {
+      date: input.date,
+      tableId: input.tableId,
+      guests: seated + input.guests,
+      reservationNumbers: [...(existing?.reservationNumbers ?? []), input.reservationNumber],
+      wholeFor: [...(existing?.wholeFor ?? []), input.reservationNumber],
+    };
+
+    if (index === -1) {
+      claims.push(next);
+    } else {
+      claims[index] = next;
+    }
+
+    return next;
+  }
+
+  // Held whole by somebody else: there is no seat at it to be had, whatever
+  // the count says.
+  if ((existing?.wholeFor?.length ?? 0) > 0) {
+    throw new TableClaimError("TABLE_TAKEN");
+  }
+
+  if (seated + input.guests > input.seats) {
+    throw new TableClaimError(input.guests > input.seats ? "TABLE_TOO_SMALL" : "TABLE_TAKEN");
+  }
+
+  const next: TableClaimRecord = {
+    date: input.date,
+    tableId: input.tableId,
+    guests: seated + input.guests,
+    reservationNumbers: [...(existing?.reservationNumbers ?? []), input.reservationNumber],
+    wholeFor: existing?.wholeFor ?? [],
+  };
+
+  if (index === -1) {
+    claims.push(next);
+  } else {
+    claims[index] = next;
+  }
+
+  return next;
+}
+
+export async function releaseLocalTable(input: {
+  date: string;
+  tableId: string;
+  guests: number;
+  reservationNumber: string;
+}): Promise<void> {
+  await withStoreLock(async () => {
+    const claims = await readTableClaims();
+    const index = claims.findIndex(
+      (claim) => claim.date === input.date && claim.tableId === input.tableId,
+    );
+
+    // Idempotent: a booking that is not on the claim leaves it alone rather
+    // than decrementing a table somebody else is sitting at.
+    if (index === -1 || !claims[index].reservationNumbers.includes(input.reservationNumber)) {
+      return;
+    }
+
+    const remaining = claims[index].reservationNumbers.filter(
+      (entry) => entry !== input.reservationNumber,
+    );
+
+    if (remaining.length === 0) {
+      claims.splice(index, 1);
+    } else {
+      claims[index] = {
+        ...claims[index],
+        guests: Math.max(0, claims[index].guests - input.guests),
+        reservationNumbers: remaining,
+        wholeFor: (claims[index].wholeFor ?? []).filter(
+          (entry) => entry !== input.reservationNumber,
+        ),
+      };
+    }
+
+    await writeJsonFile(getDataFilePath(TABLE_CLAIMS_FILE), claims);
+  });
+}
+
+export async function listLocalTableClaims(date: string): Promise<TableClaimRecord[]> {
+  const claims = await readTableClaims();
+  return claims.filter((claim) => claim.date === date);
+}
+
+async function readTableClaims(): Promise<TableClaimRecord[]> {
+  const claims = await readJsonFile<TableClaimRecord[]>(getDataFilePath(TABLE_CLAIMS_FILE), []);
+  return Array.isArray(claims) ? claims : [];
+}
+
+export async function updateLocalReservationStaffNote(reservationNumber: string, note: string) {
+  return withStoreLock(async () => {
+    const reservations = await readReservations();
+    const index = reservations.findIndex((entry) => entry.reservationNumber === reservationNumber);
+    if (index === -1) {
+      return null;
+    }
+
+    const next = {
+      ...reservations[index],
+      version: nextVersion(reservations[index]),
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (note) {
+      next.staffNote = note;
+    } else {
+      delete next.staffNote;
+    }
+
+    reservations[index] = next;
+    await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
+    return next;
   });
 }
 
@@ -424,7 +826,11 @@ export async function updateLocalReservationAttendance(
       return null;
     }
 
-    const next = { ...reservations[index], updatedAt: new Date().toISOString() };
+    const next = {
+      ...reservations[index],
+      version: nextVersion(reservations[index]),
+      updatedAt: new Date().toISOString(),
+    };
     if (attendance) {
       next.attendance = attendance;
     } else {
@@ -470,6 +876,7 @@ export async function updateLocalReservationCourseServed(
     const next: ReservationRecord = {
       ...current,
       service: { ...current.service, servedAt: servedMap },
+      version: nextVersion(current),
       updatedAt: new Date().toISOString(),
     };
 
@@ -514,6 +921,7 @@ export async function updateLocalReservationGuestServed(
     const next: ReservationRecord = {
       ...current,
       service: { ...current.service, servedGuests: byCourse },
+      version: nextVersion(current),
       updatedAt: new Date().toISOString(),
     };
 
@@ -559,6 +967,7 @@ export async function updateLocalReservationCourseGuests(
     const next: ReservationRecord = {
       ...current,
       service: { servedAt: legacy, servedGuests: byCourse },
+      version: nextVersion(current),
       updatedAt: new Date().toISOString(),
     };
 
@@ -609,6 +1018,8 @@ export type LocalReservationPatch = {
   notes?: string;
   contact?: ReservationRecord["contact"];
   tableNumber?: string;
+  /** Who set that table. Ignored unless `tableNumber` is being set. */
+  tableSource?: TableSource;
   /**
    * Which table group this booking now belongs to, already resolved by the
    * service — `null` to take it off one, absent to leave it alone. Resolved
@@ -705,6 +1116,13 @@ export async function updateLocalReservationDetails(
       notes: patch.notes ?? existing.notes,
       contact: patch.contact ?? existing.contact,
       tableNumber: patch.tableNumber ?? existing.tableNumber,
+      // Set together or cleared together, so the source can never describe a
+      // table that is no longer there.
+      ...(patch.tableNumber === undefined
+        ? {}
+        : patch.tableNumber.trim()
+          ? { tableSource: patch.tableSource ?? "staff", tableSetAt: new Date().toISOString() }
+          : { tableSource: undefined, tableSetAt: undefined }),
       // null means it was taken off the table, which is a real change and so
       // cannot fall back to the group it was on.
       tableGroupId:
@@ -712,6 +1130,7 @@ export async function updateLocalReservationDetails(
       // Moving evenings adopts that evening's sitting times.
       time: dateChanged ? targetDate?.serviceTime : existing.time,
       endTime: dateChanged ? targetDate?.serviceEndTime : existing.endTime,
+      version: nextVersion(existing),
       updatedAt: new Date().toISOString(),
     };
 

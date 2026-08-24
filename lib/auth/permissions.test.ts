@@ -5,8 +5,9 @@ import {
   hasPermission,
   permissionsOf,
   sanitizePermissions,
+  tableSourceOfUser,
 } from "@/lib/auth/permissions";
-import { STAFF_PERMISSIONS, type StaffPermission } from "@/types/booking";
+import { STAFF_PERMISSIONS, type StaffPermission, type StaffUserRecord } from "@/types/booking";
 
 const staff = (permissions: StaffPermission[]) => ({ role: "staff" as const, permissions });
 const admin = { role: "admin" as const, permissions: [] };
@@ -105,5 +106,41 @@ describe("the permission catalogue", () => {
 
   it("reserves deleting reservations for administrators", () => {
     expect(ADMIN_ONLY_PERMISSIONS).toContain("reservations:delete");
+  });
+});
+
+describe("who a table was chosen by", () => {
+  const account = (role: "admin" | "staff"): StaffUserRecord => ({
+    id: "u1",
+    username: "someone",
+    name: "Someone",
+    role,
+    permissions: [],
+    active: true,
+  });
+
+  it("calls an administrator the owner and everybody else staff", () => {
+    expect(tableSourceOfUser(account("admin"))).toBe("owner");
+    expect(tableSourceOfUser(account("staff"))).toBe("staff");
+  });
+
+  it("never answers `guest`, whoever is signed in", () => {
+    // A guest's pick is written by the guest flow, not by an account. If this
+    // could return "guest" then a member of staff moving a table would leave it
+    // looking like the guest's own choice — which is the one thing the mark is
+    // for.
+    expect(["owner", "staff"]).toContain(tableSourceOfUser(account("admin")));
+    expect(["owner", "staff"]).toContain(tableSourceOfUser(account("staff")));
+  });
+});
+
+describe("reading the log", () => {
+  it("is a permission of its own, and one an administrator holds implicitly", () => {
+    expect(STAFF_PERMISSIONS).toContain("audit:read");
+    expect(hasPermission(admin, "audit:read")).toBe(true);
+  });
+
+  it("is withheld from a floor account that was only given the service board", () => {
+    expect(hasPermission(staff(["service:record"]), "audit:read")).toBe(false);
   });
 });

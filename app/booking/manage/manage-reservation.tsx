@@ -12,6 +12,7 @@ import { NONE_OPTION_ID, NONE_OPTION_NAME } from "@/lib/menu-selection";
 import { useSearchParams } from "next/navigation";
 import { useBookingSession } from "@/hooks/use-booking-session";
 import { useI18n } from "@/components/i18n-provider";
+import { TableChange } from "@/app/booking/manage/table-change";
 import { PromoSummary } from "@/components/promo-summary";
 import { localizeMenuCatalog } from "@/lib/menu-localization";
 import type { Currency } from "@/lib/money";
@@ -27,6 +28,12 @@ type Entry = {
   canModify: boolean;
   modificationDeadline: string;
   modificationBlockedReason: string | null;
+  /**
+   * Whether this evening is still offering promotions
+   * (`lib/evening-features.ts`). Absent on a response from before this
+   * existed, which reads as open — the same direction the server takes.
+   */
+  promotionsOpen?: boolean;
 };
 
 type Loaded = {
@@ -360,6 +367,9 @@ export function ManageReservation({
   }
 
   const { reservation, canModify, modificationDeadline, modificationBlockedReason } = activeEntry;
+  // Closed for this evening means the swap goes too, since the route refuses
+  // it. Giving a promotion back is still possible: see the route for why.
+  const promotionsOpen = activeEntry.promotionsOpen !== false;
   const guestIndexes = Array.from({ length: Math.max(reservation.guestCount, 1) }, (_, index) => index);
   const isCancelled = reservation.status === "cancelled";
 
@@ -466,7 +476,7 @@ export function ManageReservation({
          * dish choices follow.
          */
         editing={
-          canModify && !isCancelled
+          canModify && !isCancelled && promotionsOpen
             ? {
                 groups: localizeMenuCatalog(promoGroups, language),
                 passKey: normalizePassKey(passKey),
@@ -478,6 +488,28 @@ export function ManageReservation({
             : undefined
         }
       />
+
+      {/*
+        The table, and changing it. After the dishes because that is the order
+        the guest chose them in, and because most visits to this screen are
+        about the food.
+      */}
+      {!isCancelled ? (
+        <TableChange
+          passKey={normalizePassKey(passKey)}
+          reservation={reservation}
+          canModify={canModify}
+          label={t.common.table}
+          onSaved={(updated) => {
+            setLoaded(replaceEntry(loaded, updated));
+            setNotice(
+              updated.tableNumber
+                ? `Your table is now ${updated.tableNumber}.`
+                : "Your table has been given back — we will seat you.",
+            );
+          }}
+        />
+      ) : null}
 
       {editing ? (
         <div className="mt-6 space-y-5">

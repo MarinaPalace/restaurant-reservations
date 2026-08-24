@@ -10,6 +10,14 @@ export const BOOKING_STEPS = [
   { id: "room", href: "/booking" },
   { id: "guests", href: "/booking/guests" },
   { id: "date", href: "/booking/date" },
+  /**
+   * Shown on every flow, walked only by some. An evening with table selection
+   * off sends the guest from the date straight to the menu, and the rail is a
+   * fixed rail: making it grow and shrink between evenings would move the step
+   * somebody is looking at, and the one thing worse than an extra label is a
+   * progress bar that goes backwards.
+   */
+  { id: "table", href: "/booking/table" },
   { id: "menu", href: "/booking/menu" },
   { id: "summary", href: "/booking/summary" },
 ] as const;

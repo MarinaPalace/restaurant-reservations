@@ -5,11 +5,27 @@ import { MonthCalendar, type DayState } from "@/components/month-calendar";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, Badge, EmptyState } from "@/components/ui/feedback";
-import { Field, Input } from "@/components/ui/field";
+import { Field, Input, Select } from "@/components/ui/field";
+import { InfoTip } from "@/components/ui/tooltip";
+import { cx } from "@/components/ui/utils";
 import { KitchenReport } from "@/app/admin/kitchen-report";
 import { formatLongDate, isPastDateKey, isValidDateKey, startOfMonth } from "@/lib/date";
-import { canGuestBookDate, getBookingDeadline } from "@/lib/reservation-policy";
+import {
+  canGuestBookDate,
+  getBookingDeadline,
+  getTableSelectionDeadline,
+} from "@/lib/reservation-policy";
 import { toRestaurantDatePayload } from "@/lib/restaurant-date-form";
+import {
+  EVENING_FEATURES,
+  EVENING_FEATURE_DESCRIPTIONS,
+  EVENING_FEATURE_LABELS,
+  hasOverrides,
+  type EveningDefaults,
+  type EveningFeature,
+} from "@/lib/evening-features";
+import { EVENING_FEATURE_PERMISSIONS } from "@/lib/auth/permissions";
+import { FLOOR_PLAN_MODES, FLOOR_PLAN_MODE_LABELS, type FloorPlanMode } from "@/lib/floor-plan";
 import { compareRoomNumbers } from "@/lib/room";
 import {
   menuKindOf,
@@ -38,6 +54,26 @@ function describeCutoff(entry: RestaurantDateAvailability) {
   return `Guests may book until ${closes}. Reception can always add a booking, whatever this says.`;
 }
 
+/**
+ * When guests stop choosing tables, in words.
+ *
+ * Off is the normal answer and says so plainly: a restaurant that lays the
+ * floor as bookings come in has no reason to think about this, and a control
+ * that reads "0 hours before" would make it look like a decision somebody has
+ * to make.
+ */
+function describeTableCutoff(entry: RestaurantDateAvailability) {
+  const deadline = getTableSelectionDeadline(entry);
+
+  if (!deadline) {
+    return "Guests may choose a table for as long as they can change the booking.";
+  }
+
+  const clock = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(deadline);
+
+  return `Guests may choose a table until ${clock}, after which the room is yours to lay out. Reception can still move anybody.`;
+}
+
 export function AdminDateManager({
   initialDates,
   initialReservations,
@@ -50,6 +86,7 @@ export function AdminDateManager({
   permissions,
   /** Which clock every time on these screens is quoted on. */
   initialTimeZone,
+  initialEveningDefaults,
   /**
    * Set when the configured zone disagrees with the server's own clock, which
    * would mislabel every time by the difference. Worked out on the server,
@@ -64,6 +101,8 @@ export function AdminDateManager({
   /** What the signed-in account may do; the API enforces the same list. */
   permissions: StaffPermission[];
   initialTimeZone: TimeZone;
+  /** What the restaurant does on an evening that does not say otherwise. */
+  initialEveningDefaults: EveningDefaults;
   clockMismatch: string | null;
 }) {
   const [timeZone, setTimeZone] = useState<TimeZone>(initialTimeZone);
@@ -224,6 +263,48 @@ export function AdminDateManager({
       tone: entry.remainingSeats > 0 ? "positive" : "default",
       premium: entry.premium,
     };
+  };
+
+  const can = (permission: StaffPermission) => permissions.includes(permission);
+
+  /**
+   * The restaurant-wide half, held here so the per-evening controls can say
+   * what "Follow the restaurant" currently means. Saved on its own, the moment
+   * it is changed — a half-edited evening should not have to be saved to change
+   * what the restaurant normally does.
+   */
+  const [eveningDefaults, setEveningDefaults] = useState(initialEveningDefaults);
+  const [savingDefaults, setSavingDefaults] = useState(false);
+
+  const saveEveningDefault = async (patch: Partial<EveningDefaults>) => {
+    const previous = eveningDefaults;
+    setEveningDefaults({ ...previous, ...patch });
+    setSavingDefaults(true);
+
+    try {
+      const response = await fetch("/api/admin/evening-defaults", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      const body = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        // Put the previous answer back, so the control never shows a policy
+        // that was not stored.
+        setEveningDefaults(previous);
+        setError(body?.error ?? "Unable to save the setting.");
+        return;
+      }
+
+      setEveningDefaults(body);
+      setError("");
+    } catch {
+      setEveningDefaults(previous);
+      setError("Unable to save the setting.");
+    } finally {
+      setSavingDefaults(false);
+    }
   };
 
   const patchSelected = (patch: Partial<RestaurantDateAvailability>) => {
@@ -606,75 +687,110 @@ export function AdminDateManager({
           <div className="rounded-control border border-line bg-surface-muted p-4" data-print="hide">
             {selectedEntry ? (
               <>
-                <p className="eyebrow">Selected date</p>
-                <h3 className="mt-2 text-xl font-semibold text-ink">
-                  <time dateTime={selectedEntry.date}>{formatLongDate(selectedEntry.date)}</time>
-                </h3>
+                <div className="flex items-baseline justify-between gap-2">
+                  <h3 className="text-base font-semibold text-ink">
+                    <time dateTime={selectedEntry.date}>{formatLongDate(selectedEntry.date)}</time>
+                  </h3>
+                  <span className="text-xs text-ink-subtle">
+                    {selectedEntry.reservedSeats}/{selectedEntry.capacity} seats
+                  </span>
+                </div>
 
-                <div className="mt-5 space-y-4">
-                  <label className="flex min-h-11 items-center justify-between gap-4 rounded-control border border-line-strong bg-surface px-4 py-3 text-sm font-medium text-ink">
-                    <span>Open for reservations</span>
-                    <input
-                      type="checkbox"
-                      className="size-5 accent-[var(--primary)]"
-                      checked={selectedEntry.isOpen}
-                      onChange={(event) => patchSelected({ isOpen: event.target.checked })}
-                    />
-                  </label>
-
-                  {/* A premium evening leaves the everyday flow entirely and
-                      becomes selectable only from the invitation link. */}
-                  <label className="flex min-h-11 items-center justify-between gap-4 rounded-control border border-gold/60 bg-accent-soft px-4 py-3 text-sm font-medium text-accent-ink">
-                    <span className="flex items-center gap-2">
-                      <svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" className="size-4 text-gold">
-                        <path d="M12 2.6l2.7 5.9 6.4.7-4.8 4.3 1.3 6.3L12 16.7 6.4 19.8l1.3-6.3L2.9 9.2l6.4-.7z" />
-                      </svg>
-                      Invitation only (premium menu)
-                    </span>
-                    <input
-                      type="checkbox"
-                      className="size-5 accent-[var(--primary)]"
-                      checked={Boolean(selectedEntry.premium)}
-                      onChange={(event) => patchSelected({ premium: event.target.checked })}
-                    />
-                  </label>
-
-                  <Field
-                    label="Total seats"
-                    hint={`${selectedEntry.reservedSeats} already reserved`}
-                    error={
-                      selectedEntry.capacity < selectedEntry.reservedSeats
-                        ? "Below the number of seats already reserved."
-                        : undefined
-                    }
-                  >
-                    {(fieldProps) => (
-                      <Input
-                        {...fieldProps}
-                        type="number"
-                        min={0}
-                        inputMode="numeric"
-                        value={selectedEntry.capacity}
-                        onChange={(event) => patchSelected({ capacity: Number(event.target.value || 0) })}
+                <div className="mt-3 space-y-2.5">
+                  {/*
+                    The two switches that decide whether the evening exists at
+                    all, side by side. Compact rows rather than full-width
+                    cards: they are read at a glance far more often than they
+                    are changed.
+                  */}
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <label className="flex min-h-9 cursor-pointer items-center justify-between gap-2 rounded-control border border-line-strong bg-surface px-2.5 py-1.5">
+                      <span className="flex items-center gap-1.5 text-sm font-medium text-ink">
+                        Open
+                        <InfoTip label="About open for reservations">
+                          Closed keeps the evening on the calendar and takes it out of the booking flow. Bookings
+                          already taken are untouched.
+                        </InfoTip>
+                      </span>
+                      <input
+                        type="checkbox"
+                        className="size-4 accent-[var(--primary)]"
+                        checked={selectedEntry.isOpen}
+                        onChange={(event) => patchSelected({ isOpen: event.target.checked })}
                       />
-                    )}
-                  </Field>
+                    </label>
 
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <Field label="Arrival time" hint="Everyone is seated at this time.">
+                    <label className="flex min-h-9 cursor-pointer items-center justify-between gap-2 rounded-control border border-gold/60 bg-accent-soft px-2.5 py-1.5">
+                      <span className="flex items-center gap-1.5 text-sm font-medium text-accent-ink">
+                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" className="size-3.5 text-gold">
+                          <path d="M12 2.6l2.7 5.9 6.4.7-4.8 4.3 1.3 6.3L12 16.7 6.4 19.8l1.3-6.3L2.9 9.2l6.4-.7z" />
+                        </svg>
+                        Invitation
+                        <InfoTip label="About invitation only" align="end">
+                          An invitation evening leaves the everyday flow entirely: it is hidden from hotel guests,
+                          bookable only at /premium, and served from the premium menu.
+                        </InfoTip>
+                      </span>
+                      <input
+                        type="checkbox"
+                        className="size-4 accent-[var(--primary)]"
+                        checked={Boolean(selectedEntry.premium)}
+                        onChange={(event) => patchSelected({ premium: event.target.checked })}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <Field
+                      label="Seats"
+                      compact
+                      hint={`${selectedEntry.reservedSeats} taken`}
+                      tip="How many people the room can take this evening. Lowering it below what is already booked is refused — the seats are held."
+                      error={
+                        selectedEntry.capacity < selectedEntry.reservedSeats
+                          ? "Below what is already reserved."
+                          : undefined
+                      }
+                    >
                       {(fieldProps) => (
                         <Input
                           {...fieldProps}
+                          compact
+                          type="number"
+                          min={0}
+                          inputMode="numeric"
+                          value={selectedEntry.capacity}
+                          onChange={(event) => patchSelected({ capacity: Number(event.target.value || 0) })}
+                        />
+                      )}
+                    </Field>
+
+                    <Field
+                      label="Arrival"
+                      compact
+                      tip="Everyone is seated at this time. It is copied onto each booking made for this evening, and it is what the calendar reminder says."
+                    >
+                      {(fieldProps) => (
+                        <Input
+                          {...fieldProps}
+                          compact
                           type="time"
                           value={selectedEntry.serviceTime ?? ""}
                           onChange={(event) => patchSelected({ serviceTime: event.target.value })}
                         />
                       )}
                     </Field>
-                    <Field label="Service ends" hint="Used for the calendar reminder.">
+
+                    <Field
+                      label="Ends"
+                      compact
+                      tipAlign="end"
+                      tip="When the sitting finishes. Used for the calendar reminder the guest adds, and nothing else."
+                    >
                       {(fieldProps) => (
                         <Input
                           {...fieldProps}
+                          compact
                           type="time"
                           value={selectedEntry.serviceEndTime ?? ""}
                           onChange={(event) => patchSelected({ serviceEndTime: event.target.value })}
@@ -684,46 +800,27 @@ export function AdminDateManager({
                   </div>
 
                   {/*
-                    Per evening, because it is not one number: a quiet Tuesday
-                    can take a booking an hour before service and a full
-                    Saturday cannot. Reception is never bound by it, and the
-                    hint says so — otherwise the first thing anyone does with a
-                    cutoff is worry they have locked themselves out.
+                    Everything below is set once and then left alone, so it is
+                    folded away — but **only when it has nothing to say**. An
+                    evening carrying a cutoff or its own switches opens with the
+                    panel, because hiding a setting that is not at its default
+                    is how somebody comes to wonder why one Thursday behaves
+                    differently and finds nothing on the screen to explain it.
                   */}
-                  <Field
-                    label="Guest bookings close"
-                    hint={describeCutoff(selectedEntry)}
-                  >
-                    {(fieldProps) => (
-                      <div className="flex items-center gap-2">
-                        <Input
-                          {...fieldProps}
-                          type="number"
-                          min={0}
-                          max={240}
-                          step={1}
-                          inputMode="numeric"
-                          className="w-28"
-                          value={selectedEntry.bookingCutoffHours ?? 0}
-                          onChange={(event) =>
-                            patchSelected({
-                              bookingCutoffHours: Math.max(
-                                0,
-                                Math.min(240, Math.round(Number(event.target.value) || 0)),
-                              ),
-                            })
-                          }
-                        />
-                        <span className="text-sm text-ink-muted">hours before the sitting</span>
-                      </div>
-                    )}
-                  </Field>
+                  <AdvancedEvening
+                    entry={selectedEntry}
+                    defaults={eveningDefaults}
+                    can={can}
+                    savingDefaults={savingDefaults}
+                    onPatch={patchSelected}
+                    onChangeDefault={saveEveningDefault}
+                  />
 
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     <Badge tone={selectedEntry.isOpen ? "success" : "info"}>
-                      {selectedEntry.isOpen ? `${selectedEntry.remainingSeats} free seats` : "Closed"}
+                      {selectedEntry.isOpen ? `${selectedEntry.remainingSeats} free` : "Closed"}
                     </Badge>
-                    <Badge tone="info">{selectedEntry.reservedSeats} reserved</Badge>
+                    {hasOverrides(selectedEntry.features) ? <Badge tone="warning">Own settings</Badge> : null}
                   </div>
 
                   <Button className="w-full" onClick={saveDate} loading={saving} loadingLabel="Saving…">
@@ -765,6 +862,305 @@ export function AdminDateManager({
         permissions={permissions}
         loading={loadingDay}
       />
+    </div>
+  );
+}
+
+/**
+ * The settings an evening is given once and then left alone — folded away.
+ *
+ * ## Why folded, and when it refuses to fold
+ *
+ * The panel is opened dozens of times a day to change a seat count or a time.
+ * The cutoff and the feature switches are set on the rare evening that wants
+ * them and never touched again, so making everybody scroll past them is a cost
+ * paid every day for a decision taken once.
+ *
+ * But it opens **already expanded whenever this evening has anything to say**.
+ * Hiding a setting that is not at its default is how somebody comes to wonder
+ * why one Thursday behaves differently from every other and finds nothing on
+ * the screen to explain it. Folded means "nothing unusual here", and that has
+ * to be true or the fold is a lie.
+ *
+ * ## Two grains, one list
+ *
+ * The same three switches can be set for this evening or for every other one,
+ * and they are the same list with a tab above it rather than two lists. Showing
+ * them apart would have meant repeating every label and every explanation, and
+ * would have hidden the thing actually worth understanding: that an evening
+ * inherits until it says otherwise.
+ *
+ * A `<select>` per switch rather than a row of buttons, because "Follow the
+ * restaurant (Staff only)" is a phrase, and four of those wrapped across a
+ * narrow panel is most of its height.
+ */
+function AdvancedEvening({
+  entry,
+  defaults,
+  can,
+  savingDefaults,
+  onPatch,
+  onChangeDefault,
+}: {
+  entry: RestaurantDateAvailability;
+  defaults: EveningDefaults;
+  can: (permission: StaffPermission) => boolean;
+  savingDefaults: boolean;
+  onPatch: (patch: Partial<RestaurantDateAvailability>) => void;
+  onChangeDefault: (patch: Partial<EveningDefaults>) => void;
+}) {
+  const cutoff = Math.max(0, Number(entry.bookingCutoffHours ?? 0));
+  const tableCutoff = Math.max(0, Number(entry.tableCutoffHours ?? 0));
+  const unusual = hasOverrides(entry.features) || cutoff > 0 || tableCutoff > 0;
+
+  const [open, setOpen] = useState(unusual);
+  const [grain, setGrain] = useState<"evening" | "restaurant">("evening");
+  /**
+   * Reopens when the selection moves to an evening that has something to say.
+   * Derived from a render-time comparison rather than an effect, which keeps it
+   * clear of the rule against setting state inside one (rule 2.15).
+   */
+  const [lastDate, setLastDate] = useState(entry.date);
+
+  if (lastDate !== entry.date) {
+    setLastDate(entry.date);
+    setOpen(unusual);
+    setGrain("evening");
+  }
+
+  const setOverride = (feature: EveningFeature, value: FloorPlanMode | boolean | undefined) => {
+    const next = { ...entry.features };
+
+    if (value === undefined) {
+      delete next[feature];
+    } else if (feature === "tableSelection") {
+      next.tableSelection = value as FloorPlanMode;
+    } else {
+      next[feature] = value as boolean;
+    }
+
+    onPatch({ features: next });
+  };
+
+  /**
+   * Table selection is the one with three answers of its own; the other two are
+   * a plain yes or no. Shared by both grains, so the evening's control and the
+   * restaurant's cannot come to offer different things.
+   */
+  const answersFor = (feature: EveningFeature): Array<{ label: string; value: FloorPlanMode | boolean }> =>
+    feature === "tableSelection"
+      ? FLOOR_PLAN_MODES.map((mode) => ({ label: FLOOR_PLAN_MODE_LABELS[mode], value: mode }))
+      : [
+          { label: "On", value: true },
+          { label: "Off", value: false },
+        ];
+
+  const nameOf = (feature: EveningFeature, value: FloorPlanMode | boolean) =>
+    answersFor(feature).find((answer) => answer.value === value)?.label ?? String(value);
+
+  return (
+    <div className="rounded-control border border-line bg-surface">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((was) => !was)}
+        className="flex min-h-9 w-full items-center justify-between gap-2 px-2.5 py-1.5 text-sm font-medium text-ink-muted transition-colors hover:text-ink"
+      >
+        <span className="flex items-center gap-1.5">
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2.5}
+            className={cx("size-3.5 transition-transform", open && "rotate-90")}
+          >
+            <path d="M9 5l7 7-7 7" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          Advanced
+        </span>
+        {/* Says what is in there without opening it, so a folded panel is
+            never hiding something somebody needed to know about. */}
+        <span className="text-xs font-normal text-ink-subtle">
+          {unusual ? "set for this evening" : "cutoffs, what guests may do"}
+        </span>
+      </button>
+
+      {open ? (
+        <div className="space-y-3 border-t border-line px-2.5 py-3">
+          <Field
+            label="Guest bookings close"
+            compact
+            hint={describeCutoff(entry)}
+            tip="Hours before the sitting that guests stop being able to book online. Reception is never bound by it — a table that has walked up to the desk can always be taken."
+          >
+            {(fieldProps) => (
+              <div className="flex items-center gap-2">
+                <Input
+                  {...fieldProps}
+                  compact
+                  type="number"
+                  min={0}
+                  max={240}
+                  step={1}
+                  inputMode="numeric"
+                  className="w-20"
+                  value={entry.bookingCutoffHours ?? 0}
+                  onChange={(event) =>
+                    onPatch({
+                      bookingCutoffHours: Math.max(0, Math.min(240, Math.round(Number(event.target.value) || 0))),
+                    })
+                  }
+                />
+                <span className="text-xs text-ink-muted">hours before</span>
+              </div>
+            )}
+          </Field>
+
+          {/*
+            A second deadline, and a different question from the first. Bookings
+            close when the kitchen can take no more covers; tables close when the
+            floor is laid out, which is usually earlier. Zero is off — no
+            separate deadline at all — because that is what every evening did
+            before this existed.
+          */}
+          <Field
+            label="Guests stop choosing tables"
+            compact
+            hint={describeTableCutoff(entry)}
+            tip="Hours before the sitting that guests stop picking or changing their own table, so the room can be laid out. 0 turns it off, and tables stay choosable for as long as the booking can be changed. Reception is never bound by it."
+          >
+            {(fieldProps) => (
+              <div className="flex items-center gap-2">
+                <Input
+                  {...fieldProps}
+                  compact
+                  type="number"
+                  min={0}
+                  max={240}
+                  step={1}
+                  inputMode="numeric"
+                  className="w-20"
+                  value={entry.tableCutoffHours ?? 0}
+                  onChange={(event) =>
+                    onPatch({
+                      tableCutoffHours: Math.max(0, Math.min(240, Math.round(Number(event.target.value) || 0))),
+                    })
+                  }
+                />
+                <span className="text-xs text-ink-muted">{tableCutoff > 0 ? "hours before" : "hours before (off)"}</span>
+              </div>
+            )}
+          </Field>
+
+          <div className="border-t border-line pt-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5 text-sm font-medium text-ink">
+                What guests may do
+                <InfoTip label="About what guests may do">
+                  Each switch follows the restaurant until this evening says otherwise — which is how something new
+                  gets tried on a single night, on a date nobody else can see, without touching tonight.
+                </InfoTip>
+              </span>
+
+              {/* Which grain the list below is editing. */}
+              <div className="inline-flex rounded-control border border-line-strong p-0.5" role="group">
+                {(
+                  [
+                    { key: "evening" as const, label: "This evening" },
+                    { key: "restaurant" as const, label: "Every evening" },
+                  ]
+                ).map((tab) => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    aria-pressed={grain === tab.key}
+                    onClick={() => setGrain(tab.key)}
+                    className={cx(
+                      "rounded-[calc(var(--radius-control)-2px)] px-2 py-0.5 text-xs font-medium transition-colors",
+                      grain === tab.key ? "bg-accent-soft text-accent-ink" : "text-ink-subtle hover:text-ink",
+                    )}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-2.5 space-y-2">
+              {EVENING_FEATURES.map((feature) => {
+                const editable = can(EVENING_FEATURE_PERMISSIONS[feature]);
+                const inherited = defaults[feature];
+                const override = entry.features?.[feature];
+
+                const value =
+                  grain === "restaurant" ? String(inherited) : override === undefined ? "" : String(override);
+
+                const toValue = (raw: string): FloorPlanMode | boolean | undefined => {
+                  if (raw === "") return undefined;
+                  if (feature === "tableSelection") return raw as FloorPlanMode;
+                  return raw === "true";
+                };
+
+                return (
+                  <div key={feature} className="flex items-center justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="truncate text-sm text-ink">{EVENING_FEATURE_LABELS[feature]}</span>
+                      <InfoTip label={`About ${EVENING_FEATURE_LABELS[feature].toLowerCase()}`}>
+                        {EVENING_FEATURE_DESCRIPTIONS[feature]}
+                        {editable ? "" : " Your account cannot change this one."}
+                      </InfoTip>
+                    </span>
+
+                    <Select
+                      compact
+                      aria-label={`${EVENING_FEATURE_LABELS[feature]}, ${
+                        grain === "restaurant" ? "every evening" : "this evening"
+                      }`}
+                      disabled={!editable || (grain === "restaurant" && savingDefaults)}
+                      className="w-40 shrink-0"
+                      value={value}
+                      onChange={(event) => {
+                        const next = toValue(event.target.value);
+
+                        if (grain === "restaurant") {
+                          // "Follow the restaurant" is not an answer the
+                          // restaurant itself can give, so the option is absent
+                          // from this grain and `next` is always defined here.
+                          if (next !== undefined) {
+                            onChangeDefault({ [feature]: next } as Partial<EveningDefaults>);
+                          }
+                          return;
+                        }
+
+                        setOverride(feature, next);
+                      }}
+                    >
+                      {grain === "evening" ? (
+                        // Named with what it currently resolves to, so
+                        // "follow the restaurant" is never a state somebody
+                        // has to go and look up.
+                        <option value="">Follow the restaurant ({nameOf(feature, inherited)})</option>
+                      ) : null}
+                      {answersFor(feature).map((answer) => (
+                        <option key={String(answer.value)} value={String(answer.value)}>
+                          {answer.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                );
+              })}
+            </div>
+
+            <p className="mt-2 text-xs text-ink-subtle">
+              {grain === "restaurant"
+                ? "Saved as soon as you change it. Every evening that has not said otherwise moves with it."
+                : "Saved with this date."}
+            </p>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

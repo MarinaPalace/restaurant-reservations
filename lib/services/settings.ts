@@ -3,6 +3,24 @@ import { getLocalSetting, setLocalSetting } from "@/lib/db/local-admin-store";
 import { AppSettingModel } from "@/lib/models/app-setting";
 import { DEFAULT_CURRENCY, toCurrency, type Currency } from "@/lib/money";
 import { DEFAULT_TIME_ZONE, toTimeZone, type TimeZone } from "@/lib/timezone";
+import {
+  DEFAULT_EVENING_TOGGLES,
+  resolveEveningFeatures,
+  toEveningToggles,
+  type EveningDefaults,
+  type EveningFeatures,
+  type EveningOverrides,
+  type EveningToggles,
+} from "@/lib/evening-features";
+import {
+  DEFAULT_FLOOR_PLAN_MODE,
+  EMPTY_PLAN,
+  resolveFloorPlanMode,
+  toFloorPlan,
+  toFloorPlanMode,
+  type FloorPlan,
+  type FloorPlanMode,
+} from "@/lib/floor-plan";
 
 /**
  * Settings the restaurant can change without a deploy.
@@ -19,6 +37,17 @@ import { DEFAULT_TIME_ZONE, toTimeZone, type TimeZone } from "@/lib/timezone";
 
 const CURRENCY_KEY = "promo.currency";
 const TIME_ZONE_KEY = "restaurant.timeZone";
+const FLOOR_PLAN_KEY = "restaurant.floorPlan";
+const FLOOR_PLAN_MODE_KEY = "restaurant.floorPlanMode";
+/**
+ * The two switches that had no restaurant-wide setting before evenings could
+ * override them. Table selection is not in here: it keeps its own key, because
+ * rule 2.2 says schema changes are additive and moving it would be a migration
+ * bought with nothing.
+ */
+const EVENING_TOGGLES_KEY = "restaurant.eveningToggles";
+/** One counter per catalogue: `{ standard: 12, premium: 3, promo: 7 }`. */
+const MENU_VERSION_KEY = "restaurant.menuVersions";
 
 async function readSetting(key: string): Promise<unknown> {
   if (!isMongoConfigured()) {
@@ -76,4 +105,182 @@ export async function setTimeZone(timeZone: TimeZone): Promise<TimeZone> {
   const safe = toTimeZone(timeZone);
   await writeSetting(TIME_ZONE_KEY, safe);
   return safe;
+}
+
+/**
+ * The room as staff drew it.
+ *
+ * One document, because it is small and is read whole. Anything unreadable —
+ * absent, half-written, or shaped like something else entirely — reads as an
+ * empty plan rather than throwing, which is what makes "no plan yet" and "a
+ * plan of no rooms" the same thing to every caller.
+ */
+export async function getFloorPlan(): Promise<FloorPlan> {
+  try {
+    return toFloorPlan(await readSetting(FLOOR_PLAN_KEY));
+  } catch (error) {
+    // A page that merely mentions the plan must not fail because of it.
+    console.error("[settings] failed to read the floor plan", error);
+    return EMPTY_PLAN;
+  }
+}
+
+export async function setFloorPlan(plan: FloorPlan): Promise<FloorPlan> {
+  const safe = toFloorPlan(plan);
+  await writeSetting(FLOOR_PLAN_KEY, safe);
+  return safe;
+}
+
+/**
+ * Whether guests choose their own table — `docs/floor-plan.md` §4.
+ *
+ * Stored apart from the plan itself, because they are changed by different
+ * acts: the plan is drawn and redrawn as furniture moves, the mode is a policy
+ * decided once. Keeping them in one document would mean every save of a
+ * half-drawn room carried the policy with it.
+ *
+ * Off is the default, and an unreadable store reads as off — the safe
+ * direction, since off is exactly the app as it was before the plan existed.
+ */
+export async function getFloorPlanMode(): Promise<FloorPlanMode> {
+  try {
+    return toFloorPlanMode(await readSetting(FLOOR_PLAN_MODE_KEY));
+  } catch (error) {
+    console.error("[settings] failed to read the floor plan mode", error);
+    return DEFAULT_FLOOR_PLAN_MODE;
+  }
+}
+
+export async function setFloorPlanMode(mode: FloorPlanMode): Promise<FloorPlanMode> {
+  const safe = toFloorPlanMode(mode);
+  await writeSetting(FLOOR_PLAN_MODE_KEY, safe);
+  return safe;
+}
+
+/**
+ * What the restaurant does on an evening that does not say otherwise.
+ *
+ * Both halves read together and handed back as one object, for the same reason
+ * `getTableSelection` reads the mode and the plan together: a caller holding
+ * one half and guessing the other is a caller that can disagree with itself.
+ *
+ * Every default is what the app did before any of this existed — promotions on,
+ * self-service on, table selection off — so a restaurant that never opens the
+ * settings screen behaves exactly as it always has.
+ */
+export async function getEveningDefaults(): Promise<EveningDefaults> {
+  const [tableSelection, toggles] = await Promise.all([
+    getFloorPlanMode(),
+    (async () => {
+      try {
+        return toEveningToggles(await readSetting(EVENING_TOGGLES_KEY));
+      } catch (error) {
+        // A booking screen must still render if the settings store is down,
+        // and it must render as the app has always behaved.
+        console.error("[settings] failed to read the evening toggles", error);
+        return { ...DEFAULT_EVENING_TOGGLES };
+      }
+    })(),
+  ]);
+
+  return { tableSelection, ...toggles };
+}
+
+export async function setEveningToggles(toggles: EveningToggles): Promise<EveningToggles> {
+  const safe = toEveningToggles(toggles);
+  await writeSetting(EVENING_TOGGLES_KEY, safe);
+  return safe;
+}
+
+/**
+ * What is switched on for **one evening**, which is the question every guest
+ * path actually has. Nothing reads a stored switch raw.
+ *
+ * The evening's own overrides win where it has them, everything else inherits
+ * the restaurant, and table selection is resolved against the plan so that a
+ * policy pointing at an empty room comes back off. See
+ * `lib/evening-features.ts` for why absent is inherit rather than off.
+ *
+ * `date` may be null — an evening that is not in the calendar has no overrides,
+ * which is the same as having none, so it simply gets the defaults.
+ */
+export async function getEveningFeatures(
+  date: { features?: EveningOverrides } | null,
+): Promise<EveningFeatures> {
+  const [defaults, plan] = await Promise.all([getEveningDefaults(), getFloorPlan()]);
+  return resolveEveningFeatures(defaults, date?.features, plan);
+}
+
+/**
+ * The one gate every booking path will ask.
+ *
+ * Both halves are read together and resolved into a single answer, so that no
+ * caller can decide "guests may pick" from the stored mode alone while the
+ * plan holds nothing pickable (`resolveFloorPlanMode`). It returns the plan as
+ * well, because anything allowed to pick needs the room to pick from and a
+ * second read would be a second chance for the two to disagree.
+ *
+ * Nothing books against this yet: §9 step 3 is the claim, and it is the step
+ * that can corrupt data rather than merely annoy somebody.
+ */
+export async function getTableSelection(): Promise<{ mode: FloorPlanMode; plan: FloorPlan }> {
+  const [stored, plan] = await Promise.all([getFloorPlanMode(), getFloorPlan()]);
+  return { mode: resolveFloorPlanMode(stored, plan), plan };
+}
+
+/* ------------------------------------------------------------------ *
+ * Menu versions
+ * ------------------------------------------------------------------ */
+
+/**
+ * How many times a catalogue has been saved.
+ *
+ * A booking carries its own `version`; a menu had nothing, so "which menu was
+ * this booking taken against?" could only be answered by the dish names copied
+ * onto the booking — which is a good answer for the kitchen and no answer at
+ * all for "when did the starter change?". The counter is what the audit entry
+ * for `menu:save` now names, so the log reads as a sequence of catalogues
+ * rather than a pile of saves.
+ *
+ * One counter per catalogue, because they are edited separately and a promo
+ * save has nothing to do with the standard menu's history.
+ *
+ * A read-then-write, unlike the booking counter's `$inc`, and that is a
+ * deliberate difference rather than an oversight: the menu itself is already
+ * saved by replacing the whole catalogue, so two people editing at once lose
+ * each other's *courses* long before they lose a version number. If menu saving
+ * ever becomes incremental this has to move with it.
+ */
+export async function getMenuVersions(): Promise<Record<string, number>> {
+  try {
+    const raw = await readSetting(MENU_VERSION_KEY);
+
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, number>) : {};
+  } catch (error) {
+    // A menu must still save if its counter cannot be read.
+    console.error("[settings] failed to read the menu versions", error);
+    return {};
+  }
+}
+
+/** The version this catalogue has now. Absent reads as never saved since counting began. */
+export async function getMenuVersion(menu: string): Promise<number> {
+  const versions = await getMenuVersions();
+  return typeof versions[menu] === "number" ? versions[menu] : 0;
+}
+
+/** Moves a catalogue on one version, and says which it became. */
+export async function bumpMenuVersion(menu: string): Promise<number> {
+  try {
+    const versions = await getMenuVersions();
+    const next = (typeof versions[menu] === "number" ? versions[menu] : 0) + 1;
+
+    await writeSetting(MENU_VERSION_KEY, { ...versions, [menu]: next });
+    return next;
+  } catch (error) {
+    // Never fail a menu save over its own bookkeeping — the same rule the audit
+    // log follows.
+    console.error("[settings] failed to record the menu version", error);
+    return 0;
+  }
 }

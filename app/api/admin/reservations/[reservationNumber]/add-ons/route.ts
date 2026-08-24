@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isDenied, requireStaff } from "@/lib/auth/guard";
 import { recordAuditEntry } from "@/lib/services/audit-log";
+import { describeReservationChanges } from "@/lib/reservation-changes";
 import { getReservationByNumber, updateReservationAddOns } from "@/lib/services/reservations";
 import { getPromoCatalog, priceOfPromoOption } from "@/lib/services/restaurant";
 import { staffAddOnsSchema } from "@/lib/validation/booking";
@@ -82,6 +83,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ res
      * Chardonnay on room 402's bill?" is exactly the question the audit log
      * exists to answer.
      */
+    const changes = describeReservationChanges(existing ?? {}, updated);
+
     await recordAuditEntry({
       action: "reservation:update",
       actor: auth.actor,
@@ -89,6 +92,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ res
       summary: addOns.length
         ? `Set promotions on ${reservationNumber}: ${addOns.map((addOn) => addOn.optionName).join(", ")}.`
         : `Removed all promotions from ${reservationNumber}.`,
+      // Beside the sentence: what was there before, which the sentence cannot
+      // say and which is the half that answers "who took the wine off?".
+      ...(changes.length ? { changes } : {}),
+      version: updated.version,
     });
 
     return NextResponse.json({ reservation: updated });

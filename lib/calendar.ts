@@ -73,6 +73,15 @@ function buildDescription(reservation: ReservationRecord) {
   const lines = [
     `Reservation ${reservation.reservationNumber}`,
     `Room ${reservation.roomNumber} · ${reservation.guestCount} ${reservation.guestCount === 1 ? "guest" : "guests"}`,
+    /*
+      The table, when there is one. This is the reminder a guest actually opens
+      on the way down, and "which table were we?" is the thing they will have
+      forgotten — the confirmation screen was closed days ago.
+
+      Only when set: a booking the restaurant will seat on the night must not
+      carry a line promising a table that does not exist yet.
+    */
+    ...(reservation.tableNumber ? [`Table ${reservation.tableNumber}`] : []),
     "",
     `Everyone is seated at ${arrival}. Please arrive ${ARRIVE_EARLY_MINUTES} minutes early so you can be shown to your table.`,
   ];

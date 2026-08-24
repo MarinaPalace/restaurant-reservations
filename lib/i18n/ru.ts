@@ -14,6 +14,7 @@ export const ru: PartialDictionary = {
     guests: "Гости",
     date: "Дата",
     menu: "Меню",
+    table: "Столик",
     skipToContent: "Перейти к основному содержимому",
     language: "Язык",
     theme: {
@@ -47,6 +48,7 @@ export const ru: PartialDictionary = {
     room: "Ваше проживание",
     guests: "Гости",
     date: "Дата",
+    table: "Столик",
     menu: "Меню",
     summary: "Подтверждение",
   },

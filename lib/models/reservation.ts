@@ -105,9 +105,32 @@ const reservationSchema = new Schema(
     time: { type: String },
     endTime: { type: String },
     notes: { type: String },
+    /**
+     * Staff-only. Absent on every booking written before it existed, and
+     * stripped from every guest response by `toGuestReservation` rather than
+     * by any screen.
+     */
+    staffNote: { type: String },
+    /** The plan table this booking claims. See the type for why it is not the label. */
+    tableId: { type: String },
+    /** Every table, when tables were pushed together. `tableId` is the first. */
+    tableIds: { type: [String] },
     // Shared by rooms dining together; indexed so a group loads in one query.
     tableGroupId: { type: String, index: true },
     tableNumber: { type: String },
+    /**
+     * Who put this booking on that table, and when. Additive (rule 2.2): every
+     * booking written before this reads back without either, which is the
+     * honest answer — nobody recorded it.
+     */
+    tableSource: { type: String, enum: ["owner", "staff", "guest"] },
+    tableSetAt: { type: String },
+    /**
+     * Bumped by `$inc` on every write. Not Mongoose's own `__v`, which is an
+     * optimistic-concurrency detail of array updates and means nothing to a
+     * person reading a booking's history.
+     */
+    version: { type: Number, default: 1 },
     status: { type: String, enum: ["confirmed", "cancelled"], default: "confirmed" },
     // The pass-key the guest booked with, and their credential for changing
     // it later. Indexed so "this key's booking" is one query. Absent on staff

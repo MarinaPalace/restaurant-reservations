@@ -122,3 +122,80 @@ describe("the restaurant time zone", () => {
     expect(await settings.getTimeZone()).toBe("Europe/Warsaw");
   });
 });
+
+/**
+ * The switch — `docs/floor-plan.md` §4.
+ *
+ * Stored apart from the plan, so that saving a half-drawn room cannot carry a
+ * policy with it, and read through `getTableSelection` so no caller can decide
+ * "guests may pick" from a stored mode alone.
+ */
+describe("who chooses the table", () => {
+  const planWithTable = {
+    zones: [
+      { id: "z1", name: "Main", tables: [{ id: "t1", label: "7", seats: 4, active: true }], features: [] },
+    ],
+  };
+
+  it("reads as off when nothing has ever been saved", async () => {
+    const settings = await loadSettings();
+
+    expect(await settings.getFloorPlanMode()).toBe("off");
+  });
+
+  it("survives a save", async () => {
+    const settings = await loadSettings();
+    await settings.setFloorPlanMode("required");
+
+    expect(await settings.getFloorPlanMode()).toBe("required");
+  });
+
+  it("reads a value it does not recognise as off", async () => {
+    const { setLocalSetting } = await import("@/lib/db/local-admin-store");
+    const settings = await loadSettings();
+
+    await setLocalSetting("restaurant.floorPlanMode", { enabled: true });
+    expect(await settings.getFloorPlanMode()).toBe("off");
+  });
+
+  it("refuses to store something unrecognised", async () => {
+    const settings = await loadSettings();
+
+    await settings.setFloorPlanMode("on" as never);
+    expect(await settings.getFloorPlanMode()).toBe("off");
+  });
+
+  /** The policy and the drawing are different decisions, and different rows. */
+  it("does not disturb the plan, nor the plan it", async () => {
+    const settings = await loadSettings();
+
+    await settings.setFloorPlanMode("optional");
+    await settings.setFloorPlan(planWithTable as never);
+
+    expect(await settings.getFloorPlanMode()).toBe("optional");
+    expect((await settings.getFloorPlan()).zones).toHaveLength(1);
+  });
+
+  /**
+   * The gate every booking path will ask. It resolves rather than reports: a
+   * mode of `optional` against a room with nothing pickable in it is a broken
+   * booking flow, not a policy.
+   */
+  it("applies as off while the plan holds nothing bookable", async () => {
+    const settings = await loadSettings();
+    await settings.setFloorPlanMode("required");
+
+    expect(await settings.getFloorPlanMode()).toBe("required");
+    expect((await settings.getTableSelection()).mode).toBe("off");
+  });
+
+  it("applies as chosen once the room has a table in it", async () => {
+    const settings = await loadSettings();
+    await settings.setFloorPlan(planWithTable as never);
+    await settings.setFloorPlanMode("optional");
+
+    const selection = await settings.getTableSelection();
+    expect(selection.mode).toBe("optional");
+    expect(selection.plan.zones[0].tables[0].label).toBe("7");
+  });
+});

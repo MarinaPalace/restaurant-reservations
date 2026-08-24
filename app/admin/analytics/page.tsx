@@ -18,18 +18,24 @@ import {
   type DateRange,
 } from "@/lib/analytics/range";
 import {
+  DEFAULT_MINUTES_PER_MANUAL_BOOKING,
   buildTotals,
   cancellationLines,
+  coefficients,
   capacityTrend,
   coversTrend,
   dishPopularity,
+  eveningLines,
+  leadTimeBuckets,
+  sourceTrend,
+  weekdayPattern,
   partySizes,
   passKeyFunnel,
   promotionLines,
   reservationsIn,
   datesIn,
 } from "@/lib/analytics/metrics";
-import { isValidDateKey } from "@/lib/date";
+import { isValidDateKey, todayKey } from "@/lib/date";
 
 export const metadata: Metadata = { title: "Analytics" };
 
@@ -73,6 +79,23 @@ export default async function AnalyticsPage({ searchParams }: PageProps<"/admin/
 
   const range = custom && isValidRange(custom) ? custom : resolvePreset(preset);
   const comparison = previousRange(range);
+
+  /**
+   * The one assumption behind the "desk time not spent" figure, and the only
+   * input on this page that is not a measurement.
+   *
+   * It lives in the address rather than in the settings store, like the date
+   * range does, because it is a what-if rather than a policy: a manager tries
+   * four minutes and then eight to see how much the answer moves, and a
+   * particular reading can be sent to somebody else and come back saying the
+   * same thing. Anything unparseable falls back to the default rather than
+   * erroring, for the same reason a mistyped range shows this month.
+   */
+  const requestedMinutes = Number(params.minutes);
+  const minutesPerManualBooking =
+    Number.isFinite(requestedMinutes) && requestedMinutes >= 0 && requestedMinutes <= 120
+      ? Math.round(requestedMinutes)
+      : DEFAULT_MINUTES_PER_MANUAL_BOOKING;
 
   /**
    * Everything on this page is folded from reservations inside the range or its
@@ -122,6 +145,42 @@ export default async function AnalyticsPage({ searchParams }: PageProps<"/admin/
     parties: partySizes(inRange),
     cancellations: cancellationLines(inRange, sittingOf),
     funnel: passKeyFunnel(passKeys, range),
+    /**
+     * `today` is passed in rather than read inside, because whether a key has
+     * lapsed is a question about the restaurant's calendar day (rule 2.1) and
+     * the metrics module is deliberately free of any clock of its own.
+     */
+    coefficients: coefficients(inRange, passKeys, range, {
+      today: todayKey(),
+      minutesPerManualBooking,
+    }).coefficients,
+    minutesPerManualBooking,
+
+    /**
+     * The shape of the week, which a date-ordered chart cannot show: the same
+     * Tuesday appears four times in a month, thirty days apart.
+     */
+    weekdays: weekdayPattern(inRange, datesIn(dates, range)),
+    /**
+     * How far ahead people book. `docs/analytics.md` §2 notes the booking
+     * cutoff is currently a guess; this is the figure that replaces it.
+     */
+    leadTime: leadTimeBuckets(inRange, sittingOf),
+    /** What the covers are *made of* — self-service against the desk. */
+    source: sourceTrend(inRange, range, bucket),
+    /**
+     * One line per evening, folded here rather than fetched when a bar is
+     * clicked. It is a few dozen rows and the bookings are already in memory;
+     * a round trip per click would make a chart feel like a page.
+     */
+    evenings: eveningLines(inRange, datesIn(dates, range)),
+    /**
+     * The comparison series, keyed by the *current* period's buckets so the two
+     * line up index for index. They are different dates by definition — that is
+     * what a comparison is — so pairing them by position is the only thing that
+     * can work, and it is why both are folded on the same bucket size.
+     */
+    previousCovers: coversTrend(inComparison, comparison, bucket),
   };
 
   return (

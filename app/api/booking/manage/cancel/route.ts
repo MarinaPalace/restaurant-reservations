@@ -3,7 +3,10 @@ import { cancelReservation, getReservationsByPassKey } from "@/lib/services/rese
 import { getPassKeyByCode, releasePassKey } from "@/lib/services/pass-keys";
 import { recordAuditEntry } from "@/lib/services/audit-log";
 import { canGuestModify } from "@/lib/reservation-policy";
+import { getRestaurantDate } from "@/lib/services/restaurant";
+import { getEveningFeatures } from "@/lib/services/settings";
 import { manageReservationSchema } from "@/lib/validation/booking";
+import { toGuestReservation } from "@/lib/guest-reservation";
 
 const NOT_FOUND = { error: "We could not find a reservation for that pass-key." };
 
@@ -53,7 +56,11 @@ export async function POST(request: Request) {
       );
     }
 
-    const check = canGuestModify(reservation);
+    // The evening may send its guests to reception instead — checked here and
+    // not only by hiding the button (rule 2.5).
+    const evening = await getEveningFeatures(await getRestaurantDate(reservation.date));
+
+    const check = canGuestModify(reservation, new Date(), evening.selfService);
     if (!check.allowed) {
       return NextResponse.json({ error: check.reason, code: "CHANGES_CLOSED" }, { status: 409 });
     }
@@ -80,9 +87,10 @@ export async function POST(request: Request) {
       actor: { kind: "guest", id: passKey.id, name: `Guest in room ${reservation.roomNumber}` },
       reservationNumber: reservation.reservationNumber,
       summary: `Guest cancelled their reservation for ${reservation.date}.`,
+      version: cancelled.version,
     });
 
-    return NextResponse.json({ reservation: cancelled });
+    return NextResponse.json({ reservation: toGuestReservation(cancelled) });
   } catch (error) {
     console.error("[booking] failed to cancel reservation", error);
     return NextResponse.json({ error: "Unable to cancel reservation." }, { status: 500 });

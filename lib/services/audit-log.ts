@@ -1,7 +1,7 @@
 import { connectToDatabase, isMongoConfigured } from "@/lib/db/connect";
 import { AuditEntryModel } from "@/lib/models/audit-entry";
 import { appendLocalAuditEntry, listLocalAuditEntries } from "@/lib/db/local-admin-store";
-import type { Actor, AuditAction, AuditEntry } from "@/types/booking";
+import type { Actor, AuditAction, AuditChange, AuditEntry } from "@/types/booking";
 
 /**
  * Who did what, and when.
@@ -29,6 +29,19 @@ function toAuditEntry(document: MongoAuditDocument): AuditEntry {
     actorName: String(document.actorName ?? "Unknown"),
     reservationNumber: document.reservationNumber ? String(document.reservationNumber) : undefined,
     summary: String(document.summary ?? ""),
+    ...(Array.isArray(document.changes) && document.changes.length > 0
+      ? { changes: (document.changes as AuditChange[]).map(toAuditChange) }
+      : {}),
+    ...(typeof document.version === "number" ? { version: document.version } : {}),
+  };
+}
+
+function toAuditChange(change: AuditChange): AuditChange {
+  return {
+    field: String(change.field ?? ""),
+    label: String(change.label ?? ""),
+    ...(change.from ? { from: String(change.from) } : {}),
+    ...(change.to ? { to: String(change.to) } : {}),
   };
 }
 
@@ -37,6 +50,10 @@ export async function recordAuditEntry(input: {
   actor: Actor;
   reservationNumber?: string;
   summary: string;
+  /** What moved, field by field. Only edits have any. */
+  changes?: AuditChange[];
+  /** The version of the record this produced, when the record is versioned. */
+  version?: number;
 }): Promise<void> {
   try {
     if (!isMongoConfigured()) {
@@ -48,6 +65,8 @@ export async function recordAuditEntry(input: {
         actorName: input.actor.name,
         reservationNumber: input.reservationNumber,
         summary: input.summary,
+        ...(input.changes?.length ? { changes: input.changes } : {}),
+        ...(input.version === undefined ? {} : { version: input.version }),
       });
       return;
     }
@@ -60,6 +79,8 @@ export async function recordAuditEntry(input: {
       actorName: input.actor.name,
       reservationNumber: input.reservationNumber,
       summary: input.summary,
+      ...(input.changes?.length ? { changes: input.changes } : {}),
+      ...(input.version === undefined ? {} : { version: input.version }),
     });
   } catch (error) {
     console.error("[audit] failed to record entry", input.action, error);

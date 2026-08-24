@@ -14,6 +14,7 @@ export const de: PartialDictionary = {
     guests: "Gäste",
     date: "Datum",
     menu: "Menü",
+    table: "Tisch",
     skipToContent: "Zum Hauptinhalt springen",
     language: "Sprache",
     theme: {
@@ -43,6 +44,7 @@ export const de: PartialDictionary = {
     room: "Ihr Aufenthalt",
     guests: "Gäste",
     date: "Datum",
+    table: "Tisch",
     menu: "Menü",
     summary: "Bestätigen",
   },

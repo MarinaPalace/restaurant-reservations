@@ -35,6 +35,12 @@ import {
   formatBookedAt,
   type ReservationOrder,
 } from "@/lib/reservation-order";
+import {
+  TableSourceLegend,
+  TableSourceLetter,
+  tableSourceRing,
+  tableSourceTitle,
+} from "@/components/table-source";
 import type { MenuCourse, ReservationRecord, StaffPermission } from "@/types/booking";
 
 export function KitchenReport({
@@ -181,6 +187,13 @@ export function KitchenReport({
 
   const tableCell = (reservationNumber: string, table: string) => {
     const isEditing = editing?.reservationNumber === reservationNumber;
+    /**
+     * Who set this table — drawn as a ring, a letter and a tooltip on the
+     * number itself. Read off the booking rather than passed in, because the
+     * two layouts reach this with different rows and only the reservation
+     * number is common to both.
+     */
+    const source = reservations.find((entry) => entry.reservationNumber === reservationNumber)?.tableSource;
 
     return isEditing ? (
       <input
@@ -199,9 +212,15 @@ export function KitchenReport({
       <button
         type="button"
         onClick={() => setEditing({ reservationNumber, value: table })}
-        className="min-h-8 min-w-10 rounded border border-dashed border-line-strong px-2 py-1 text-left font-semibold text-ink hover:border-accent"
+        title={tableSourceTitle(source, table)}
+        aria-label={`${tableSourceTitle(source, table)} Change it.`}
+        className={cx(
+          "min-h-8 min-w-10 rounded px-2 py-1 text-left font-semibold text-ink hover:border-accent",
+          tableSourceRing(table ? source : undefined),
+        )}
       >
         {table || <span className="text-ink-subtle">set</span>}
+        {table ? <TableSourceLetter source={source} /> : null}
       </button>
     );
   };
@@ -353,6 +372,19 @@ export function KitchenReport({
         <Alert tone="warning" className="mt-4" >
           No arrival time is set for this evening. Guests were not told when to arrive.
         </Alert>
+      ) : null}
+
+      {/*
+        The key to the rings, once, and only when there is something to key.
+        An evening where nobody recorded a source has three colours to explain
+        and nothing wearing them.
+
+        Screen only: a new block on paper would change the sheet's arithmetic,
+        which is what rule 2.8 is about, and the printed sheet is a working
+        document for people who have the legend on the screen beside them.
+      */}
+      {reservations.some((entry) => entry.tableSource) ? (
+        <TableSourceLegend className="mt-4" />
       ) : null}
 
       <div className="mt-5">

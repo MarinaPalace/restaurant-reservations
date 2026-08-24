@@ -126,6 +126,8 @@ describe("step guards", () => {
     roomNumber: "402",
     guestCount: 2,
     date: "2026-08-18",
+    tableId: "",
+    joinNumber: "",
     selections: [{ guestIndex: 0, courseId: "c1", courseName: "S", optionId: "o1", optionName: "O" }],
     language: "en",
   };

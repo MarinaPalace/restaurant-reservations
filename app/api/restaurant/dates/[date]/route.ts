@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getRestaurantDate } from "@/lib/services/restaurant";
+import { getEveningFeatures } from "@/lib/services/settings";
 import { isValidDateKey } from "@/lib/date";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ date: string }> }) {
@@ -15,7 +16,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ dat
       return NextResponse.json({ error: "Date not found." }, { status: 404 });
     }
 
-    return NextResponse.json(record);
+    // Spread, then overwrite: the resolved switches replace the raw overrides
+    // the record carries. Resolved and never raw — see the sibling route.
+    return NextResponse.json({ ...record, features: await getEveningFeatures(record) });
   } catch (error) {
     console.error("[restaurant] failed to load availability", error);
     return NextResponse.json({ error: "Unable to load availability." }, { status: 500 });

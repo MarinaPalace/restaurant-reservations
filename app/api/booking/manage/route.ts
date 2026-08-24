@@ -4,6 +4,7 @@ import {
   updateReservationSelections,
 } from "@/lib/services/reservations";
 import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
+import { getEveningFeatures } from "@/lib/services/settings";
 import { validateReservationRequest } from "@/lib/services/booking-rules";
 import { getPassKeyByCode } from "@/lib/services/pass-keys";
 import { recordAuditEntry } from "@/lib/services/audit-log";
@@ -11,6 +12,8 @@ import { canGuestModify } from "@/lib/reservation-policy";
 import { canonicalizeSelections } from "@/lib/menu-selection";
 import { manageReservationSchema, updateSelectionsSchema } from "@/lib/validation/booking";
 import { checkRateLimit, clientKeyFrom } from "@/lib/rate-limit";
+import { toGuestReservation } from "@/lib/guest-reservation";
+import { describeReservationChanges, summariseChanges } from "@/lib/reservation-changes";
 import type { ReservationRecord } from "@/types/booking";
 
 /**
@@ -97,19 +100,48 @@ export async function POST(request: Request) {
       return NextResponse.json(NOT_FOUND, { status: 404 });
     }
 
+    /**
+     * Self-service is a property of the **evening**, and this key may hold
+     * dinners on several of them — so each booking is checked against its own
+     * night rather than against one answer for the whole key. Looked up once
+     * per distinct date, because a key with four dinners on one evening should
+     * not cost four reads.
+     */
+    const eveningByDate = new Map<string, { selfService: boolean; promotions: boolean }>();
+
+    await Promise.all(
+      [...new Set(resolved.reservations.map((reservation) => reservation.date))].map(async (date) => {
+        const evening = await getEveningFeatures(await getRestaurantDate(date));
+        eveningByDate.set(date, { selfService: evening.selfService, promotions: evening.promotions });
+      }),
+    );
+
     return NextResponse.json({
       usesRemaining: resolved.usesRemaining,
       // Every dinner this key has booked. The screen lists them and the guest
       // picks which one to change.
       reservations: resolved.reservations.map((reservation) => {
-        const check = canGuestModify(reservation);
+        // Absent only if the evening has left the calendar, which is the same
+        // as it saying nothing: the restaurant's own defaults apply.
+        const evening = eveningByDate.get(reservation.date);
+        const check = canGuestModify(reservation, new Date(), evening?.selfService ?? true);
 
         return {
-          reservation,
+          // Stripped of anything only staff may see — a note reception wrote
+          // about this guest must not travel to the guest (rule 2.5's habit:
+          // the boundary is the route, never the screen).
+          reservation: toGuestReservation(reservation),
           // Lets the guest's screen explain why the buttons are unavailable.
           canModify: check.allowed,
           modificationDeadline: check.deadline.toISOString(),
           modificationBlockedReason: check.reason ?? null,
+          /**
+           * Whether this evening is still offering promotions. The screen only
+           * ever lets a guest swap one they already hold — the route refuses a
+           * group the booking does not carry — so this closes the swap too,
+           * and giving one back stays possible either way.
+           */
+          promotionsOpen: evening?.promotions ?? true,
         };
       }),
     });
@@ -144,15 +176,19 @@ export async function PATCH(request: Request) {
       );
     }
 
-    const check = canGuestModify(reservation);
-    if (!check.allowed) {
-      return NextResponse.json({ error: check.reason, code: "CHANGES_CLOSED" }, { status: 409 });
-    }
-
     const [menu, restaurantDate] = await Promise.all([
       getMenuCatalog(),
       getRestaurantDate(reservation.date),
     ]);
+
+    // The evening's own switch, checked in the route rather than only by the
+    // screen hiding its buttons (rule 2.5).
+    const evening = await getEveningFeatures(restaurantDate);
+
+    const check = canGuestModify(reservation, new Date(), evening.selfService);
+    if (!check.allowed) {
+      return NextResponse.json({ error: check.reason, code: "CHANGES_CLOSED" }, { status: 409 });
+    }
 
     /**
      * The same rules as a new booking, minus availability: the seats are
@@ -183,14 +219,21 @@ export async function PATCH(request: Request) {
       return NextResponse.json(NOT_FOUND, { status: 404 });
     }
 
+    // What they changed it to, not only that they changed it: the kitchen
+    // reads the sheet, but the log is where "they had the fish yesterday"
+    // gets settled.
+    const changes = describeReservationChanges(reservation, updated);
+
     await recordAuditEntry({
       action: "reservation:update",
       actor: { kind: "guest", id: resolved.passKeyId, name: `Room ${reservation.roomNumber}` },
       reservationNumber: reservation.reservationNumber,
-      summary: "Guest changed their menu choices.",
+      summary: changes.length ? `Guest changed their menu choices: ${summariseChanges(changes)}` : "Guest changed their menu choices.",
+      ...(changes.length ? { changes } : {}),
+      version: updated.version,
     });
 
-    return NextResponse.json({ reservation: updated });
+    return NextResponse.json({ reservation: toGuestReservation(updated) });
   } catch (error) {
     console.error("[booking] failed to update reservation", error);
     return NextResponse.json({ error: "Unable to update this reservation." }, { status: 500 });

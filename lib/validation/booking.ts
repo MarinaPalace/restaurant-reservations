@@ -5,8 +5,35 @@ import { TIME_ZONES } from "@/lib/timezone";
 import { PASS_KEY_LENGTH, normalizePassKey } from "@/lib/pass-key";
 import { isValidRoomNumber, normalizeRoomNumber } from "@/lib/room";
 import { MAX_USES_CAP, MENU_CATALOGS, STAFF_PERMISSIONS } from "@/types/booking";
+import {
+  CHAIR_SIDES,
+  FEATURE_KINDS,
+  FLOOR_PLAN_MODES,
+  MAX_FEATURES_PER_ZONE,
+  MAX_SEATS_PER_TABLE,
+  MAX_TABLES_PER_ZONE,
+  MAX_ZONES,
+  TABLE_SHAPES,
+} from "@/lib/floor-plan";
 
 export const MAX_GUESTS_PER_RESERVATION = 6;
+
+/**
+ * How long the thing a guest sends to name where they want to sit may be.
+ *
+ * Not one table id but possibly several, joined with `+` — the room of two-tops
+ * where a party of six needs three tables pushed together. A plan table id may
+ * itself be 64 characters, so a cap of 64 fitted exactly one table and silently
+ * cut the last id off any real combination. What arrived then was a table id
+ * with its tail missing, which resolves to nothing, and the booking was written
+ * with **no table at all** rather than refused — the worst way for it to fail,
+ * because nothing anywhere says it happened.
+ *
+ * Sized for a combination of every table a party could conceivably need. It is
+ * only a bound on the string: `findPlanCombination` still has to resolve every
+ * id in it against the plan.
+ */
+export const MAX_TABLE_SELECTION_LENGTH = (64 + 1) * MAX_GUESTS_PER_RESERVATION;
 
 /**
  * Rooms that may be added alongside the first on one booking. A ticket has
@@ -71,6 +98,14 @@ export const createReservationSchema = z.object({
   notes: z.string().trim().max(500).optional(),
   /** Reservation number of the party this booking wants to share a table with. */
   joinReservationNumber: z.string().trim().max(40).optional(),
+  /**
+   * The table the guest picked, by the plan's own id.
+   *
+   * Only the id: the route resolves the label and the seat count from the plan
+   * (rule 2.6's habit), because a request that named its own seat count could
+   * claim a two-top for six.
+   */
+  tableId: z.string().trim().max(MAX_TABLE_SELECTION_LENGTH).optional(),
 });
 
 export type CreateReservationInput = z.infer<typeof createReservationSchema>;
@@ -88,6 +123,15 @@ export const menuKindSchema = z.enum(["standard", "premium"]);
 /** Which catalogue is being read or edited. Promotions are one of the three. */
 export const menuCatalogSchema = z.enum(MENU_CATALOGS);
 
+/**
+ * Whether guests choose their own table (§4).
+ *
+ * Strict, unlike the reader in `lib/floor-plan.ts`: a mode this app does not
+ * know is a bug in whatever sent it, and accepting it silently as `off` would
+ * hide a screen that thinks it saved a policy it did not.
+ */
+export const floorPlanModeSchema = z.enum(FLOOR_PLAN_MODES);
+
 export const restaurantDateSchema = z.object({
   date: dateKeySchema,
   isOpen: z.boolean(),
@@ -101,6 +145,26 @@ export const restaurantDateSchema = z.object({
    * what "closed" is for.
    */
   bookingCutoffHours: z.number().int().min(0).max(240).optional(),
+  /** When guests stop choosing tables. 0 — the default — is no cutoff at all. */
+  tableCutoffHours: z.number().int().min(0).max(240).optional(),
+  /**
+   * What this evening switches on for itself. Every field is optional inside
+   * it, because **absent is "inherit the restaurant"** and is a third state
+   * rather than a missing one — see `lib/evening-features.ts`.
+   *
+   * Strict about shape, like the floor plan: an unknown mode is a bug in
+   * whatever sent it. `.nullable()` so the editor can clear an override back
+   * to inherit by sending null, which an optional field alone cannot express
+   * once it has been set.
+   */
+  features: z
+    .object({
+      tableSelection: floorPlanModeSchema.nullable().optional(),
+      promotions: z.boolean().nullable().optional(),
+      selfService: z.boolean().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
 });
 
 /**
@@ -120,6 +184,19 @@ export const manageReservationSchema = z.object({
 
 export const updateSelectionsSchema = manageReservationSchema.extend({
   selections: z.array(reservationSelectionSchema).min(1),
+});
+
+/**
+ * A guest moving their own booking to another table.
+ *
+ * `tableId` is the plan's own id, never a label: a label is what staff type and
+ * what the sheet shows, and two zones may both have a "1". An empty string is
+ * valid and means "take my table back, seat us wherever" — the same answer as
+ * the "any table" button on the booking flow, which a guest must be able to
+ * change their mind back to.
+ */
+export const changeTableSchema = manageReservationSchema.extend({
+  tableId: z.string().trim().max(MAX_TABLE_SELECTION_LENGTH),
 });
 
 /**
@@ -197,10 +274,20 @@ export const serviceMarkSchema = z
     guestIndex: z.number().int().min(0).max(MAX_GUESTS_PER_RESERVATION - 1).optional(),
     /** Which booking's guest, when a shared table is marked plate by plate. */
     reservationNumber: z.string().trim().max(40).optional(),
+    /**
+     * A note staff leave on the booking. Never shown to a guest.
+     *
+     * An empty string is how the board clears one, so it is a real value here
+     * rather than something to reject — `.max` without `.min`.
+     */
+    staffNote: z.string().trim().max(500).optional(),
   })
-  .refine((row) => row.attendance !== undefined || row.courseId !== undefined, {
-    message: "Nothing to mark.",
-  })
+  .refine(
+    (row) => row.attendance !== undefined || row.courseId !== undefined || row.staffNote !== undefined,
+    {
+      message: "Nothing to mark.",
+    },
+  )
   .refine((row) => row.courseId === undefined || row.served !== undefined, {
     message: "Say whether the course has been served.",
     path: ["served"],
@@ -498,5 +585,96 @@ export const updateSettingsSchema = z
     timeZone: timeZoneSchema.optional(),
   })
   .refine((row) => row.currency !== undefined || row.timeZone !== undefined, {
+    message: "Nothing to save.",
+  });
+
+/**
+ * The floor plan as the designer sends it.
+ *
+ * Deliberately permissive about *values* — positions, sizes, seat counts and
+ * rotations are snapped, clamped and capped by `toFloorPlan` on the way into
+ * the store — and strict about *shape*, so a payload that is not a plan at all
+ * is refused here rather than silently becoming an empty floor.
+ */
+const placedSchema = {
+  x: z.number().finite(),
+  y: z.number().finite(),
+  width: z.number().finite().optional(),
+  height: z.number().finite().optional(),
+  rotation: z.number().finite().optional(),
+};
+
+export const floorTableSchema = z.object({
+  ...placedSchema,
+  id: z.string().trim().min(1).max(64),
+  label: z.string().trim().max(12),
+  seats: z.number().int().min(0).max(MAX_SEATS_PER_TABLE),
+  shape: z.enum(TABLE_SHAPES),
+  active: z.boolean(),
+  chairs: z.boolean().optional(),
+  chairCount: z.number().int().min(0).max(24).optional(),
+  chairSides: z.array(z.enum(CHAIR_SIDES)).max(CHAIR_SIDES.length).optional(),
+  /**
+   * Which tables stand next to this one — what says they may be pushed
+   * together at all.
+   *
+   * Listed here because this schema **strips what it does not name**, so a
+   * field missing from it is a field silently thrown away on every save: the
+   * designer writes the links, the room comes back with none, and no combination
+   * is ever offered to anybody. The reciprocity and the dropping of links to
+   * tables that are not there belong to `toFloorPlan`, which runs after this;
+   * all this has to do is let them through.
+   */
+  neighbours: z
+    .array(
+      z.object({
+        tableId: z.string().trim().min(1).max(64),
+        side: z.enum(CHAIR_SIDES),
+      }),
+    )
+    .max(CHAIR_SIDES.length)
+    .optional(),
+  tags: z.array(z.string().trim().max(24)).max(8).optional(),
+});
+
+export const floorFeatureSchema = z.object({
+  ...placedSchema,
+  id: z.string().trim().min(1).max(64),
+  kind: z.enum(FEATURE_KINDS),
+  label: z.string().trim().max(40).optional(),
+});
+
+export const floorZoneSchema = z.object({
+  id: z.string().trim().min(1).max(64),
+  name: z.string().trim().min(1).max(60),
+  /** The hall itself, in centimetres. Absent takes the default size. */
+  width: z.number().finite().optional(),
+  height: z.number().finite().optional(),
+  tables: z.array(floorTableSchema).max(MAX_TABLES_PER_ZONE),
+  features: z.array(floorFeatureSchema).max(MAX_FEATURES_PER_ZONE).optional(),
+});
+
+export const floorPlanSchema = z.object({
+  zones: z.array(floorZoneSchema).max(MAX_ZONES),
+});
+
+export const updateFloorPlanModeSchema = z.object({ mode: floorPlanModeSchema });
+
+/**
+ * What the restaurant does on an evening that does not say otherwise.
+ *
+ * Every field optional, and **absent means "not talking about it"** rather than
+ * a value: the route writes only what was sent, so saving one switch cannot
+ * reset another. Unlike an evening's own overrides there is no null here —
+ * a restaurant-wide default has nothing to inherit from, so there is no third
+ * state to express.
+ */
+export const updateEveningDefaultsSchema = z
+  .object({
+    tableSelection: floorPlanModeSchema.optional(),
+    promotions: z.boolean().optional(),
+    selfService: z.boolean().optional(),
+  })
+  .refine((row) => Object.values(row).some((value) => value !== undefined), {
     message: "Nothing to save.",
   });

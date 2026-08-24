@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { getPassKeyByCode } from "@/lib/services/pass-keys";
 import { getReservationByNumber, updateReservationAddOns } from "@/lib/services/reservations";
-import { getPromoCatalog, priceOfPromoOption } from "@/lib/services/restaurant";
+import { getPromoCatalog, getRestaurantDate, priceOfPromoOption } from "@/lib/services/restaurant";
+import { getEveningFeatures } from "@/lib/services/settings";
 import { updateAddOnsSchema } from "@/lib/validation/booking";
 import { checkRateLimit, clientKeyFrom } from "@/lib/rate-limit";
+import { toGuestReservation } from "@/lib/guest-reservation";
+import { recordAuditEntry } from "@/lib/services/audit-log";
+import { describeReservationChanges, summariseChanges } from "@/lib/reservation-changes";
 import type { ReservationAddOn } from "@/types/booking";
 
 /**
@@ -91,6 +95,31 @@ export async function POST(request: Request) {
     }
 
     /**
+     * An evening may have promotions switched off — see
+     * `lib/evening-features.ts`. Checked here and not only by hiding the
+     * screen (rule 2.5), because the confirmation page may have been open
+     * since before the switch was thrown.
+     *
+     * Giving one back is always allowed. The offer being closed is a reason
+     * not to sell somebody a bottle of wine, never a reason to trap them with
+     * one they have already decided against — and an empty list is the shape
+     * both "I decline" and "remove it" arrive in.
+     */
+    if (parsed.data.addOns.length > 0) {
+      const evening = await getEveningFeatures(await getRestaurantDate(reservation.date));
+
+      if (!evening.promotions) {
+        return NextResponse.json(
+          {
+            error: "Promotions are not being offered for that evening.",
+            code: "PROMO_CLOSED",
+          },
+          { status: 409 },
+        );
+      }
+    }
+
+    /**
      * English, deliberately. The guest's screen shows the product in their
      * language, but what is stored is what staff read off the service sheet —
      * the same rule the dinner selections follow (rule 2.6).
@@ -128,9 +157,37 @@ export async function POST(request: Request) {
 
     const updated = await updateReservationAddOns(reservation.reservationNumber, addOns);
 
-    return updated
-      ? NextResponse.json({ reservation: updated })
-      : NextResponse.json({ error: "We could not find that reservation." }, { status: 404 });
+    if (!updated) {
+      return NextResponse.json({ error: "We could not find that reservation." }, { status: 404 });
+    }
+
+    /**
+     * Logged, because a guest changing their own booking is still somebody
+     * changing a booking. This route wrote to a reservation and left no trace,
+     * so a bottle of wine appearing on a bill had no history behind it — and
+     * the actor is the pass-key, which is the only name a guest has here.
+     *
+     * After the write and never awaited into it: a failed log write must not
+     * fail the thing being logged.
+     */
+    const changes = describeReservationChanges(reservation, updated);
+
+    if (changes.length > 0) {
+      await recordAuditEntry({
+        action: "reservation:update",
+        actor: {
+          kind: "guest",
+          id: passKey.id,
+          name: `Guest in room ${reservation.roomNumber}`,
+        },
+        reservationNumber: reservation.reservationNumber,
+        summary: summariseChanges(changes),
+        changes,
+        version: updated.version,
+      });
+    }
+
+    return NextResponse.json({ reservation: toGuestReservation(updated) });
   } catch (error) {
     console.error("[booking] failed to save promotions", error);
     return NextResponse.json({ error: "Unable to save your choices." }, { status: 500 });

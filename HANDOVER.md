@@ -784,6 +784,37 @@ guests to arrive ten minutes early.
 tracking — asked for, deliberately not built, and written down so the next session starts from a
 decision rather than a blank page.
 
+**Tables pushed together.** A party of five in a room of four-tops books two
+tables joined. Which tables may be joined is written on the plan as
+`neighbours` — *11 is on 1's left*, stored from both ends and never guessed from
+coordinates — and a combination is a **contiguous stretch of one row**, so 1 and
+12 cannot be joined with 11 standing between them, and a table somebody is
+already on breaks the row in two. A merged holding **claims every table whole**
+because nobody can be seated at a table pushed against a stranger's party, and
+it **seats less than the sum of its tables**: the chairs where two tables meet
+are standing where the other table now is, so two four-tops seat six.
+A table that fits but wastes seats another free table would not is
+`kept-for-larger`, so a party of two cannot take a four-top while a two-top is
+free. `docs/floor-plan.md` §21 and §23. Guests also stop choosing tables at
+the evening's own `tableCutoffHours`, which is **off unless somebody sets it**
+(§22).
+
+`docs/audit-log.md` is the log: which route writes which entry, what a change entry now says
+(**Table 12 → 7**, not "edited the reservation"), how **versions** work — every booking counts its
+writes, every menu counts its saves, and every entry names the version it produced — and the one
+deliberate gap. Note the change of
+mind in §4 — **reading the log needs `audit:read`** rather than any signed-in account, because
+every entry names a guest and a room, so the whole of it read end to end is a guest list. `admin`
+holds it implicitly; existing staff accounts have to be granted it.
+
+## 5A. Decided but not built
+
+`docs/backlog.md` is the list: the wallet reservation card, and running more than one restaurant.
+Each entry says what it would touch and what has to be settled first. `docs/multi-restaurant.md`
+carries the full plan for the second one, including **when** — the winter closure, and not before.
+
+---
+
 ## 6. Known limitations and open items
 
 Roughly in the order I would tackle them for beta.

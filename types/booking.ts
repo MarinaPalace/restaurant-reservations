@@ -1,3 +1,5 @@
+import type { EveningOverrides } from "@/lib/evening-features";
+
 /**
  * Which dinner a booking is. Two values, and only two: an evening is either
  * everyday or invitation-only, and a pass-key belongs to one of those flows.
@@ -166,6 +168,36 @@ export type StoredRestaurantDate = {
    * be worked around by writing it on paper.
    */
   bookingCutoffHours?: number;
+  /**
+   * How many hours before the sitting **guests stop choosing tables** for this
+   * evening. Absent or 0 means no cutoff at all: tables stay pickable for as
+   * long as the booking itself can be made or changed, which is exactly what
+   * every evening did before this existed.
+   *
+   * Its own number rather than `bookingCutoffHours`, because the two answer
+   * different questions. Bookings close when the kitchen can no longer take
+   * another cover; table selection closes when the floor is laid out, which is
+   * usually earlier and sometimes not a concern at all. An evening that does
+   * not care leaves it off.
+   *
+   * Staff are never bound by it, the same as the booking cutoff: reception
+   * moves a table at 18:55 because the guest is standing in front of them.
+   */
+  tableCutoffHours?: number;
+  /**
+   * What this evening switches on or off for itself — see
+   * `lib/evening-features.ts`.
+   *
+   * **Absent means "whatever the restaurant says"**, and so does an absent
+   * field inside it. Every date that existed before this has none, which is
+   * why none of them changed behaviour: they all resolve to the defaults, and
+   * the defaults are the app exactly as it was.
+   *
+   * It is what lets one future date run a feature nobody else has yet — open
+   * the date, write a pass-key for it, and test against real bookings without
+   * turning anything on for tonight.
+   */
+  features?: EveningOverrides;
 };
 
 export type RestaurantDateAvailability = StoredRestaurantDate & {
@@ -320,12 +352,74 @@ export type ReservationRecord = {
   /** Allergies or anything else the kitchen should know. */
   notes?: string;
   /**
+   * What staff want to remember about this booking. **Never shown to guests.**
+   *
+   * A different thing from `notes`, which the guest wrote and the kitchen acts
+   * on. This is written *about* the booking by whoever is on the floor — "asked
+   * for the window next time", "celebrating an anniversary", "was unhappy with
+   * the wine" — and some of it would be mortifying to send to the person it is
+   * about.
+   *
+   * Which is why it is not enough for the guest screens not to render it: every
+   * guest-facing route strips it through `toGuestReservation`, because a guest
+   * can open the network tab and a screen is not a boundary. See
+   * `lib/guest-reservation.ts`.
+   */
+  staffNote?: string;
+  /**
    * Rooms dining together share this id. It is the reservation number of
    * whoever booked first, so guests can read it out to each other.
    */
   tableGroupId?: string;
   /** Assigned by staff in the dashboard; blank until someone sets it. */
   tableNumber?: string;
+  /**
+   * The plan table this booking holds a claim on.
+   *
+   * Stored beside `tableNumber` rather than instead of it, because they answer
+   * different questions. The number is what everybody *calls* the table and is
+   * what the sheet, the board and `groupRoomRowsByTable` read; this is the
+   * plan's own stable id, and it is what a cancellation releases.
+   *
+   * A label can be renamed in the designer — resolving the claim back through
+   * one at cancellation time would release whichever table happens to answer to
+   * that string today, which may be a different table entirely, or none.
+   *
+   * Absent on every booking taken before table selection, on every booking made
+   * with it off, and on any table a member of staff typed in by hand.
+   */
+  tableId?: string;
+  /**
+   * Every plan table this booking holds, when it holds more than one.
+   *
+   * A restaurant of four-tops cannot seat five at a table, so two get pushed
+   * together — `docs/floor-plan.md` §21. `tableId` stays the first of them, so
+   * everything written before combinations existed keeps reading a single id
+   * and finding one there (rule 2.2: additive, never a rename).
+   *
+   * `tableNumber` is what they are called between them, "7 + 8", which is the
+   * string the sheet, the board and `groupRoomRowsByTable` already key on.
+   *
+   * Absent on every booking with one table or none, which is nearly all of
+   * them.
+   */
+  tableIds?: string[];
+  /**
+   * Who put this booking on that table.
+   *
+   * Owner, staff and guest all write the same `tableNumber`, and once written
+   * they were indistinguishable — so nobody could tell whether a table could be
+   * moved freely or whether a guest had picked it deliberately and would mind.
+   * This is the missing half of that: the number says *where*, this says *who
+   * decided*.
+   *
+   * Absent on every booking taken before it existed and on anything with no
+   * table at all, which is what makes it additive (rule 2.2). Absent reads as
+   * "nobody recorded it", never as a guess.
+   */
+  tableSource?: TableSource;
+  /** When the table was last set, beside who set it. */
+  tableSetAt?: string;
   status: ReservationStatus;
   /**
    * The pass-key this booking was made with. It is what lets the guest come
@@ -342,6 +436,25 @@ export type ReservationRecord = {
    * straight out of the database — without joining the log.
    */
   cancellation?: CancellationRecord;
+  /**
+   * How many times this booking has been written, counting its creation.
+   *
+   * The log says what changed; this says **which booking** you are holding. A
+   * history of six entries beside a record with no version leaves "is this the
+   * one the last entry produced, or has something happened since?" unanswerable,
+   * which is the question a version number exists to close.
+   *
+   * Incremented with `$inc` in the same update as the change it counts (rule
+   * 2.7), so two waiters marking different courses cannot lose each other's
+   * bump.
+   *
+   * Absent on every booking written before this existed. Such a booking lands
+   * on 1 with its next write, which looks like a creation and is not one — what
+   * makes that harmless is that the audit entry for the same write carries the
+   * same number, and pairing an entry to the record it produced is the whole
+   * job. Both stores agree on this, deliberately.
+   */
+  version?: number;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -362,6 +475,23 @@ export function withRemainingSeats(date: StoredRestaurantDate): RestaurantDateAv
  * `system` covers automatic action with nobody behind it.
  */
 export type ActorKind = "staff" | "guest" | "system";
+
+/**
+ * Who chose a table.
+ *
+ * Narrower than `ActorKind` on purpose: `system` never picks a table, and the
+ * distinction that matters on the floor is the one between the owner, a member
+ * of staff and the guest themselves. A guest's pick is the one staff should
+ * think twice about moving.
+ */
+export type TableSource = "owner" | "staff" | "guest";
+
+/** What to call each source on screen, and the letter drawn in its ring. */
+export const TABLE_SOURCE_LABELS: Record<TableSource, { name: string; letter: string }> = {
+  owner: { name: "Chosen by the owner", letter: "O" },
+  staff: { name: "Chosen by staff", letter: "S" },
+  guest: { name: "Chosen by the guest", letter: "G" },
+};
 
 export type Actor = {
   kind: ActorKind;
@@ -413,6 +543,30 @@ export const STAFF_PERMISSIONS = [
    * possible.
    */
   "service:record",
+  /**
+   * Draw the room: add, move and label tables in the floor-plan designer.
+   *
+   * Additive, and `admin` holds every permission implicitly — including ones
+   * added later — so no existing account needs touching. Its own permission
+   * rather than folding into `dates:manage`, because laying out the room is a
+   * thing done once by whoever runs the floor, not part of keeping the
+   * calendar.
+   */
+  "floorplan:edit",
+  /**
+   * Read the audit log, and a booking's own history with it.
+   *
+   * It used to be open to anybody signed in, on the reasoning that a log
+   * everybody can see is a log everybody knows is there. That was wrong about
+   * *what is in it*: the log names guests, rooms and what they changed, so the
+   * whole of it is a guest list — and the account left signed in on a tablet on
+   * the floor holds `service:record` and should hold nothing else.
+   *
+   * Additive, and `admin` holds every permission implicitly, so the owner keeps
+   * what they had and an existing staff account has to be granted this
+   * deliberately.
+   */
+  "audit:read",
   "users:manage",
 ] as const;
 
@@ -630,4 +784,38 @@ export type AuditEntry = {
   reservationNumber?: string;
   /** One line, already worded for a human reading the log. */
   summary: string;
+  /**
+   * What actually moved, field by field, when this entry is about an edit.
+   *
+   * Beside `summary` rather than instead of it (rule 2.2): every entry ever
+   * written has a summary and must keep rendering, and a UI that wants to draw
+   * the change properly should not be parsing prose to do it. Absent on
+   * anything that is not an edit, and on every entry written before this
+   * existed.
+   */
+  changes?: AuditChange[];
+  /**
+   * The version of the thing this entry produced.
+   *
+   * So a history reads as a sequence rather than a pile: v4 made this, v5 made
+   * that, and the record in front of you says which one it is. Absent on
+   * entries about things that are not versioned, and on everything written
+   * before versions existed.
+   */
+  version?: number;
+};
+
+/**
+ * One field that moved. Built by `lib/reservation-changes.ts`, which is where
+ * the rules about what counts as a change live.
+ */
+export type AuditChange = {
+  /** The record field, for anything that wants to group or filter later. */
+  field: string;
+  /** What to call it on screen: "Table", "Party", "Arrival". */
+  label: string;
+  /** Absent when the field had nothing in it before. */
+  from?: string;
+  /** Absent when the field was cleared. */
+  to?: string;
 };

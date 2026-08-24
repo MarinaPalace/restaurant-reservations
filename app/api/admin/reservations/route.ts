@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { isDenied, requireStaff } from "@/lib/auth/guard";
+import { tableSourceOfUser } from "@/lib/auth/permissions";
+import { describeNewReservation } from "@/lib/reservation-changes";
 import {
   BookingError,
   TableJoinError,
@@ -100,6 +102,9 @@ export async function POST(request: Request) {
       contact: parsed.data.contact ? normalizeContact(parsed.data.contact) : undefined,
       notes: parsed.data.notes,
       tableNumber: parsed.data.tableNumber,
+      // From the account, never from the body — a request that named its own
+      // source could claim to be a guest's own choice.
+      tableSource: tableSourceOfUser(auth.user),
     });
 
     await recordAuditEntry({
@@ -109,6 +114,8 @@ export async function POST(request: Request) {
       summary:
         `Took a reservation for room ${formatRoomList(reservation.roomNumber, reservation.additionalRooms)}, ` +
         `${reservation.guestCount} guest(s) on ${reservation.date}.`,
+      changes: describeNewReservation(reservation),
+      version: reservation.version,
     });
 
     return NextResponse.json({ reservation }, { status: 201 });

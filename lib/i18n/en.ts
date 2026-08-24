@@ -25,6 +25,7 @@ export const en = {
     guests: "Guests",
     date: "Date",
     menu: "Menu",
+    table: "Table",
     skipToContent: "Skip to main content",
     language: "Language",
     theme: {
@@ -59,6 +60,7 @@ export const en = {
     room: "Your stay",
     guests: "Guests",
     date: "Date",
+    table: "Table",
     menu: "Menu",
     summary: "Confirm",
   },

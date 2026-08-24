@@ -1,7 +1,7 @@
 import { isValidDateKey } from "@/lib/date";
 import { isValidPassKeyFormat, normalizePassKey } from "@/lib/pass-key";
 import { isValidRoomNumber, normalizeRoomNumber } from "@/lib/room";
-import { MAX_GUESTS_PER_RESERVATION } from "@/lib/validation/booking";
+import { MAX_GUESTS_PER_RESERVATION, MAX_TABLE_SELECTION_LENGTH } from "@/lib/validation/booking";
 import type { ReservationRecord, ReservationSelection } from "@/types/booking";
 
 export const BOOKING_STORAGE_KEYS = {
@@ -12,6 +12,8 @@ export const BOOKING_STORAGE_KEYS = {
   roomNumber: "booking-room-number",
   guestCount: "booking-guest-count",
   date: "booking-date",
+  tableId: "booking-table-id",
+  joinNumber: "booking-join-number",
   selections: "booking-selections",
   language: "booking-language",
   confirmation: "reservation-confirmation",
@@ -46,6 +48,16 @@ export type BookingSession = {
   /** 0 means "not chosen yet", which is different from a party of one. */
   guestCount: number;
   date: string;
+  /**
+   * The table the guest picked, by the plan's own id.
+   *
+   * Empty means "any table", which is a real answer rather than a missing one:
+   * most guests do not care where they sit, and the evening only insists when
+   * it is set to `required`.
+   */
+  tableId: string;
+  /** The reservation number this party is sitting with, if any. */
+  joinNumber: string;
   selections: ReservationSelection[];
   language: string;
 };
@@ -58,6 +70,8 @@ export const EMPTY_BOOKING_SESSION: BookingSession = {
   roomNumber: "",
   guestCount: 0,
   date: "",
+  tableId: "",
+  joinNumber: "",
   selections: [],
   language: "en",
 };
@@ -133,6 +147,31 @@ export function readBookingSession(storage: Storage | null | undefined): Booking
     roomNumber: isValidRoomNumber(roomNumber) ? normalizeRoomNumber(roomNumber) : "",
     guestCount: parseGuestCount(storage.getItem(BOOKING_STORAGE_KEYS.guestCount)),
     date: isValidDateKey(date) ? date : "",
+    /**
+     * Read back as an opaque id: whether it still exists on the plan is the
+     * route's question, and a stale one costs a booking with no table rather
+     * than a wrong table.
+     *
+     * Long enough for tables pushed together, which is several ids joined with
+     * `+`. Cutting the string short does not produce a shorter choice — it
+     * produces an id with its tail missing, which resolves to nothing and books
+     * the guest with no table while telling nobody.
+     */
+    /**
+     * The booking this party is sitting with, when they said so before choosing
+     * a table.
+     *
+     * Asked before the table rather than on the summary, because on an evening
+     * where guests pick their own table the two questions are the same
+     * question: a party joining another party is not choosing a table, they are
+     * being told which one they are sitting at. Asking afterwards produced
+     * bookings marked as sharing a table while holding a different one.
+     */
+    joinNumber: (storage.getItem(BOOKING_STORAGE_KEYS.joinNumber) ?? "").trim().toUpperCase().slice(0, 24),
+    tableId: (storage.getItem(BOOKING_STORAGE_KEYS.tableId) ?? "").slice(
+      0,
+      MAX_TABLE_SELECTION_LENGTH,
+    ),
     selections: normalizeSelections(parseJson(storage.getItem(BOOKING_STORAGE_KEYS.selections))),
     language: storage.getItem(BOOKING_STORAGE_KEYS.language) || "en",
   };

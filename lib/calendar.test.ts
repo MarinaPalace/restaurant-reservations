@@ -156,3 +156,27 @@ describe("ics file", () => {
     expect(ics).toContain("LOCATION:Main hall\\, level 2");
   });
 });
+
+/**
+ * The table is the thing a guest has to carry down to dinner, and the calendar
+ * reminder is what they will actually have open on the way — the confirmation
+ * screen was closed days ago.
+ */
+describe("the table on the reminder", () => {
+  /** The details a calendar app will show, out of the query string. */
+  const details = (url: string) => new URL(url).searchParams.get("details") ?? "";
+
+  it("names it in both the link and the file when there is one", () => {
+    const seated = { ...reservation, tableNumber: "12" };
+
+    expect(details(buildGoogleCalendarUrl(seated))).toContain("Table 12");
+    expect(buildIcsFile(seated)).toContain("Table 12");
+  });
+
+  it("says nothing at all when the restaurant is doing the seating", () => {
+    // Not "Table —". A line promising a table that does not exist yet is worse
+    // than no line: the guest turns up looking for it.
+    expect(details(buildGoogleCalendarUrl(reservation))).not.toContain("Table");
+    expect(buildIcsFile(reservation)).not.toContain("Table");
+  });
+});

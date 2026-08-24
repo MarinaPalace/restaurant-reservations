@@ -9,7 +9,7 @@ import { hasPermission, permissionsOf } from "@/lib/auth/permissions";
 import { getDashboardCounts, getReservationsByDate } from "@/lib/services/reservations";
 import { getFullMenuCatalog, getRestaurantDates } from "@/lib/services/restaurant";
 import { todayKey } from "@/lib/date";
-import { getTimeZone } from "@/lib/services/settings";
+import { getEveningDefaults, getTimeZone } from "@/lib/services/settings";
 import { describeClockMismatch } from "@/lib/timezone";
 
 export const metadata: Metadata = { title: "Staff dashboard" };
@@ -25,11 +25,14 @@ export default async function AdminPage() {
 
   const today = todayKey();
 
-  const [restaurantDates, menu, timeZone, counts] = await Promise.all([
+  const [restaurantDates, menu, timeZone, counts, eveningDefaults] = await Promise.all([
     getRestaurantDates(),
     getFullMenuCatalog(),
     getTimeZone(),
     getDashboardCounts(today),
+    // What the restaurant does on an evening that does not say otherwise, so
+    // the editor can show each date's switch beside the thing it inherits.
+    getEveningDefaults(),
   ]);
 
   /**
@@ -70,6 +73,7 @@ export default async function AdminPage() {
     { href: "/admin/menu", label: "Menu editor", permission: "menu:edit" as const },
     { href: "/admin/menu?menu=premium", label: "Premium menu", permission: "menu:edit" as const },
     { href: "/admin/menu?menu=promo", label: "Promotions", permission: "menu:edit" as const },
+    { href: "/admin/floor-plan", label: "Floor plan", permission: "floorplan:edit" as const },
     { href: "/admin/analytics", label: "Analytics", permission: "analytics:view" as const },
     { href: "/admin/users", label: "Staff accounts", permission: "users:manage" as const },
   ].filter((link) => hasPermission(user, link.permission));
@@ -117,6 +121,7 @@ export default async function AdminPage() {
         menu={menu}
         permissions={permissions}
         initialTimeZone={timeZone}
+        initialEveningDefaults={eveningDefaults}
         clockMismatch={clockMismatch}
       />
     </PageShell>

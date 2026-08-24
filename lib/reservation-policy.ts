@@ -24,15 +24,38 @@ export function getModificationDeadline(reservation: Pick<ReservationRecord, "da
   return deadline;
 }
 
-/** Whether the guest may still change or cancel this booking themselves. */
+/**
+ * Whether the guest may still change or cancel this booking themselves.
+ *
+ * `selfService` is the evening's own switch (`lib/evening-features.ts`), and it
+ * is checked **before the deadline** on purpose: an evening that sends its
+ * guests to reception is a standing arrangement, not a thing that runs out at
+ * a particular hour, and telling somebody "changes close four hours before"
+ * when they were never going to be able to change it online is a wrong answer
+ * dressed as a helpful one.
+ *
+ * It defaults to on, which is what the app has always done — and is why the
+ * deadline tests below did not need touching when this was added.
+ */
 export function canGuestModify(
   reservation: Pick<ReservationRecord, "date" | "time" | "endTime" | "status">,
   now = new Date(),
+  selfService = true,
 ): ModificationCheck {
   const deadline = getModificationDeadline(reservation);
 
   if (reservation.status === "cancelled") {
     return { allowed: false, deadline, reason: "This reservation has already been cancelled." };
+  }
+
+  if (!selfService) {
+    return {
+      allowed: false,
+      deadline,
+      reason:
+        "Changes to this evening are arranged by reception. Please give them a call and they will " +
+        "take care of it for you.",
+    };
   }
 
   if (now >= deadline) {
@@ -112,4 +135,73 @@ export function canGuestBookDate(
     deadline,
     cutoffHours: Math.max(0, Number(date.bookingCutoffHours ?? 0)),
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * How late a guest may choose their table
+ * ------------------------------------------------------------------ */
+
+/**
+ * When guests stop choosing tables for an evening.
+ *
+ * A third deadline, and deliberately not one of the two that already exist.
+ * Bookings close when the kitchen can take no more covers (`bookingCutoffHours`).
+ * Changes close when the kitchen has counted (`MODIFICATION_CUTOFF_HOURS`).
+ * Tables close when **the floor is laid out** — which is usually earlier than
+ * either, because a table moving at 18:55 is a table nobody has told the waiter
+ * about, and the plan on the wall is already wrong.
+ *
+ * `tableCutoffHours` absent or 0 means **off**: no separate deadline, tables
+ * stay choosable for as long as the booking rules allow. That is what every
+ * evening did before this existed, so no date needs touching and a restaurant
+ * that does not care never has to think about it.
+ */
+export function getTableSelectionDeadline(
+  date: Pick<RestaurantDateAvailability, "date" | "serviceTime" | "serviceEndTime" | "tableCutoffHours">,
+): Date | null {
+  const hours = Math.max(0, Number(date.tableCutoffHours ?? 0));
+
+  if (hours <= 0) {
+    return null;
+  }
+
+  const { start } = getReservationWindow(date.date, date.serviceTime, date.serviceEndTime);
+  const deadline = new Date(start);
+
+  deadline.setMinutes(deadline.getMinutes() - Math.round(hours * 60));
+  return deadline;
+}
+
+export type TableSelectionCheck = {
+  allowed: boolean;
+  /** Absent when this evening has no table cutoff at all. */
+  deadline: Date | null;
+  /** How many hours before the sitting tables stop being chosen. 0 = never. */
+  cutoffHours: number;
+};
+
+/**
+ * Whether a **guest** may still choose or change a table on this evening.
+ *
+ * Staff never call this. Reception seats a party that has walked up to the
+ * desk, and a rule that stopped them would only be worked around on paper.
+ *
+ * Note what this does *not* check: whether the booking may be changed at all.
+ * That is `canGuestModify`, and both have to pass — the table cutoff can only
+ * ever close the door earlier, never hold it open after the booking itself has
+ * closed.
+ */
+export function canGuestChooseTable(
+  date: Pick<RestaurantDateAvailability, "date" | "serviceTime" | "serviceEndTime" | "tableCutoffHours"> | null,
+  now = new Date(),
+): TableSelectionCheck {
+  const cutoffHours = Math.max(0, Number(date?.tableCutoffHours ?? 0));
+
+  if (!date || cutoffHours <= 0) {
+    return { allowed: true, deadline: null, cutoffHours: 0 };
+  }
+
+  const deadline = getTableSelectionDeadline(date);
+
+  return { allowed: deadline === null || now < deadline, deadline, cutoffHours };
 }

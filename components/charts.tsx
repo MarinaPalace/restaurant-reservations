@@ -497,3 +497,367 @@ export function Meter({ label, value, hint }: { label: string; value: number | n
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ *
+ * A measure over time, as a line
+ * ------------------------------------------------------------------ */
+
+export type TrendPoint = { key: string; label: string; value: number; previous?: number };
+
+/**
+ * The same measure over time, drawn as a line with a soft area under it.
+ *
+ * ## Why a line rather than the columns beside it
+ *
+ * Columns say "these are the buckets and here is each one's total"; a line says
+ * "this is one thing, and here is its shape". Occupancy and covers are the
+ * second kind — continuous, and read for their direction rather than for the
+ * value of any single Tuesday. Thirty columns is a picket fence in which no
+ * trend is visible at all.
+ *
+ * ## The comparison is the same measure, so it is the same hue
+ *
+ * The previous period is drawn **dashed and muted**, not in a second colour.
+ * It is not another category — it is the same quantity a month ago — and
+ * spending the identity channel on "when" would say these are two different
+ * things. Dash and weight carry time; the hue stays the measure.
+ */
+export function TrendChart({
+  points,
+  label,
+  comparisonLabel,
+  valueSuffix = "",
+  onSelect,
+}: {
+  points: TrendPoint[];
+  label: string;
+  /** Names the dashed line. Absent hides it even when the data carries one. */
+  comparisonLabel?: string;
+  valueSuffix?: string;
+  /** Opens one bucket. The cursor only changes where there is something to open. */
+  onSelect?: (key: string) => void;
+}) {
+  const [hovered, setHovered] = useState<number | null>(null);
+  const titleId = useId();
+
+  const showComparison = Boolean(comparisonLabel) && points.some((point) => point.previous !== undefined);
+  const peak = Math.max(...points.map((p) => Math.max(p.value, showComparison ? (p.previous ?? 0) : 0)), 0);
+  const top = niceCeiling(peak);
+  const ticks = [0, top / 2, top];
+
+  const width = 100;
+  const height = 42;
+
+  if (points.length === 0) {
+    return <p className="py-8 text-center text-sm text-ink-muted">Nothing in this period.</p>;
+  }
+
+  /** A point's centre, in viewBox units. One point sits in the middle. */
+  const xOf = (index: number) => (points.length === 1 ? width / 2 : (index / (points.length - 1)) * width);
+  const yOf = (value: number) => height - (top > 0 ? (value / top) * height : 0);
+
+  const path = (pick: (point: TrendPoint) => number | undefined) => {
+    const usable = points
+      .map((point, index) => ({ index, value: pick(point) }))
+      .filter((entry): entry is { index: number; value: number } => entry.value !== undefined);
+
+    return usable.map((entry, order) => `${order === 0 ? "M" : "L"}${xOf(entry.index)} ${yOf(entry.value)}`).join(" ");
+  };
+
+  const line = path((point) => point.value);
+
+  return (
+    <figure className="relative m-0">
+      {hovered !== null ? (
+        <Tooltip x={points.length === 1 ? 50 : (hovered / (points.length - 1)) * 100}>
+          <span className="block font-semibold text-ink">{points[hovered].label}</span>
+          <span className="block text-ink-muted">
+            {formatCompact(points[hovered].value)}
+            {valueSuffix} {label.toLowerCase()}
+          </span>
+          {showComparison && points[hovered].previous !== undefined ? (
+            <span className="block text-ink-subtle">
+              {formatCompact(points[hovered].previous!)}
+              {valueSuffix} {comparisonLabel!.toLowerCase()}
+            </span>
+          ) : null}
+        </Tooltip>
+      ) : null}
+
+      <div className="flex gap-2">
+        <div
+          className="flex w-10 shrink-0 flex-col justify-between py-0.5 text-right text-[10px] tabular-nums text-ink-subtle"
+          aria-hidden="true"
+        >
+          {[...ticks].reverse().map((tick) => (
+            <span key={tick}>{formatCompact(Math.round(tick))}</span>
+          ))}
+        </div>
+
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          preserveAspectRatio="none"
+          role="img"
+          aria-labelledby={titleId}
+          className="h-44 w-full sm:h-56"
+        >
+          <title id={titleId}>
+            {label} over time. Highest {formatCompact(peak)}
+            {valueSuffix}.
+          </title>
+
+          {ticks.map((tick) => (
+            <line
+              key={tick}
+              x1={0}
+              x2={width}
+              y1={yOf(tick)}
+              y2={yOf(tick)}
+              stroke="var(--line)"
+              strokeWidth={0.25}
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+
+          {/* The area is the line's own hue at low opacity: it weights the
+              shape without introducing a second thing to read. */}
+          {line ? (
+            <path
+              d={`${line} L${xOf(points.length - 1)} ${height} L${xOf(0)} ${height} Z`}
+              fill="var(--accent)"
+              opacity={0.12}
+            />
+          ) : null}
+
+          {showComparison ? (
+            <path
+              d={path((point) => point.previous)}
+              fill="none"
+              stroke="var(--ink-subtle)"
+              strokeWidth={1.5}
+              strokeDasharray="3 3"
+              vectorEffect="non-scaling-stroke"
+              strokeLinejoin="round"
+            />
+          ) : null}
+
+          <path
+            d={line}
+            fill="none"
+            stroke="var(--accent)"
+            strokeWidth={2}
+            vectorEffect="non-scaling-stroke"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+
+          {points.map((point, index) => (
+            <g key={point.key}>
+              {hovered === index ? (
+                <circle cx={xOf(index)} cy={yOf(point.value)} r={1.2} fill="var(--accent)" />
+              ) : null}
+              {/*
+                A full-height hit area per point. A 2px line is not something
+                anybody hovers on purpose, and the value is what they are after.
+              */}
+              <rect
+                x={xOf(index) - (points.length === 1 ? width / 2 : width / (points.length - 1) / 2)}
+                y={0}
+                width={points.length === 1 ? width : width / (points.length - 1)}
+                height={height}
+                fill="transparent"
+                className={onSelect ? "cursor-pointer" : undefined}
+                onPointerEnter={() => setHovered(index)}
+                onPointerLeave={() => setHovered(null)}
+                onClick={() => onSelect?.(point.key)}
+              />
+            </g>
+          ))}
+        </svg>
+      </div>
+
+      <figcaption className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-xs text-ink-subtle">
+        <span className="flex items-center gap-3">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-0.5 w-4 rounded-full bg-accent" aria-hidden="true" />
+            {label}
+          </span>
+          {showComparison ? (
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                className="inline-block h-0.5 w-4 rounded-full"
+                style={{ background: "repeating-linear-gradient(90deg, var(--ink-subtle) 0 3px, transparent 3px 6px)" }}
+                aria-hidden="true"
+              />
+              {comparisonLabel}
+            </span>
+          ) : null}
+        </span>
+        <span className="tabular-nums">
+          {points[0].label} — {points[points.length - 1].label}
+        </span>
+      </figcaption>
+    </figure>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Columns split by category
+ * ------------------------------------------------------------------ */
+
+export type StackedPoint = { key: string; label: string; parts: number[] };
+
+/**
+ * Each bucket's total, split into the parts it is made of.
+ *
+ * ## Why this one is allowed more than one colour
+ *
+ * The rest of this module is single-hue on purpose: the app's accent and
+ * success failed the categorical validator, and length already says the value.
+ * A stack is the exception where a second mark genuinely encodes a second
+ * thing — guest against staff, seated against no-show — and there is no length
+ * left to say it with.
+ *
+ * So it uses the **ordinal accent ramp** the funnel already uses, which passed
+ * the ordinal checks in both themes: monotone lightness, ΔL ≥ 0.06 between
+ * steps. Two or three series, never more — beyond that the ramp stops being
+ * separable and the honest answer is several charts.
+ *
+ * Every series is also **named directly in the legend with its own total**, so
+ * nothing rests on telling two browns apart. Colour is the shortcut; the words
+ * are the answer.
+ */
+export function StackedColumns({
+  points,
+  series,
+  valueSuffix = "",
+  onSelect,
+}: {
+  points: StackedPoint[];
+  /** In stacking order, bottom first. Two or three. */
+  series: string[];
+  valueSuffix?: string;
+  onSelect?: (key: string) => void;
+}) {
+  const [hovered, setHovered] = useState<number | null>(null);
+  const titleId = useId();
+
+  const totals = points.map((point) => point.parts.reduce((sum, part) => sum + part, 0));
+  const top = niceCeiling(Math.max(...totals, 0));
+  const ticks = [0, top / 2, top];
+
+  const width = 100;
+  const height = 42;
+  const slot = points.length > 0 ? width / points.length : width;
+  const barWidth = Math.min(slot * 0.62, 4.2);
+
+  if (points.length === 0) {
+    return <p className="py-8 text-center text-sm text-ink-muted">Nothing in this period.</p>;
+  }
+
+  const seriesTotals = series.map((_, index) =>
+    points.reduce((sum, point) => sum + (point.parts[index] ?? 0), 0),
+  );
+
+  return (
+    <figure className="relative m-0">
+      {hovered !== null ? (
+        <Tooltip x={((hovered + 0.5) / points.length) * 100}>
+          <span className="block font-semibold text-ink">{points[hovered].label}</span>
+          {series.map((name, index) => (
+            <span key={name} className="block text-ink-muted">
+              {formatCompact(points[hovered].parts[index] ?? 0)}
+              {valueSuffix} {name.toLowerCase()}
+            </span>
+          ))}
+        </Tooltip>
+      ) : null}
+
+      <div className="flex gap-2">
+        <div
+          className="flex w-10 shrink-0 flex-col justify-between py-0.5 text-right text-[10px] tabular-nums text-ink-subtle"
+          aria-hidden="true"
+        >
+          {[...ticks].reverse().map((tick) => (
+            <span key={tick}>{formatCompact(Math.round(tick))}</span>
+          ))}
+        </div>
+
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          preserveAspectRatio="none"
+          role="img"
+          aria-labelledby={titleId}
+          className="h-44 w-full sm:h-56"
+        >
+          <title id={titleId}>
+            {series.join(" and ")} per period. Highest total {formatCompact(Math.max(...totals, 0))}
+            {valueSuffix}.
+          </title>
+
+          {ticks.map((tick) => (
+            <line
+              key={tick}
+              x1={0}
+              x2={width}
+              y1={height - (tick / top) * height}
+              y2={height - (tick / top) * height}
+              stroke="var(--line)"
+              strokeWidth={0.25}
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+
+          {points.map((point, index) => {
+            const x = index * slot + (slot - barWidth) / 2;
+            let baseline = height;
+
+            return (
+              <g
+                key={point.key}
+                onPointerEnter={() => setHovered(index)}
+                onPointerLeave={() => setHovered(null)}
+                onClick={() => onSelect?.(point.key)}
+                className={onSelect ? "cursor-pointer" : undefined}
+              >
+                {/* A full-height target, so a short bar is as easy to hit. */}
+                <rect x={index * slot} y={0} width={slot} height={height} fill="transparent" />
+
+                {point.parts.map((part, order) => {
+                  const partHeight = top > 0 ? (part / top) * height : 0;
+                  baseline -= partHeight;
+
+                  return part > 0 ? (
+                    <rect
+                      key={series[order] ?? order}
+                      x={x}
+                      y={baseline}
+                      width={barWidth}
+                      height={partHeight}
+                      fill={FUNNEL_STEPS[Math.min(order, FUNNEL_STEPS.length - 1)]}
+                    />
+                  ) : null;
+                })}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+
+      {/* The words, with the numbers. Nothing rests on telling two browns apart. */}
+      <figcaption className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-subtle">
+        {series.map((name, index) => (
+          <span key={name} className="inline-flex items-center gap-1.5">
+            <span
+              className="inline-block size-2.5 rounded-sm"
+              style={{ background: FUNNEL_STEPS[Math.min(index, FUNNEL_STEPS.length - 1)] }}
+              aria-hidden="true"
+            />
+            {name}
+            <span className="font-semibold tabular-nums text-ink">{formatCompact(seriesTotals[index])}</span>
+          </span>
+        ))}
+      </figcaption>
+    </figure>
+  );
+}

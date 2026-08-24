@@ -6,7 +6,10 @@ import {
   reserveReservationNumber,
 } from "@/lib/services/reservations";
 import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
-import { canGuestBookDate } from "@/lib/reservation-policy";
+import { getEveningFeatures, getFloorPlan } from "@/lib/services/settings";
+import { findPlanCombination } from "@/lib/floor-plan-availability";
+import { TableClaimError, listTableClaims } from "@/lib/services/table-claims";
+import { canGuestBookDate, canGuestChooseTable } from "@/lib/reservation-policy";
 import { BOOKING_MESSAGES, validateReservationRequest } from "@/lib/services/booking-rules";
 import {
   PASS_KEY_MESSAGES,
@@ -18,6 +21,8 @@ import {
   releasePassKey,
 } from "@/lib/services/pass-keys";
 import { recordAuditEntry } from "@/lib/services/audit-log";
+import { describeNewReservation } from "@/lib/reservation-changes";
+import { toGuestReservation } from "@/lib/guest-reservation";
 import { createReservationSchema } from "@/lib/validation/booking";
 import { describeContactProblem, normalizeContact } from "@/lib/contact";
 import { canonicalizeSelections } from "@/lib/menu-selection";
@@ -183,7 +188,35 @@ export async function POST(request: Request) {
 
     claimedKeyId = spent.id;
 
+    /**
+     * The table, resolved from the plan rather than trusted from the request.
+     *
+     * Three things have to be true before a table is claimed, and each is
+     * checked here rather than anywhere the guest can reach:
+     *
+     * - **This evening actually offers the choice.** A request naming a table
+     *   for an evening with selection off is ignored rather than refused: the
+     *   guest gets the booking they asked for, and the field they should never
+     *   have been able to send simply does nothing.
+     * - **The table exists on the plan**, and it is the plan that says how many
+     *   it seats. Rule 2.6: resolve from what is stored, never from what was
+     *   posted.
+     * - **It is in service and labelled**, since the label becomes the
+     *   booking's `tableNumber` and an unlabelled table could not be named on
+     *   the service sheet afterwards.
+     */
+    const table = await resolveTable(
+      parsed.data.date,
+      parsed.data.tableId,
+      parsed.data.guestCount,
+      parsed.data.joinReservationNumber,
+    );
+
     const reservation = await createReservationEntry({
+      tables: table,
+      // The guest picked it themselves on /booking/table. That is the mark
+      // staff should think twice about before moving anybody.
+      tableSource: "guest",
       reservationNumber: claimedReservationNumber,
       roomNumber: parsed.data.roomNumber,
       guestCount: parsed.data.guestCount,
@@ -202,9 +235,13 @@ export async function POST(request: Request) {
       actor: { kind: "guest", id: spent.id, name: `Room ${parsed.data.roomNumber}` },
       reservationNumber: reservation.reservationNumber,
       summary: `Booked ${reservation.guestCount} guest(s) for ${reservation.date} with a pass-key.`,
+      // What they actually booked — the dishes and the table included. Without
+      // it the log knew a booking had happened and nothing about what it was.
+      changes: describeNewReservation(reservation),
+      version: reservation.version,
     });
 
-    return NextResponse.json({ reservation }, { status: 201 });
+    return NextResponse.json({ reservation: toGuestReservation(reservation) }, { status: 201 });
   } catch (error) {
     // The booking failed after the key was spent, so give it back — otherwise
     // the guest is locked out by a failure that was not theirs.
@@ -212,6 +249,24 @@ export async function POST(request: Request) {
       await releasePassKey(claimedKeyId, claimedReservationNumber).catch((releaseError) => {
         console.error("[reservations] failed to release pass-key after a failed booking", releaseError);
       });
+    }
+
+    /**
+     * Somebody else took the table between the plan being drawn and this
+     * request arriving. A `409` with the same shape as a full evening — the
+     * screen reloads the room and the table is now visibly taken.
+     */
+    if (error instanceof TableClaimError) {
+      return NextResponse.json(
+        {
+          error:
+            error.code === "TABLE_TOO_SMALL"
+              ? "That table is not big enough for your party. Please choose another."
+              : "Somebody has just taken that table. Please choose another.",
+          code: "TABLE_TAKEN",
+        },
+        { status: 409 },
+      );
     }
 
     // The party being joined may have gone away between choosing it and here.
@@ -233,4 +288,121 @@ export async function POST(request: Request) {
     console.error("[reservations] failed to create reservation", error);
     return NextResponse.json({ error: GENERIC_ERROR }, { status: 500 });
   }
+}
+
+/**
+ * The plan table a request named, or nothing.
+ *
+ * Nothing is the right answer far more often than an error is: an evening with
+ * selection off, a request from an older screen, a table since taken out of
+ * service. In every one of those the guest asked for a dinner and should get
+ * one — the seat claim is what actually holds their place, and the table is an
+ * additional nicety that either works or does not.
+ *
+ * The one case that *is* an error is a table that exists, is offerable, and
+ * cannot be claimed — and that is raised by `claimTable`, not here.
+ */
+async function resolveTable(
+  date: string,
+  tableId: string | undefined,
+  guestCount: number,
+  joinReservationNumber: string | undefined,
+): Promise<{ id: string; label: string; seats: number }[] | undefined> {
+  if (!tableId) {
+    return undefined;
+  }
+
+  /**
+   * Every way out of here drops the guest's table and takes the booking anyway,
+   * which is the right behaviour and a terrible thing to do quietly.
+   *
+   * A guest who picked three tables, was shown them, and got a booking with no
+   * table has hit one of the five refusals below, and until this said which,
+   * finding out which meant guessing. So each one names itself. It is one line
+   * on a path that is meant never to run, and it is the difference between a
+   * five-minute answer and an afternoon.
+   *
+   * `console.warn` rather than an audit entry: nothing here is about the guest
+   * or the booking, it is about a screen and a plan disagreeing, and that is a
+   * thing for whoever runs the server to read.
+   */
+  const dropped = (reason: string) => {
+    console.warn(
+      `[reservations] table choice dropped (${reason}) date=${date} guests=${guestCount} tableId=${tableId}`,
+    );
+
+    return undefined;
+  };
+
+  const evening = await getRestaurantDate(date);
+  const features = await getEveningFeatures(evening);
+
+  if (features.tableSelection === "off") {
+    return dropped("selection-off");
+  }
+
+  /**
+   * Past the evening's table cutoff the room is already laid out, so a request
+   * arriving from a screen opened before it gets the dinner and not the table.
+   * Silently, and deliberately: the guest asked to eat, the seats are theirs,
+   * and "your table went while you were choosing" is not a booking failure.
+   */
+  if (!canGuestChooseTable(evening, new Date()).allowed) {
+    return dropped("past-cutoff");
+  }
+
+  /**
+   * One id or several joined with `+` — a party of five on two four-tops.
+   * Resolved from the plan, which is what says those tables may be pushed
+   * together at all (rule 2.6).
+   */
+  const combination = findPlanCombination(await getFloorPlan(), tableId);
+
+  if (!combination) {
+    return dropped("not-on-plan");
+  }
+
+  /**
+   * And it has to be big enough, which for tables pushed together is not the
+   * sum of them: two four-tops seat six, because the chairs where they meet are
+   * standing where the other table now is. Nothing below would catch it — a
+   * merged holding claims each table whole, so `claimTable` only ever compares
+   * a table's seats with its own, and a party of eight would be seated at six
+   * chairs without a single check failing.
+   *
+   * Dropped rather than refused, like every other thing this function cannot
+   * resolve: the picker never offers a combination too small, so getting here
+   * means a stale screen or a made-up request, and the guest asked to eat.
+   */
+  if (combination.seats < guestCount) {
+    return dropped(`too-small seats=${combination.seats}`);
+  }
+
+  /**
+   * And big enough for **everybody**, when this party is sitting with another.
+   *
+   * The row has to hold both, and nothing else here would notice: the check
+   * above measures it against this party alone, and the claim counts a row's
+   * people against its first table without ever comparing them to what the row
+   * seats. A screen opened before somebody else joined would otherwise seat
+   * three more at a row with one chair left.
+   */
+  if (joinReservationNumber) {
+    const claims = await listTableClaims(date);
+    const seated = new Map(claims.map((claim) => [claim.tableId, claim.guests]));
+    const already = combination.tables.reduce(
+      (total, table) => total + (seated.get(table.id) ?? 0),
+      0,
+    );
+
+    if (already + guestCount > combination.seats) {
+      return dropped(`too-small-shared seats=${combination.seats} seated=${already}`);
+    }
+  }
+
+  return combination.tables.map((table) => ({
+    id: table.id,
+    label: table.label.trim(),
+    seats: table.seats,
+  }));
 }

@@ -21,24 +21,66 @@ import { canonicalizeSelections } from "@/lib/menu-selection";
 import { reservationLabel } from "@/lib/kitchen-report";
 import { findMissingCourses, summarizeSelections } from "@/lib/reservation-ticket";
 import { formatLongDate } from "@/lib/date";
+import { cx } from "@/components/ui/utils";
+import { TableSourceLetter, tableSourceRing, tableSourceTitle } from "@/components/table-source";
+import { hasPermission } from "@/lib/auth/permissions";
+import { TABLE_SOURCE_LABELS, type AuditAction } from "@/types/booking";
 
 export const metadata: Metadata = { title: "Reservation" };
+
+/**
+ * The heading on a history line that carries its own list of changes.
+ *
+ * Short on purpose: the lines under it say what moved, the line below says who
+ * and when, and a sentence on top of both is the thing that made the panel read
+ * twice.
+ */
+const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
+  "reservation:create": "Booked",
+  "reservation:update": "Edited",
+  "reservation:cancel": "Cancelled",
+  "reservation:restore": "Restored",
+  "reservation:delete": "Deleted",
+  "reservation:table": "Table changed",
+  "reservation:attendance": "Attendance",
+  "passkey:issue": "Pass-key issued",
+  "passkey:revoke": "Pass-key withdrawn",
+  "user:create": "Account created",
+  "user:update": "Account changed",
+  "user:delete": "Account deleted",
+  "menu:save": "Menu saved",
+  "settings:save": "Settings saved",
+  "date:update": "Evening changed",
+};
 
 export default async function ReservationDetailPage({
   params,
 }: {
   params: Promise<{ reservationNumber: string }>;
 }) {
-  if (!(await getCurrentStaffUser())) {
+  const user = await getCurrentStaffUser();
+
+  if (!user) {
     redirect("/admin/login");
   }
+
+  /**
+   * The history is a permission, not a panel that is merely hidden.
+   *
+   * The log names guests, their rooms and what they changed, so it is read by
+   * whoever is allowed to read it and nobody else — and being a server
+   * component, "hidden" here means never fetched rather than fetched and not
+   * drawn. The API route enforces the same permission for anything that asks it
+   * directly.
+   */
+  const mayReadHistory = hasPermission(user, "audit:read");
 
   const { reservationNumber } = await params;
   const [stored, menu, history, currency, promoGroups, timeZone] = await Promise.all([
     getReservationByNumber(reservationNumber),
     getMenuCatalog(),
     // Everything that has happened to this booking, newest first.
-    getAuditEntries({ reservationNumber, limit: 50 }),
+    mayReadHistory ? getAuditEntries({ reservationNumber, limit: 50 }) : Promise.resolve([]),
     // What promotions on this booking are priced in.
     getCurrency(),
     // In English: staff screens stay English, and so do the stored names.
@@ -80,6 +122,17 @@ export default async function ReservationDetailPage({
           as="h1"
           eyebrow="Reservation"
           title={reservation.reservationNumber}
+          /*
+            Which version of this booking you are looking at. Pointless on its
+            own and the whole point beside the history: the last entry names the
+            version it produced, so "is this the record that entry made, or has
+            something happened since?" is answered by reading two numbers.
+          */
+          description={
+            reservation.version
+              ? `Version ${reservation.version}`
+              : "No version recorded — this booking predates version numbers."
+          }
           actions={
             <div className="flex flex-wrap gap-3" data-print="hide">
               <ButtonLink href="/admin">Back to dashboard</ButtonLink>
@@ -140,7 +193,34 @@ export default async function ReservationDetailPage({
           </div>
           <div>
             <dt className="text-sm text-ink-subtle">Table</dt>
-            <dd className="mt-1 text-lg font-semibold text-ink">{reservation.tableNumber || "—"}</dd>
+            <dd className="mt-1 text-lg font-semibold text-ink">
+              {reservation.tableNumber ? (
+                <>
+                  <span
+                    title={tableSourceTitle(reservation.tableSource, reservation.tableNumber)}
+                    className={cx("rounded px-2 py-0.5", tableSourceRing(reservation.tableSource))}
+                  >
+                    {reservation.tableNumber}
+                    <TableSourceLetter source={reservation.tableSource} />
+                  </span>
+                  {/*
+                    Spelled out here, where there is room for it. The day sheet
+                    has a ring and a letter because it has forty rows; this page
+                    has one booking and can afford the sentence.
+                  */}
+                  <span className="ml-2 align-middle text-sm font-normal text-ink-muted">
+                    {reservation.tableSource
+                      ? TABLE_SOURCE_LABELS[reservation.tableSource].name.toLowerCase()
+                      : "nobody recorded who chose it"}
+                    {reservation.tableSetAt
+                      ? ` · ${new Date(reservation.tableSetAt).toLocaleString("en-GB")}`
+                      : ""}
+                  </span>
+                </>
+              ) : (
+                "—"
+              )}
+            </dd>
           </div>
           <div>
             <dt className="text-sm text-ink-subtle">Status</dt>
@@ -346,27 +426,57 @@ export default async function ReservationDetailPage({
           which is the point: "why is there no booking for room 402?" is only
           answerable if the change left a trace.
         */}
-        <section className="mt-8" data-print="hide">
-          <h2 className="eyebrow">History</h2>
-          {history.length === 0 ? (
-            <p className="mt-2 text-sm text-ink-muted">
-              Nothing recorded. This booking predates the log.
-            </p>
-          ) : (
-            <ol className="mt-3 space-y-3 border-l border-line pl-4">
-              {history.map((entry) => (
-                <li key={entry.id}>
-                  <p className="text-sm font-medium text-ink">{entry.summary}</p>
-                  <p className="text-xs text-ink-muted">
-                    {entry.actorName}
-                    {entry.actorKind === "guest" ? " (guest)" : entry.actorKind === "system" ? "" : " (staff)"} ·{" "}
-                    <time dateTime={entry.at}>{new Date(entry.at).toLocaleString("en-GB")}</time>
-                  </p>
-                </li>
-              ))}
-            </ol>
-          )}
-        </section>
+        {mayReadHistory ? (
+          <section className="mt-8" data-print="hide">
+            <h2 className="eyebrow">History</h2>
+            {history.length === 0 ? (
+              <p className="mt-2 text-sm text-ink-muted">
+                Nothing recorded. This booking predates the log.
+              </p>
+            ) : (
+              <ol className="mt-3 space-y-3 border-l border-line pl-4">
+                {history.map((entry) => (
+                  <li key={entry.id}>
+                    {/*
+                      What moved, drawn from the stored fields rather than
+                      parsed back out of the summary — and instead of it, since
+                      the summary of an edit is the same sentence in prose and
+                      printing both said everything twice. Entries written
+                      before `changes` existed have none and fall back to the
+                      sentence, which is why the summary is still written.
+                    */}
+                    <p className="text-sm font-medium text-ink">
+                      {entry.changes?.length ? AUDIT_ACTION_LABELS[entry.action] : entry.summary}
+                    </p>
+                    {entry.changes?.length ? (
+                      <ul className="mt-1 space-y-0.5">
+                        {entry.changes.map((change) => (
+                          <li key={change.field} className="text-xs text-ink-muted">
+                            <span className="font-medium text-ink">{change.label}</span>{" "}
+                            {change.from ? <s className="text-ink-subtle">{change.from}</s> : null}
+                            {change.from && change.to ? " → " : null}
+                            {change.to ? <span className="text-ink">{change.to}</span> : null}
+                            {change.to ? null : " cleared"}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    <p className="mt-1 text-xs text-ink-muted">
+                      {entry.version ? (
+                        <span className="mr-1 rounded bg-surface-sunken px-1.5 py-0.5 font-medium tabular-nums text-ink-muted">
+                          v{entry.version}
+                        </span>
+                      ) : null}
+                      {entry.actorName}
+                      {entry.actorKind === "guest" ? " (guest)" : entry.actorKind === "system" ? "" : " (staff)"} ·{" "}
+                      <time dateTime={entry.at}>{new Date(entry.at).toLocaleString("en-GB")}</time>
+                    </p>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+        ) : null}
       </Card>
     </PageShell>
   );

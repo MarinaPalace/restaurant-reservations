@@ -182,6 +182,7 @@ export function MenuEditor({
    * until the person presses Save.
    */
   startedFromCopy = false,
+  initialVersion = 0,
   /**
    * What promotion prices are quoted in. Promotions only — a dinner course
    * carries no price — and saved through its own endpoint, so changing it does
@@ -192,6 +193,11 @@ export function MenuEditor({
   initialCourses: MenuCourse[];
   menu: MenuCatalog;
   startedFromCopy?: boolean;
+  /**
+   * How many times this catalogue has been saved. Shown so a menu can be
+   * talked about — "the starter changed in v12" — the way a booking can be.
+   */
+  initialVersion?: number;
   initialCurrency: Currency;
 }) {
   const catalog = CATALOGS[menu];
@@ -201,6 +207,7 @@ export function MenuEditor({
   const [courses, setCourses] = useState<MenuCourse[]>(initialCourses);
   // Cleared on the first successful save, when the copy stops being a draft.
   const [showCopyNotice, setShowCopyNotice] = useState(startedFromCopy);
+  const [version, setVersion] = useState(initialVersion);
   const [language, setLanguage] = useState(DEFAULT_LANGUAGE);
   const [extraLanguages, setExtraLanguages] = useState<string[]>([]);
   const [newLanguage, setNewLanguage] = useState("");
@@ -411,6 +418,9 @@ export function MenuEditor({
       }
 
       setCourses(Array.isArray(data.menu) ? data.menu : courses);
+      // The version the save produced, straight from the route that bumped it,
+      // so the number on screen is the number in the log.
+      if (typeof data.version === "number") setVersion(data.version);
       setShowCopyNotice(false);
       setNotice(
         showCopyNotice
@@ -433,7 +443,14 @@ export function MenuEditor({
           as="h1"
           eyebrow={catalog.eyebrow}
           title={catalog.title}
-          description={catalog.description}
+          description={
+            <>
+              {catalog.description}
+              {version > 0 ? (
+                <span className="ml-1 text-ink-subtle"> · version {version}</span>
+              ) : null}
+            </>
+          }
           actions={
             <div className="flex flex-wrap items-center gap-3">
               {/* The three catalogues are edited and saved independently. */}

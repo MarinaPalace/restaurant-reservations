@@ -71,7 +71,18 @@ export default function SummaryPage() {
           selections: session.selections,
           contact: normalizeContact(contact),
           notes: notes.trim() || undefined,
-          joinReservationNumber: shareTable && joinNumber.trim() ? joinNumber.trim().toUpperCase() : undefined,
+          /**
+           * Answered on the table step when guests choose their own table, and
+           * here when they do not. Whichever asked it, exactly one answer is
+           * sent — the session's wins, because that is the one the table was
+           * decided from, and asking again after the fact is what let a booking
+           * be marked as sharing a table while holding a different one.
+           */
+          joinReservationNumber:
+            session.joinNumber ||
+            (shareTable && joinNumber.trim() ? joinNumber.trim().toUpperCase() : undefined),
+          // Empty means "any table", which the route reads as no claim at all.
+          tableId: session.tableId || undefined,
         }),
       });
 
@@ -82,6 +93,17 @@ export default function SummaryPage() {
         // client guessing from the wording of the message.
         if (data.code === "DATE_UNAVAILABLE") {
           router.push("/booking/date");
+          return;
+        }
+
+        /**
+         * Somebody took the table between the room being drawn and this
+         * submission. Back to the picker rather than an error on the summary:
+         * the plan reloads with the table now visibly taken, which is both the
+         * explanation and the way to fix it.
+         */
+        if (data.code === "TABLE_TAKEN") {
+          router.push("/booking/table");
           return;
         }
 
@@ -173,6 +195,15 @@ export default function SummaryPage() {
             )}
           </Field>
 
+          {session.joinNumber ? (
+            // Already settled, before the table was chosen. Shown rather than
+            // asked again: two controls for one question is how the two answers
+            // came to disagree.
+            <div className="rounded-control border border-line bg-surface-muted p-4 text-sm text-ink">
+              Sitting with reservation{" "}
+              <span className="font-semibold">{session.joinNumber}</span>.
+            </div>
+          ) : (
           <div className="rounded-control border border-line bg-surface-muted p-4">
             <label className="flex min-h-11 items-center gap-3 text-sm font-medium text-ink">
               <input
@@ -200,6 +231,7 @@ export default function SummaryPage() {
               </div>
             ) : null}
           </div>
+          )}
 
           <ContactFields
             contact={contact}

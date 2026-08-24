@@ -7,6 +7,7 @@ import { getRestaurantDate } from "@/lib/services/restaurant";
 import { getEveningFeatures } from "@/lib/services/settings";
 import { manageReservationSchema } from "@/lib/validation/booking";
 import { toGuestReservation } from "@/lib/guest-reservation";
+import { checkRateLimit, clientKeyFrom } from "@/lib/rate-limit";
 
 const NOT_FOUND = { error: "We could not find a reservation for that pass-key." };
 
@@ -19,6 +20,28 @@ const NOT_FOUND = { error: "We could not find a reservation for that pass-key." 
  * back — see `/api/admin/reservations/[reservationNumber]/restore`.
  */
 export async function POST(request: Request) {
+  /**
+   * Rate limited like every other route the pass-key opens, and this one has
+   * the strongest claim to it: the key is the only credential, so an
+   * unthrottled endpoint is a place to try codes — and a correct guess here
+   * does not read a booking, it **cancels somebody's dinner**.
+   *
+   * Its siblings — the lookup, the table change, the key check — were all
+   * limited. This one was missed, which is the ordinary way a gap appears:
+   * nothing about it looks different from the outside.
+   */
+  const limit = checkRateLimit(clientKeyFrom(request, "manage-cancel"), {
+    limit: 12,
+    windowMs: 60_000,
+  });
+
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "Too many attempts. Please wait a moment and try again." },
+      { status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds) } },
+    );
+  }
+
   try {
     const parsed = manageReservationSchema.safeParse(await request.json());
 

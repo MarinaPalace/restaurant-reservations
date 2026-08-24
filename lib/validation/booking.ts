@@ -597,6 +597,26 @@ export const floorTableSchema = z.object({
   chairs: z.boolean().optional(),
   chairCount: z.number().int().min(0).max(24).optional(),
   chairSides: z.array(z.enum(CHAIR_SIDES)).max(CHAIR_SIDES.length).optional(),
+  /**
+   * Which tables stand next to this one — what says they may be pushed
+   * together at all.
+   *
+   * Listed here because this schema **strips what it does not name**, so a
+   * field missing from it is a field silently thrown away on every save: the
+   * designer writes the links, the room comes back with none, and no combination
+   * is ever offered to anybody. The reciprocity and the dropping of links to
+   * tables that are not there belong to `toFloorPlan`, which runs after this;
+   * all this has to do is let them through.
+   */
+  neighbours: z
+    .array(
+      z.object({
+        tableId: z.string().trim().min(1).max(64),
+        side: z.enum(CHAIR_SIDES),
+      }),
+    )
+    .max(CHAIR_SIDES.length)
+    .optional(),
   tags: z.array(z.string().trim().max(24)).max(8).optional(),
 });
 

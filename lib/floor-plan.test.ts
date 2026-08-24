@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { floorPlanSchema } from "@/lib/validation/booking";
 import {
   DEFAULT_FEATURE_SIZE,
   DEFAULT_TABLE_SIZE,
@@ -1094,5 +1095,78 @@ describe("what a row of tables actually seats", () => {
 
   it("is just the table when there is only one", () => {
     expect(joinedSeats([table({ seats: 4 })])).toBe(4);
+  });
+});
+
+
+/**
+ * The whole way in, as the designer actually saves.
+ *
+ * The route validates with `floorPlanSchema` and *then* reads the result with
+ * `toFloorPlan`, and the schema **strips every field it does not name**. A
+ * table field missing from it is therefore not a lax validation — it is a field
+ * thrown away on every save, which is how the links between tables came back
+ * empty from a room where staff had just drawn them. Nothing here is testable
+ * from either half alone.
+ */
+describe("a plan saved the way the designer saves it", () => {
+  const drawn = {
+    zones: [
+      {
+        id: "z1",
+        name: "Main hall",
+        width: 1400,
+        height: 900,
+        tables: [
+          {
+            id: "a",
+            label: "1",
+            seats: 2,
+            shape: "round",
+            active: true,
+            x: 0,
+            y: 0,
+            width: 70,
+            height: 70,
+            rotation: 0,
+            chairSides: ["top", "bottom"],
+            neighbours: [{ tableId: "b", side: "right" }],
+          },
+          {
+            id: "b",
+            label: "2",
+            seats: 2,
+            shape: "round",
+            active: true,
+            x: 100,
+            y: 0,
+            width: 70,
+            height: 70,
+            rotation: 0,
+            neighbours: [{ tableId: "a", side: "left" }],
+          },
+        ],
+        features: [],
+      },
+    ],
+  };
+
+  it("keeps the links through validation and back out again", () => {
+    const parsed = floorPlanSchema.safeParse(drawn);
+    expect(parsed.success).toBe(true);
+
+    const plan = toFloorPlan(parsed.success ? parsed.data : null);
+
+    expect(plan.zones[0].tables[0].neighbours).toEqual([{ tableId: "b", side: "right" }]);
+    expect(plan.zones[0].tables[1].neighbours).toEqual([{ tableId: "a", side: "left" }]);
+  });
+
+  it("keeps the other fields a table carries", () => {
+    // The same stripping would take any of these, and each has been added to
+    // the schema at some point for exactly this reason.
+    const plan = toFloorPlan(floorPlanSchema.parse(drawn));
+
+    expect(plan.zones[0].tables[0].chairSides).toEqual(["top", "bottom"]);
+    expect(plan.zones[0].tables[0].seats).toBe(2);
   });
 });

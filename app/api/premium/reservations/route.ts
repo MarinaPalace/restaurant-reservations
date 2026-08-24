@@ -21,6 +21,7 @@ import { BOOKING_MESSAGES, validateReservationRequest } from "@/lib/services/boo
 import { premiumReservationSchema } from "@/lib/validation/booking";
 import { describeContactProblem, normalizeContact } from "@/lib/contact";
 import { canonicalizeSelections } from "@/lib/menu-selection";
+import { reportError } from "@/lib/observability";
 
 const GENERIC_ERROR = "Something went wrong while creating your reservation. Please try again.";
 
@@ -164,7 +165,11 @@ export async function POST(request: Request) {
   } catch (error) {
     if (claimedKeyId && claimedReservationNumber) {
       await releasePassKey(claimedKeyId, claimedReservationNumber).catch((releaseError) => {
-        console.error("[premium] failed to release pass-key after a failed booking", releaseError);
+        reportError({
+          scope: "premium",
+          event: "passkey:release-after-failure",
+          error: releaseError,
+        });
       });
     }
 
@@ -178,7 +183,7 @@ export async function POST(request: Request) {
       );
     }
 
-    console.error("[premium] failed to create reservation", error);
+    reportError({ scope: "premium", event: "reservation:create", error });
     return NextResponse.json({ error: GENERIC_ERROR }, { status: 500 });
   }
 }

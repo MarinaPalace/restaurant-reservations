@@ -9,6 +9,7 @@ import { toGuestReservation } from "@/lib/guest-reservation";
 import { recordAuditEntry } from "@/lib/services/audit-log";
 import { describeReservationChanges, summariseChanges } from "@/lib/reservation-changes";
 import type { ReservationAddOn } from "@/types/booking";
+import { reportError } from "@/lib/observability";
 
 /**
  * Takes, changes or drops the promotions on a confirmed booking.
@@ -189,7 +190,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ reservation: toGuestReservation(updated) });
   } catch (error) {
-    console.error("[booking] failed to save promotions", error);
+    reportError({ scope: "booking", event: "promotions:save", error });
     return NextResponse.json({ error: "Unable to save your choices." }, { status: 500 });
   }
 }

@@ -8,6 +8,7 @@ import { getEveningFeatures } from "@/lib/services/settings";
 import { manageReservationSchema } from "@/lib/validation/booking";
 import { toGuestReservation } from "@/lib/guest-reservation";
 import { checkRateLimit, clientKeyFrom } from "@/lib/rate-limit";
+import { reportError } from "@/lib/observability";
 
 const NOT_FOUND = { error: "We could not find a reservation for that pass-key." };
 
@@ -102,7 +103,13 @@ export async function POST(request: Request) {
     // Give the key back so the guest can rebook; the audit log keeps the
     // cancellation either way.
     await releasePassKey(passKey.id, reservation.reservationNumber).catch((error) => {
-      console.error("[booking] failed to release pass-key after a guest cancellation", error);
+      reportError({
+        scope: "booking",
+        // The cancellation itself succeeded; the guest keeps a key they cannot
+        // rebook with until somebody notices. Worth its own name in the log.
+        event: "passkey:release-after-cancel",
+        error,
+      });
     });
 
     await recordAuditEntry({
@@ -115,7 +122,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ reservation: toGuestReservation(cancelled) });
   } catch (error) {
-    console.error("[booking] failed to cancel reservation", error);
+    reportError({ scope: "booking", event: "reservation:cancel", error });
     return NextResponse.json({ error: "Unable to cancel reservation." }, { status: 500 });
   }
 }

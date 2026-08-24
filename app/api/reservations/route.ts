@@ -27,6 +27,7 @@ import { createReservationSchema } from "@/lib/validation/booking";
 import { describeContactProblem, normalizeContact } from "@/lib/contact";
 import { canonicalizeSelections } from "@/lib/menu-selection";
 import { checkRateLimit, clientKeyFrom } from "@/lib/rate-limit";
+import { reportError } from "@/lib/observability";
 
 const GENERIC_ERROR = "Something went wrong while creating your reservation. Please try again.";
 
@@ -247,7 +248,13 @@ export async function POST(request: Request) {
     // the guest is locked out by a failure that was not theirs.
     if (claimedKeyId && claimedReservationNumber) {
       await releasePassKey(claimedKeyId, claimedReservationNumber).catch((releaseError) => {
-        console.error("[reservations] failed to release pass-key after a failed booking", releaseError);
+        reportError({
+          scope: "reservations",
+          // Its own event: the booking already failed, and a key left claimed
+          // by a booking that does not exist is a separate thing to chase.
+          event: "passkey:release-after-failure",
+          error: releaseError,
+        });
       });
     }
 
@@ -285,7 +292,7 @@ export async function POST(request: Request) {
       );
     }
 
-    console.error("[reservations] failed to create reservation", error);
+    reportError({ scope: "reservations", event: "reservation:create", error });
     return NextResponse.json({ error: GENERIC_ERROR }, { status: 500 });
   }
 }

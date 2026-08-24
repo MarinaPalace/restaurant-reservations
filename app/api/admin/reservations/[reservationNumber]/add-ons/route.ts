@@ -6,6 +6,7 @@ import { getReservationByNumber, updateReservationAddOns } from "@/lib/services/
 import { getPromoCatalog, priceOfPromoOption } from "@/lib/services/restaurant";
 import { staffAddOnsSchema } from "@/lib/validation/booking";
 import type { ReservationAddOn } from "@/types/booking";
+import { reportError } from "@/lib/observability";
 
 /**
  * Promotions on a booking, set by staff.
@@ -100,7 +101,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ res
 
     return NextResponse.json({ reservation: updated });
   } catch (error) {
-    console.error("[admin] failed to save promotions", error);
+    reportError({ scope: "admin", event: "promotions:save", error });
     return NextResponse.json({ error: "Unable to save the promotions." }, { status: 500 });
   }
 }

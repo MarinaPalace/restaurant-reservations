@@ -49,6 +49,7 @@ export function PlanView({
   zone,
   guestCount,
   chosen,
+  needed,
   pinned,
   onSelect,
   onRefuse,
@@ -57,6 +58,8 @@ export function PlanView({
   guestCount: number;
   /** A table id, or a combination id — `t7+t8` — when tables are pushed together. */
   chosen: string | null;
+  /** How many seats the row must come to: both parties, when sharing. */
+  needed: number;
   /** Tables the guest may not let go of — the party they are sitting with. */
   pinned?: readonly string[];
   /** The whole selection after a tap — a row, a single table, or nothing. */
@@ -150,7 +153,7 @@ export function PlanView({
                   )
                 : []
             }
-            buildRun={() => nextSelection(zone.tables, chosen, table.id, guestCount, pinned)}
+            buildRun={() => nextSelection(zone.tables, chosen, table.id, needed, pinned)}
             onSelect={onSelect}
             onRefuse={onRefuse}
             onFocus={() => setReveal(table)}
@@ -171,10 +174,10 @@ export function PlanView({
             {buildingRun.map((entry) => entry.label).join(" + ")}
           </span>{" "}
           {buildingRun.length > 1 ? `seat ${buildingSeats} pushed together` : `seats ${buildingSeats}`}
-          {buildingSeats < guestCount ? (
+          {buildingSeats < needed ? (
             <span className="text-ink-muted">
               {" "}
-              — not enough for {guestCount}, tap a table beside it to add it
+              — not enough for {needed}, tap a table beside it to add it
             </span>
           ) : null}
         </p>

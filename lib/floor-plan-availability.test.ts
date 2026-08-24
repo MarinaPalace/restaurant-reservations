@@ -645,3 +645,92 @@ describe("building a row onto a party being sat with", () => {
     expect(nextSelection(offered, "t1+t2+t3", "t2", 4, pinned)).toBe("t1+t2+t3");
   });
 });
+
+
+/**
+ * Adding a table when the row has to hold two parties.
+ *
+ * The reported fault: three guests joining a party of three at two two-tops
+ * were shown "not enough room" and then not allowed to add the table that would
+ * have fixed it. The row seats four, this party is three, and the guard that
+ * stops a row growing past what it needs compared those two and concluded there
+ * was nothing to do — measuring a row that has to hold six against three of
+ * them.
+ */
+describe("extending a row for both parties", () => {
+  const TWOS = plan(
+    row(["1", "2", "3", "4"].map((label) => table({ id: `t${label}`, label, seats: 2 }))),
+  );
+
+  // Three already at 1 + 2, which seats four.
+  const offered = offerTables(TWOS, [claim("t1", 3)], 3)[0].tables;
+  const pinned = ["t1", "t2"];
+
+  it("adds the table the second party needs", () => {
+    // Six needed between them, four on the row: the next table along is exactly
+    // what is missing, and tapping it must work.
+    expect(nextSelection(offered, "t1+t2", "t3", 6, pinned)).toBe("t1+t2+t3");
+  });
+
+  it("stops once the row seats everybody", () => {
+    // Six seats for six people. A fourth table is somebody else's.
+    expect(nextSelection(offered, "t1+t2+t3", "t4", 6, pinned)).toBe("t1+t2+t3");
+  });
+
+  it("would have refused the first tap when measured against one party", () => {
+    // The bug, kept as a test: four seats already cover a party of three, so
+    // the row was judged big enough and the tap did nothing.
+    expect(nextSelection(offered, "t1+t2", "t3", 3, pinned)).toBe("t1+t2");
+  });
+});
+
+/**
+ * A party of seven and two four-tops.
+ *
+ * Raised as a thing to check rather than a fault, and it holds: two four-tops
+ * pushed together seat six, so seven cannot have them — not offered, not
+ * buildable, and not resolvable if asked for directly.
+ */
+describe("seven people and two four-tops", () => {
+  const FOURS = plan(
+    row([
+      table({ id: "f1", label: "1", seats: 4 }),
+      table({ id: "f2", label: "2", seats: 4 }),
+      table({ id: "f3", label: "3", seats: 4 }),
+    ]),
+  );
+
+  it("counts the pair as six, not eight", () => {
+    const offered = offerTables(FOURS, [], 7)[0].tables;
+    const pair = ["f1", "f2"].map((id) => offered.find((entry) => entry.id === id)!);
+
+    expect(inspectRun(pair).seats).toBe(6);
+  });
+
+  it("offers three tables rather than two", () => {
+    expect(offerTables(FOURS, [], 7)[0].combinations[0].tableIds).toEqual(["f1", "f2", "f3"]);
+  });
+
+  it("keeps growing the row while two would not reach", () => {
+    const offered = offerTables(FOURS, [], 7)[0].tables;
+
+    expect(nextSelection(offered, "f1+f2", "f3", 7)).toBe("f1+f2+f3");
+  });
+
+  it("refuses the pair outright when asked for it", () => {
+    const resolved = findPlanCombination(FOURS, "f1+f2");
+
+    expect(resolved?.seats).toBe(6);
+    expect(resolved!.seats).toBeLessThan(7);
+  });
+
+  it("loses nothing joining two-tops, which is why they do not have this problem", () => {
+    // Their chairs are on the long sides, so the ends where they meet were
+    // never laid.
+    const twos = plan(
+      row([table({ id: "a", label: "1", seats: 2 }), table({ id: "b", label: "2", seats: 2 })]),
+    );
+
+    expect(findPlanCombination(twos, "a+b")?.seats).toBe(4);
+  });
+});

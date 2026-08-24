@@ -32,6 +32,7 @@ export function TableChooser({
   zones,
   guestCount,
   chosen,
+  needed,
   onChoose,
   pinned,
 }: {
@@ -42,6 +43,11 @@ export function TableChooser({
    * tables are pushed together for a party no single table can take.
    */
   chosen: string | null;
+  /**
+   * How many seats the chosen tables must come to — both parties, when the
+   * guest is sitting with somebody. Defaults to this party alone.
+   */
+  needed?: number;
   onChoose: (id: string | null) => void;
   /**
    * Tables belonging to the party the guest said they are sitting with.
@@ -127,6 +133,7 @@ export function TableChooser({
         zone={zone}
         guestCount={guestCount}
         chosen={chosen}
+        needed={needed ?? guestCount}
         pinned={pinned}
         onSelect={select}
         onRefuse={(table) => setRefused(refusalSentence(table))}

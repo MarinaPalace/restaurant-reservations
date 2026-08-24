@@ -50,6 +50,8 @@ type ShareTarget = {
   tableNumber: string | null;
   seats?: number;
   fits: boolean;
+  /** What the row must seat for both parties together. */
+  seatsNeeded: number;
 };
 
 /**
@@ -254,6 +256,16 @@ export function TablePicker() {
    */
   const chosenTable = findOffer(zones ?? [], chosen);
 
+  /**
+   * How many seats the chosen tables have to come to.
+   *
+   * This party on an ordinary booking, and **both parties** when sitting with
+   * somebody: a row holding two parties measured against one of them is judged
+   * big enough while somebody is left standing — and then refuses to let the
+   * missing table be added, because as far as it knows there is nothing wrong.
+   */
+  const needed = sharing?.tables.length ? sharing.seatsNeeded : guestCount;
+
   const goOn = (tableId: string | null) => {
     writeBookingSession({ tableId: tableId ?? "", joinNumber: sharing?.number ?? "" });
     router.push("/booking/menu");
@@ -278,9 +290,11 @@ export function TablePicker() {
      * two tables for a party of six would have found out by receiving a
      * booking with no table at all.
      */
-    if (chosenTable && chosenTable.seats < guestCount) {
+    if (chosenTable && chosenTable.seats < needed) {
       setError(
-        `Tables ${chosenTable.label} seat ${chosenTable.seats} pushed together, which is not enough for ${guestCount}. Add another table, or choose somewhere else.`,
+        sharing?.tables.length
+          ? `Tables ${chosenTable.label} seat ${chosenTable.seats} pushed together, and ${needed} are needed for both parties. Tap a table beside them to add it.`
+          : `Tables ${chosenTable.label} seat ${chosenTable.seats} pushed together, which is not enough for ${guestCount}. Add another table, or choose somewhere else.`,
       );
       return;
     }
@@ -352,6 +366,7 @@ export function TablePicker() {
             <TableChooser
               zones={zones}
               guestCount={guestCount}
+              needed={needed}
               chosen={chosen}
               onChoose={choose}
               pinned={sharing?.tables ?? []}

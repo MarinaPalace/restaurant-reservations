@@ -8,7 +8,7 @@ import {
 import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
 import { getEveningFeatures, getFloorPlan } from "@/lib/services/settings";
 import { findPlanCombination } from "@/lib/floor-plan-availability";
-import { TableClaimError } from "@/lib/services/table-claims";
+import { TableClaimError, listTableClaims } from "@/lib/services/table-claims";
 import { canGuestBookDate, canGuestChooseTable } from "@/lib/reservation-policy";
 import { BOOKING_MESSAGES, validateReservationRequest } from "@/lib/services/booking-rules";
 import {
@@ -205,7 +205,12 @@ export async function POST(request: Request) {
      *   booking's `tableNumber` and an unlabelled table could not be named on
      *   the service sheet afterwards.
      */
-    const table = await resolveTable(parsed.data.date, parsed.data.tableId, parsed.data.guestCount);
+    const table = await resolveTable(
+      parsed.data.date,
+      parsed.data.tableId,
+      parsed.data.guestCount,
+      parsed.data.joinReservationNumber,
+    );
 
     const reservation = await createReservationEntry({
       tables: table,
@@ -301,6 +306,7 @@ async function resolveTable(
   date: string,
   tableId: string | undefined,
   guestCount: number,
+  joinReservationNumber: string | undefined,
 ): Promise<{ id: string; label: string; seats: number }[] | undefined> {
   if (!tableId) {
     return undefined;
@@ -370,6 +376,28 @@ async function resolveTable(
    */
   if (combination.seats < guestCount) {
     return dropped(`too-small seats=${combination.seats}`);
+  }
+
+  /**
+   * And big enough for **everybody**, when this party is sitting with another.
+   *
+   * The row has to hold both, and nothing else here would notice: the check
+   * above measures it against this party alone, and the claim counts a row's
+   * people against its first table without ever comparing them to what the row
+   * seats. A screen opened before somebody else joined would otherwise seat
+   * three more at a row with one chair left.
+   */
+  if (joinReservationNumber) {
+    const claims = await listTableClaims(date);
+    const seated = new Map(claims.map((claim) => [claim.tableId, claim.guests]));
+    const already = combination.tables.reduce(
+      (total, table) => total + (seated.get(table.id) ?? 0),
+      0,
+    );
+
+    if (already + guestCount > combination.seats) {
+      return dropped(`too-small-shared seats=${combination.seats} seated=${already}`);
+    }
   }
 
   return combination.tables.map((table) => ({

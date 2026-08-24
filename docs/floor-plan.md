@@ -1243,6 +1243,25 @@ room 402's table — but tables **can** be pushed against it. That is how a part
 too big for that table alone is seated beside them rather than told to book
 separately.
 
+### The row has to seat both parties, and only the row knows that
+
+A party of three joining a party of three at two two-tops was told there was no
+room and then not allowed to add the table that would have made room. The rule
+that stops a row growing past what it needs was comparing the row's four seats
+with *this* party's three, deciding it was already big enough, and refusing
+every tap — measuring a row that has to hold six against three of them.
+
+So the share lookup answers `seatsNeeded`, which is both parties together, and
+that is the number the picker builds towards: the hint under the plan, when the
+row stops growing, and whether the booking may go ahead. `guestCount` alone is
+right for an ordinary booking and wrong for every shared one.
+
+The booking route checks it again, and has to: the seat check there measures the
+row against this party, and the claim counts a row's people against its first
+table without ever comparing them to what the row seats. A screen opened before
+somebody else joined would otherwise seat three more at a row with one chair
+left.
+
 ### Exclusivity is stated, not implied by a number
 
 The part that needed care. A table in a row pushed together is taken **whole**,

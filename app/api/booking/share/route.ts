@@ -92,7 +92,7 @@ export async function GET(request: Request) {
      * is simply nothing to show and nothing to be seated at yet.
      */
     if (held.length === 0) {
-      return NextResponse.json({ number, tables: [], tableNumber: null, fits: true });
+      return NextResponse.json({ number, tables: [], tableNumber: null, fits: true, seatsNeeded: guests });
     }
 
     const [plan, claims] = await Promise.all([getFloorPlan(), listTableClaims(date)]);
@@ -101,7 +101,13 @@ export async function GET(request: Request) {
     if (!combination) {
       // Their table is no longer on the plan. Sharing is still allowed — staff
       // will seat the pair — but there is nothing to point at.
-      return NextResponse.json({ number, tables: [], tableNumber: target.tableNumber ?? null, fits: true });
+      return NextResponse.json({
+        number,
+        tables: [],
+        tableNumber: target.tableNumber ?? null,
+        fits: true,
+        seatsNeeded: guests,
+      });
     }
 
     /**
@@ -121,6 +127,16 @@ export async function GET(request: Request) {
       tableNumber: combination.label,
       seats: combination.seats,
       fits: taken + guests <= combination.seats,
+      /**
+       * What the row has to seat for both parties together.
+       *
+       * The number every later question is really about: whether more tables
+       * are needed, when to stop adding them, and whether the booking may go
+       * ahead. A screen given only this party's size measures a row that has to
+       * hold two parties against one of them, decides it is already big enough,
+       * and then refuses to let anybody add the table that was missing.
+       */
+      seatsNeeded: taken + guests,
     });
   } catch (error) {
     console.error("[booking] failed to look up a shared table", error);

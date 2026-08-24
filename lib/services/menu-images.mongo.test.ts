@@ -122,13 +122,104 @@ describe("reading the catalogue", () => {
     expect(dish.imageUrl).toBe("");
   });
 
-  it("still hands the editor the real data URL, which is the one screen that needs it", async () => {
+  it("hands the editor an address too — it is a screen, not an exception", async () => {
     const restaurant = await seedPhotographedMenu();
 
     const { courses } = await restaurant.getMenuCatalogForEditing("standard");
 
-    expect(courses[0].imageUrl).toBe(STORED_IMAGE);
-    expect(courses[0].options[0].imageUrl).toBe(STORED_IMAGE);
+    expect(courses[0].imageUrl).toContain(`/api/menu/images/${courses[0].id}`);
+    expect(courses[0].options[0].imageUrl).toContain(
+      `/api/menu/images/${courses[0].options[0].id}`,
+    );
+    expect(courses[0].imageUrl ?? "").not.toMatch(/^data:/);
+    expect(courses[0].options[0].imageUrl ?? "").not.toMatch(/^data:/);
+  });
+});
+
+/**
+ * The other half of handing the editor an address: it sends that address back
+ * on save, and the photograph has to survive the round trip. Get this wrong and
+ * saving a description quietly deletes every picture on the menu.
+ */
+describe("saving what the editor was given", () => {
+  it("keeps the photograph when the address comes back unchanged", async () => {
+    const restaurant = await seedPhotographedMenu();
+    const { courses } = await restaurant.getMenuCatalogForEditing("standard");
+
+    // Exactly what the editor sends after somebody retitles a course.
+    await restaurant.saveMenuCatalog(
+      [{ ...courses[0], name: "First course" }],
+      "standard",
+    );
+
+    const [heading] = await restaurant.getFullMenuCatalog("standard");
+    expect(heading.name).toBe("First course");
+    expect((await restaurant.findMenuImage(heading.id))?.body.byteLength).toBeGreaterThan(0);
+  });
+
+  it("keeps the dish photograph too", async () => {
+    const restaurant = await seedPhotographedMenu();
+    const { courses } = await restaurant.getMenuCatalogForEditing("standard");
+
+    await restaurant.saveMenuCatalog(
+      [
+        {
+          ...courses[0],
+          options: [{ ...courses[0].options[0], description: "Warm" }],
+        },
+      ],
+      "standard",
+    );
+
+    const [dish] = (await restaurant.getFullMenuCatalog("standard"))[0].options;
+    expect(dish.description).toBe("Warm");
+    expect((await restaurant.findMenuImage(dish.id))?.body.byteLength).toBeGreaterThan(0);
+  });
+
+  it("replaces the photograph when a new one is uploaded over it", async () => {
+    const restaurant = await seedPhotographedMenu();
+    const { courses } = await restaurant.getMenuCatalogForEditing("standard");
+    const before = await restaurant.findMenuImage(courses[0].id);
+
+    // A one-pixel transparent GIF: a different picture from the seeded red one.
+    const replacement =
+      "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+    await restaurant.saveMenuCatalog([{ ...courses[0], imageUrl: replacement }], "standard");
+
+    const [heading] = await restaurant.getFullMenuCatalog("standard");
+    const after = await restaurant.findMenuImage(heading.id);
+    expect(after?.body.equals(before!.body)).toBe(false);
+  });
+
+  it("clears the photograph when it is removed", async () => {
+    const restaurant = await seedPhotographedMenu();
+    const { courses } = await restaurant.getMenuCatalogForEditing("standard");
+
+    await restaurant.saveMenuCatalog([{ ...courses[0], imageUrl: "" }], "standard");
+
+    const [heading] = await restaurant.getFullMenuCatalog("standard");
+    expect(heading.imageUrl).toBe("");
+    expect(await restaurant.findMenuImage(heading.id)).toBeNull();
+  });
+
+  it("copies the bytes when one record's address is saved onto another", async () => {
+    const restaurant = await seedPhotographedMenu();
+    const { courses } = await restaurant.getMenuCatalogForEditing("standard");
+
+    /*
+     * What the premium catalogue does when it opens as a copy of the everyday
+     * one: a brand new record carrying the original's address. The two must end
+     * up with their own bytes, or replacing the premium photo would silently
+     * change the everyday menu.
+     */
+    await restaurant.saveMenuCatalog(
+      [{ ...courses[0], id: "draft-course-1", options: [] }],
+      "premium",
+    );
+
+    const [copied] = await restaurant.getFullMenuCatalog("premium");
+    expect(copied.id).not.toBe(courses[0].id);
+    expect((await restaurant.findMenuImage(copied.id))?.body.byteLength).toBeGreaterThan(0);
   });
 });
 

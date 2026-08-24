@@ -336,9 +336,11 @@ the tie: `/booking/menu` reads no reservations at all and was just as slow.
 ### The fix
 
 The public URL is built **inside the database** now, from `_id` and `updatedAt`, so the bytes never
-move. `findMenuImage` reads the single record and selects only `imageUrl`. The menu editor still
-receives real data URLs — it hands the current picture back to the uploader — via
-`getFullMenuCatalog(menu, { withImageData: true })`, and it is the only caller that asks.
+move. `findMenuImage` reads the single record and selects only `imageUrl`.
+
+*(Updated in §10: the menu editor was the one caller still asking for real data URLs, via
+`getFullMenuCatalog(menu, { withImageData: true })`. It no longer does, and the option no longer
+exists.)*
 
 `lib/services/menu-images.mongo.test.ts` pins it, because this is easy to undo by accident: putting
 the raw field back changes nothing visible on screen and makes every page slow again.
@@ -372,3 +374,88 @@ to read and pointed at the answer immediately — the `wait`/`receive` split rul
 four candidate explanations on its own.
 
 **Ask for a HAR before theorising.** It is cheaper than being wrong twice.
+
+---
+
+## 10. The photographs again, from the other end
+
+§9 stopped the catalogue from *moving* the bytes. It left untouched the question of what happens
+when a browser actually asks for one — and that is where nearly every guest was still waiting.
+
+### The header that did nothing
+
+`/api/menu/images/[id]` was serving `Cache-Control: public, max-age=31536000, immutable` and calling
+it safe to cache hard. It was safe. It was also not being cached anywhere that mattered: **Vercel
+only caches a function response on its CDN when the header carries `s-maxage`.** `max-age` alone
+speaks to the browser.
+
+That is the worst cache to have picked, because of who these users are: they open the app once,
+book, and never come back. A browser cache needs a *previous visit* to be useful and there is never
+one. Meanwhile every guest was asking for the same thirty photographs — the shared cache was the one
+that would have worked, and it was off. Each photo cost a function invocation and a database read,
+per guest.
+
+Both `Cache-Control` and `CDN-Cache-Control` now carry `s-maxage`. The URL is already content-keyed,
+so nothing has to expire or be purged.
+
+**How to tell it is working:** `curl -I` any `/api/menu/images/…` twice. The second must report
+`x-vercel-cache: HIT`. If it never does, this regressed and everything below is decoration.
+
+### One size for every screen
+
+The stored photo is a master, up to 1600px. It was also what every device downloaded — a phone
+painting a 390px-wide card took the full-width JPEG, and the editor's 64px thumbnail took it too.
+
+Uploads now go through `next/image`, which re-encodes per device to AVIF or WebP. Addresses typed by
+staff stay a plain `img`: those are hosts we do not control, and allow-listing them is not worth it.
+
+**Watch for this**: Next refuses to optimise a local image with a query string unless the path is in
+`images.localPatterns` — the default is `[{ pathname: "**", search: "" }]`. Our URLs end in
+`?v=<hash>`, so the first attempt returned `INVALID_IMAGE_OPTIMIZE_REQUEST` for every photo on the
+menu and the page rendered blank. A pattern that omits `search` allows any query; declaring the list
+replaces the default, so the default has to be restated in it.
+
+### What could not be fixed
+
+`/booking/menu` cannot be prerendered. The root layout settles the language from a cookie, which
+makes **every route in this app dynamic**, whatever a page asks for. Setting `revalidate` there looks
+like it works and produces nothing; the build still marks the route `ƒ`. What was done instead is
+narrower: the catalogue is held between requests by `getCachedMenuCatalog` and dropped by tag when
+staff publish, so the render no longer waits on Mongo even though it still runs per request.
+
+Making the shell static means moving language resolution — a `[lang]` segment, or resolving in the
+browser and giving up first-paint language. That is a real decision, not a tidy-up.
+
+`unstable_cache` throws where no incremental cache exists, which is every test that reads the
+catalogue directly. It lives beside the page rather than in `restaurant.ts` for that reason: a
+service that can only be called from inside a Next server is a worse service.
+
+### The editor, which §9 exempted
+
+§9 let the menu editor keep asking for data URLs, because it hands the current picture back to the
+uploader. That exemption cost about **20 MB** on a menu of thirty photos — every one read from Mongo,
+serialized into the page, and sent to whoever opened the screen. Then sent *back* on save, and
+returned a third time in the save's response.
+
+It never needed the bytes. An `img` pointed at `/api/menu/images/<id>` shows the same picture. The
+editor now receives addresses like every other screen, and `saveMenuCatalog` reads an address as
+**"unchanged — leave the stored photo alone"**, writing nothing for that field. A reference to a
+*different* record is the premium catalogue opening as a copy of the everyday one; that one is
+resolved and copied, so the two never share bytes either could later replace.
+
+`withImageData` is gone rather than merely unused. Reading the photographs in order to discard them
+is the shape of the original bug, and an option to do it is an invitation.
+
+The risk here is not slowness, it is **silent data loss**: get the "unchanged" rule wrong and saving
+a description deletes every picture on the menu, with nothing on screen to say so. Five tests in
+`menu-images.mongo.test.ts` pin the round trip — unchanged, replaced, cleared, and copied across.
+
+### Still worth doing
+
+**The 500 KB masters.** The uploader's quality ladder stopped at 0.4, so a detailed photo reached the
+end of it still around half a megabyte and was stored anyway — only the 700 KB ceiling rejected
+anything. The ladder is stricter now, but only for new uploads. `npm run recompress:images` re-encodes
+what is already stored; it reports and changes nothing without `--apply`.
+
+**Moving photos out of the documents** is still the real answer if the menu grows, and still a
+migration. §9 said so and this round did not change it.

@@ -5,7 +5,7 @@ import { MenuCourseModel } from "@/lib/models/menu-course";
 import { MenuOptionModel } from "@/lib/models/menu-option";
 import { RestaurantDateModel } from "@/lib/models/restaurant-date";
 import { localizeMenuCatalog } from "@/lib/menu-localization";
-import { decodeStoredImage, isStoredImage, toPublicImageUrl } from "@/lib/menu-images";
+import { decodeStoredImage, isStoredImage, storedImageIdFrom, toPublicImageUrl } from "@/lib/menu-images";
 import { discountedPrice, toCents } from "@/lib/money";
 import { toEveningOverrides } from "@/lib/evening-features";
 import {
@@ -166,19 +166,17 @@ const PUBLIC_IMAGE_URL = {
 };
 
 /**
- * @param withImageData Keep the raw data URLs. Only the menu editor needs
- * them — it has to hand the current picture back to the uploader — and it is
- * one screen used occasionally, not the booking flow used by every guest.
+ * Never carries image bytes. There is no option to ask for them and that is
+ * deliberate: the menu editor was the last caller that did, and reading the
+ * photographs in order to throw them away is the exact shape of the bug in
+ * docs/performance.md §9. A picture is fetched by asking for the picture.
  */
-export async function getFullMenuCatalog(
-  menu?: MenuCatalog,
-  { withImageData = false }: { withImageData?: boolean } = {},
-): Promise<MenuCourse[]> {
-  const all = await loadFullCatalog(withImageData);
+export async function getFullMenuCatalog(menu?: MenuCatalog): Promise<MenuCourse[]> {
+  const all = await loadFullCatalog();
   return menu ? all.filter((course) => menuCatalogOf(course) === menu) : all;
 }
 
-async function loadFullCatalog(withImageData = false): Promise<MenuCourse[]> {
+async function loadFullCatalog(): Promise<MenuCourse[]> {
   if (!isMongoConfigured()) {
     // The local store keeps whatever was written to it, so the legacy `addOn`
     // flag is resolved on the way out here too.
@@ -193,12 +191,8 @@ async function loadFullCatalog(withImageData = false): Promise<MenuCourse[]> {
   await connectToDatabase();
 
   const [courses, options] = await Promise.all([
-    withImageData
-      ? MenuCourseModel.find({}).sort({ order: 1 }).lean()
-      : MenuCourseModel.aggregate([{ $sort: { order: 1 } }, { $set: { imageUrl: PUBLIC_IMAGE_URL } }]),
-    withImageData
-      ? MenuOptionModel.find({}).lean()
-      : MenuOptionModel.aggregate([{ $set: { imageUrl: PUBLIC_IMAGE_URL } }]),
+    MenuCourseModel.aggregate([{ $sort: { order: 1 } }, { $set: { imageUrl: PUBLIC_IMAGE_URL } }]),
+    MenuOptionModel.aggregate([{ $set: { imageUrl: PUBLIC_IMAGE_URL } }]),
   ]);
 
   return courses.map((course) => toMenuCourse(course as MongoDocument, options as MongoDocument[]));
@@ -272,8 +266,9 @@ export function priceOfPromoOption(option: Pick<MenuOption, "price" | "discountP
  */
 export async function findMenuImage(id: string) {
   if (!isMongoConfigured()) {
-    // A file read the process already has; scanning it costs nothing.
-    for (const course of await loadFullCatalog(true)) {
+    // A file read the process already has; scanning it costs nothing. The
+    // local store holds the data URLs directly, so they are already here.
+    for (const course of await loadFullCatalog()) {
       if (course.id === id && isStoredImage(course.imageUrl)) {
         return decodeStoredImage(course.imageUrl as string);
       }
@@ -296,16 +291,28 @@ export async function findMenuImage(id: string) {
     return null;
   }
 
-  /**
-   * A course and an option can never share an id, so the order here is only
-   * about which is asked first. `imageUrl` is the sole field read: it is the
-   * one field that is large, and this is the one place that wants it.
-   */
+  const stored = await readStoredImageUrl(id);
+  return stored ? decodeStoredImage(stored) : null;
+}
+
+/**
+ * The raw data URL held under an id, or null.
+ *
+ * A course and an option can never share an id, so the order here is only
+ * about which is asked first. `imageUrl` is the sole field read: it is the one
+ * field that is large, and these are the only two places that want it — this
+ * is what serves a picture, and what copies one from another record.
+ */
+async function readStoredImageUrl(id: string): Promise<string | null> {
+  if (!isValidObjectId(id)) {
+    return null;
+  }
+
   for (const model of [MenuCourseModel, MenuOptionModel]) {
     const record = (await model.findById(id).select("imageUrl").lean()) as { imageUrl?: string } | null;
 
     if (record && isStoredImage(record.imageUrl)) {
-      return decodeStoredImage(record.imageUrl as string);
+      return record.imageUrl as string;
     }
   }
 
@@ -353,7 +360,23 @@ export function draftMenuCopy(courses: MenuCourse[], menu: MenuCatalog): MenuCou
 export async function getMenuCatalogForEditing(
   menu: MenuCatalog,
 ): Promise<{ courses: MenuCourse[]; isDraft: boolean }> {
-  const courses = await getFullMenuCatalog(menu, { withImageData: true });
+  /**
+   * The editor gets picture *addresses*, like every other screen.
+   *
+   * It used to ask for the data URLs, on the grounds that it is the one screen
+   * that has to hand the current photo back to the uploader. True, but it does
+   * not have to hold the bytes to do that: an `img` pointed at
+   * `/api/menu/images/<id>` shows the same picture, and saving sends the
+   * address back, which `saveMenuCatalog` reads as "unchanged".
+   *
+   * Asking for the bytes meant every photograph on the menu — thirty of them,
+   * around half a megabyte each, a third larger again as base64 — was read out
+   * of the database, serialized into the page, and sent to whoever opened the
+   * editor. It is the same read that made the guest-facing menu take 72
+   * seconds before `PUBLIC_IMAGE_URL` was introduced; this screen was simply
+   * never moved over with it.
+   */
+  const courses = await getFullMenuCatalog(menu);
 
   // Only the premium menu opens as a copy. An empty promotions catalogue opens
   // blank on purpose: a wine list seeded with the starters would have to be
@@ -362,13 +385,91 @@ export async function getMenuCatalogForEditing(
     return { courses, isDraft: false };
   }
 
-  const standard = await getFullMenuCatalog("standard", { withImageData: true });
+  // Also addresses; the copy resolves them to real bytes when it is saved, so
+  // the two catalogues never share a photograph either could later replace.
+  const standard = await getFullMenuCatalog("standard");
 
   if (standard.length === 0) {
     return { courses: [], isDraft: false };
   }
 
   return { courses: draftMenuCopy(standard, "premium"), isDraft: true };
+}
+
+/**
+ * What to write for `imageUrl`, given what the editor sent back.
+ *
+ * The editor is handed `/api/menu/images/<id>` rather than the bytes, so most
+ * saves carry a reference to a photograph that is already stored. Three cases:
+ *
+ * - **A reference to this same record** — the photo was not touched. Nothing is
+ *   written at all: the field is left off the update, so the stored bytes stay
+ *   where they are and never travel in either direction. This is the ordinary
+ *   case, and it is the whole point.
+ * - **A reference to a different record** — the premium catalogue opening as a
+ *   copy of the everyday one. The photo has to be read once and written onto
+ *   the new record, because the two must not share bytes that either could
+ *   later replace.
+ * - **Anything else** — a fresh upload, an address typed by staff, or an empty
+ *   string clearing the picture. Written as given.
+ *
+ * A reference that resolves to nothing leaves the field alone rather than
+ * clearing it. Losing a photograph is worse than keeping one that a broken
+ * link failed to describe.
+ */
+async function imageUpdateFor(
+  incoming: string | undefined,
+  ownId: string,
+): Promise<{ imageUrl?: string }> {
+  const referenced = storedImageIdFrom(incoming);
+
+  if (!referenced) {
+    return { imageUrl: incoming ?? "" };
+  }
+
+  if (referenced === ownId) {
+    return {};
+  }
+
+  const copied = await readStoredImageUrl(referenced);
+  return copied ? { imageUrl: copied } : {};
+}
+
+/**
+ * The same question for the local JSON store, which holds the data URLs
+ * directly and can answer it without reading anything.
+ */
+function localImageUpdateFor(
+  incoming: string | undefined,
+  ownId: string,
+  stored: Map<string, string>,
+): string {
+  const referenced = storedImageIdFrom(incoming);
+
+  if (!referenced) {
+    return incoming ?? "";
+  }
+
+  return stored.get(referenced) ?? stored.get(ownId) ?? "";
+}
+
+/** Every image the local store currently holds, by the id holding it. */
+async function localImagesById(): Promise<Map<string, string>> {
+  const stored = new Map<string, string>();
+
+  for (const course of await getLocalMenu()) {
+    if (course.imageUrl) {
+      stored.set(course.id, course.imageUrl);
+    }
+
+    for (const option of course.options ?? []) {
+      if (option.imageUrl) {
+        stored.set(option.id, option.imageUrl);
+      }
+    }
+  }
+
+  return stored;
 }
 
 /**
@@ -403,8 +504,17 @@ export async function saveMenuCatalog(
   }));
 
   if (!isMongoConfigured()) {
+    const stored = await localImagesById();
     const others = (await getLocalMenu()).filter((course) => menuCatalogOf(course) !== menu);
-    const saved = await saveLocalMenu([...others, ...tagged]);
+    const resolved = tagged.map((course) => ({
+      ...course,
+      imageUrl: localImageUpdateFor(course.imageUrl, course.id, stored),
+      options: (course.options ?? []).map((option) => ({
+        ...option,
+        imageUrl: localImageUpdateFor(option.imageUrl, option.id, stored),
+      })),
+    }));
+    const saved = await saveLocalMenu([...others, ...resolved]);
     return saved.filter((course) => menuCatalogOf(course) === menu);
   }
 
@@ -422,7 +532,7 @@ export async function saveMenuCatalog(
       required: course.required,
       active: course.active,
       addOn: false,
-      imageUrl: course.imageUrl ?? "",
+      ...(await imageUpdateFor(course.imageUrl, course.id)),
       translations: course.translations ?? {},
     };
 
@@ -445,7 +555,7 @@ export async function saveMenuCatalog(
         description: option.description,
         allergens: option.allergens ?? [],
         active: option.active,
-        imageUrl: option.imageUrl ?? "",
+        ...(await imageUpdateFor(option.imageUrl, option.id)),
         ingredients: option.ingredients ?? "",
         vegan: option.vegan ?? false,
         // Only promotions are priced, and a price that survived being moved
@@ -496,5 +606,11 @@ export async function saveMenuCatalog(
   });
   await MenuOptionModel.deleteMany({ courseId: { $in: keptCourseIds }, _id: { $nin: keptOptionIds } });
 
-  return getFullMenuCatalog(menu, { withImageData: true });
+  /**
+   * Addresses, not bytes. The editor replaces its state with whatever comes
+   * back, so returning the data URLs meant every photograph on the menu made
+   * the round trip a second time — up in the save and down again in its reply,
+   * for pictures the person had not touched.
+   */
+  return getFullMenuCatalog(menu);
 }

@@ -15,7 +15,8 @@
     "recompress:images": "tsx scripts/recompress-menu-images.ts",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run build",
     "backup": "tsx scripts/backup-mongo.ts",
-    "restore": "tsx scripts/restore-mongo.ts"
+    "restore": "tsx scripts/restore-mongo.ts",
+    "measure:images": "tsx scripts/measure-images.ts"
   },
   "dependencies": {
     "@types/qrcode": "^1.5.6",

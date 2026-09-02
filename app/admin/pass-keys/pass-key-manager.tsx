@@ -6,7 +6,16 @@ import { Button, ButtonLink } from "@/components/ui/button";
 import { Alert, Badge, EmptyState } from "@/components/ui/feedback";
 import { Field, Input, Textarea } from "@/components/ui/field";
 import { PassKeyCard } from "@/app/admin/pass-keys/pass-key-card";
-import { formatPassKey, normalizePassKey } from "@/lib/pass-key";
+import { formatPassKey } from "@/lib/pass-key";
+import {
+  PASS_KEY_KIND_FILTERS,
+  PASS_KEY_KIND_LABELS,
+  PASS_KEY_STATUS_FILTERS,
+  countByKind,
+  filterPassKeys,
+  type PassKeyKindFilter,
+  type PassKeyStatusFilter,
+} from "@/lib/pass-key-filter";
 import { formatShortDate, todayKey } from "@/lib/date";
 import { cx } from "@/components/ui/utils";
 import { MAX_GUESTS_PER_RESERVATION } from "@/lib/validation/booking";
@@ -31,11 +40,25 @@ type Props = {
   restaurantName: string;
   /** QR codes for the keys already issued, drawn on the server, by key id. */
   initialQrCodes: Record<string, string>;
+  /**
+   * Where each key's QR points, by key id — the same string the code encodes.
+   * Handed down rather than rebuilt here because the address depends on the
+   * host the request arrived on, which the browser must not have to guess.
+   */
+  initialLinks: Record<string, string>;
   /** Deleting a key outright is an administrator's action. */
   canDelete: boolean;
 };
 
-type Status = "all" | "active" | "used" | "revoked";
+/**
+ * How many rows the list shows before asking.
+ *
+ * There are well over a hundred keys now, and almost every visit to this
+ * screen is about one of them — the guest standing at the desk. Showing the
+ * lot put the search box a long way above whatever it found. Twenty-five is
+ * about a screen; the rest is one press away.
+ */
+const PAGE_SIZE = 25;
 
 /** One arrival, as reception types it. */
 type Row = {
@@ -89,6 +112,7 @@ export function PassKeyManager({
   initialPassKeys,
   restaurantName,
   initialQrCodes,
+  initialLinks,
   canDelete,
 }: Props) {
   const today = todayKey();
@@ -101,38 +125,39 @@ export function PassKeyManager({
   const [error, setError] = useState("");
   const [issued, setIssued] = useState<PassKeyRecord[]>([]);
   const [editing, setEditing] = useState<PassKeyRecord | null>(null);
-  const [filter, setFilter] = useState<Status>("all");
+  const [filter, setFilter] = useState<PassKeyStatusFilter>("all");
+  const [kindFilter, setKindFilter] = useState<PassKeyKindFilter>("all");
   const [query, setQuery] = useState("");
+  const [limit, setLimit] = useState(PAGE_SIZE);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // Newly issued keys arrive with their codes from the API; the rest came with
   // the page. Either way the card never draws its own.
   const [qrCodes, setQrCodes] = useState<Record<string, string>>(initialQrCodes);
+  const [links, setLinks] = useState<Record<string, string>>(initialLinks);
 
-  const visible = useMemo(() => {
-    const byStatus = filter === "all" ? passKeys : passKeys.filter((key) => key.status === filter);
+  /**
+   * Everything matching the two filters and the search — the whole answer, so
+   * the counts and the "showing 25 of 137" line are honest about what is being
+   * held back.
+   */
+  const visible = useMemo(
+    () => filterPassKeys(passKeys, { status: filter, kind: kindFilter, query }),
+    [passKeys, filter, kindFilter, query],
+  );
 
-    /**
-     * Reception searches by whatever is in front of them: the reference on the
-     * hotel booking, the room, a name, or the code on the card the guest is
-     * holding. The key is matched in canonical form so a code typed with or
-     * without dashes both find it.
-     */
-    const needle = query.trim().toLowerCase();
-    if (!needle) {
-      return byStatus;
-    }
+  /**
+   * The kind counts are taken *before* the kind filter is applied, so
+   * "Invitations 12" still says twelve while in-house keys are on screen.
+   * Counted after the status filter and the search, because those are the ones
+   * a count of the whole list would be lying about.
+   */
+  const kindCounts = useMemo(
+    () => countByKind(filterPassKeys(passKeys, { status: filter, kind: "all", query })),
+    [passKeys, filter, query],
+  );
 
-    const codeNeedle = normalizePassKey(query);
-
-    return byStatus.filter((key) => {
-      const haystack = [key.reservationRef, key.roomNumber, key.guestName]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-
-      return haystack.includes(needle) || (codeNeedle.length > 0 && key.code.includes(codeNeedle));
-    });
-  }, [passKeys, filter, query]);
+  const shown = useMemo(() => visible.slice(0, limit), [visible, limit]);
+  const hidden = visible.length - shown.length;
 
   /**
    * Printing cards and printing the list are different page setups, so the
@@ -201,6 +226,7 @@ export function PassKeyManager({
 
       const created: PassKeyRecord[] = data.passKeys ?? [data.passKey];
       setQrCodes((current) => ({ ...current, ...(data.qrCodes ?? {}) }));
+      setLinks((current) => ({ ...current, ...(data.links ?? {}) }));
       setPassKeys((current) => [...created, ...current]);
       setIssued(created);
       setRows([blankRow(today)]);
@@ -563,16 +589,21 @@ export function PassKeyManager({
             actions={
               <div className="flex flex-wrap gap-3">
                 <Button onClick={printCards}>Print the cards</Button>
-                <Button
-                  variant="secondary"
-                  onClick={() =>
-                    navigator.clipboard?.writeText(
-                      cardsToPrint.map((key) => formatPassKey(key.code)).join("\n"),
-                    )
-                  }
-                >
-                  Copy the codes
-                </Button>
+                <CopyButton
+                  value={cardsToPrint.map((key) => formatPassKey(key.code)).join("\n")}
+                  label="Copy the codes"
+                />
+                {/*
+                  One line per key: the code, then the address it opens. What
+                  goes into an email when the guest is not at the desk to be
+                  handed a card.
+                */}
+                <CopyButton
+                  value={cardsToPrint
+                    .map((key) => [formatPassKey(key.code), links[key.id]].filter(Boolean).join("  "))
+                    .join("\n")}
+                  label="Copy the links"
+                />
                 <Button
                   variant="ghost"
                   onClick={() => {
@@ -606,30 +637,61 @@ export function PassKeyManager({
           title="Issued keys"
           description={`${passKeys.length} in total. Tick any to print them again.`}
           actions={
-            <div role="group" aria-label="Filter by status" className="flex flex-wrap gap-2">
-              {(["all", "active", "used", "revoked"] as const).map((option) => (
-                <Button
-                  key={option}
-                  variant={filter === option ? "primary" : "secondary"}
-                  aria-pressed={filter === option}
-                  onClick={() => setFilter(option)}
-                >
-                  {option[0].toUpperCase() + option.slice(1)}
-                </Button>
-              ))}
+            <div className="flex flex-col items-end gap-2">
+              <div role="group" aria-label="Filter by status" className="flex flex-wrap gap-2">
+                {PASS_KEY_STATUS_FILTERS.map((option) => (
+                  <Button
+                    key={option}
+                    variant={filter === option ? "primary" : "secondary"}
+                    aria-pressed={filter === option}
+                    onClick={() => {
+                      setFilter(option);
+                      setLimit(PAGE_SIZE);
+                    }}
+                  >
+                    {option[0].toUpperCase() + option.slice(1)}
+                  </Button>
+                ))}
+              </div>
+
+              {/*
+                A second row rather than four more buttons in the first. Kind
+                and status are independent questions — "the active invitations"
+                is the one reception actually asks — and one row of mutually
+                exclusive buttons cannot answer it.
+              */}
+              <div role="group" aria-label="Filter by type" className="flex flex-wrap gap-2">
+                {PASS_KEY_KIND_FILTERS.map((option) => (
+                  <Button
+                    key={option}
+                    variant={kindFilter === option ? "primary" : "secondary"}
+                    aria-pressed={kindFilter === option}
+                    onClick={() => {
+                      setKindFilter(option);
+                      setLimit(PAGE_SIZE);
+                    }}
+                  >
+                    {PASS_KEY_KIND_LABELS[option]}
+                    <span className="tabular-nums opacity-70">{kindCounts[option]}</span>
+                  </Button>
+                ))}
+              </div>
             </div>
           }
         />
 
         <div className="mt-5 max-w-md">
-          <Field label="Search" hint="Reservation number, room, guest name, or the code on the card.">
+          <Field label="Search" hint="Reservation number, room, guest name, email, or the code on the card.">
             {(fieldProps) => (
               <Input
                 {...fieldProps}
                 type="search"
                 placeholder="40218, 402, Petrova, VDM-K7QP3-M2XR4"
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setLimit(PAGE_SIZE);
+                }}
               />
             )}
           </Field>
@@ -642,9 +704,11 @@ export function PassKeyManager({
               description={
                 query.trim()
                   ? "Nothing matches that search."
-                  : filter === "all"
-                    ? "Issue one above when a guest checks in."
-                    : "Nothing with that status yet."
+                  : kindFilter !== "all"
+                    ? `No ${kindFilter === "premium" ? "invitations" : "in-house keys"} to show here.`
+                    : filter === "all"
+                      ? "Issue one above when a guest checks in."
+                      : "Nothing with that status yet."
               }
             />
           </div>
@@ -670,7 +734,7 @@ export function PassKeyManager({
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
-                {visible.map((key) => (
+                {shown.map((key) => (
                   <tr key={key.id}>
                     <td className="py-3 pr-3">
                       <input
@@ -708,6 +772,18 @@ export function PassKeyManager({
                     </td>
                     <td className="py-3">
                       <div className="flex justify-end gap-2">
+                        {/*
+                          The address behind the QR code, for an invitation
+                          that has to go by email rather than be handed over on
+                          a card. It is the string the code encodes, not one
+                          rebuilt here, so what is pasted into a message and
+                          what is printed cannot drift apart.
+                        */}
+                        <CopyButton
+                          value={links[key.id]}
+                          label="Copy link"
+                          title={links[key.id] ?? "No link for this key"}
+                        />
                         <Button
                           variant="secondary"
                           onClick={() => setEditing(editing?.id === key.id ? null : key)}
@@ -734,6 +810,29 @@ export function PassKeyManager({
                 ))}
               </tbody>
             </table>
+
+            {/*
+              What is being held back, and how to see it. Stated as a count
+              rather than an endless scroll: "25 of 137" is the difference
+              between a list that ends and a list that has been truncated, and
+              reception needs to know which one they are looking at before they
+              conclude a key is not there.
+            */}
+            {hidden > 0 ? (
+              <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-line pt-4">
+                <p className="text-sm text-ink-muted">
+                  Showing {shown.length} of {visible.length}.
+                </p>
+                <Button variant="secondary" onClick={() => setLimit((current) => current + PAGE_SIZE)}>
+                  Show {Math.min(hidden, PAGE_SIZE)} more
+                </Button>
+                {hidden > PAGE_SIZE ? (
+                  <Button variant="ghost" onClick={() => setLimit(visible.length)}>
+                    Show all {visible.length}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         )}
 
@@ -751,6 +850,52 @@ export function PassKeyManager({
         />
       ) : null}
     </>
+  );
+}
+
+/**
+ * Copies a string, and says that it did.
+ *
+ * The feedback is the whole point. `navigator.clipboard.writeText` succeeds
+ * silently, so a button that looks identical before and after is one people
+ * press three times and still do not trust. The failure is silent too — the
+ * API is missing altogether outside a secure context, which is exactly where
+ * a hotel running this on a plain-HTTP address on the local network would
+ * find themselves. So it says "Copied", or it says it could not; never
+ * nothing.
+ */
+function CopyButton({
+  value,
+  label,
+  title,
+}: {
+  /** Absent when there is nothing to copy — the button is then disabled. */
+  value?: string;
+  label: string;
+  title?: string;
+}) {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+
+  const copy = async () => {
+    if (!value) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(value);
+      setState("copied");
+    } catch {
+      setState("failed");
+    }
+
+    // Back to the label, so the button is ready to be believed next time.
+    window.setTimeout(() => setState("idle"), 2000);
+  };
+
+  return (
+    <Button variant="secondary" onClick={copy} disabled={!value} title={title ?? value} aria-live="polite">
+      {state === "copied" ? "Copied" : state === "failed" ? "Could not copy" : label}
+    </Button>
   );
 }
 

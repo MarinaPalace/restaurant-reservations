@@ -1,6 +1,7 @@
 import type { MenuCourse, ReservationRecord } from "@/types/booking";
 import { compareRoomNumbers } from "@/lib/room";
 import { NONE_OPTION_ID } from "@/lib/menu-selection";
+import { tableGroupKey } from "@/lib/table-group";
 
 /**
  * What the service board shows, worked out from the evening's bookings.
@@ -150,9 +151,14 @@ export function buildBoard(
 
   const groups = new Map<string, ReservationRecord[]>();
   for (const reservation of live) {
-    // The same key the sheet groups on: a shared table before a number is
-    // assigned is still one table.
-    const key = reservation.tableNumber || reservation.tableGroupId || reservation.reservationNumber;
+    // The same rule the sheet groups on, from the same function — the board
+    // keeping its own copy is why it went on splitting parties the sheet had
+    // already learned to keep together.
+    const key = tableGroupKey({
+      tableGroupId: reservation.tableGroupId,
+      table: reservation.tableNumber,
+      reservationNumber: reservation.reservationNumber,
+    });
     groups.set(key, [...(groups.get(key) ?? []), reservation]);
   }
 
@@ -205,7 +211,10 @@ export function buildBoard(
 
     return {
       key,
-      table: members[0].tableNumber ?? "",
+      // The first *real* number, not the first member's. A room that joined
+      // before it was given a table must not blank the heading for the rest —
+      // the floor plan matches its tables on this string.
+      table: members.map((member) => member.tableNumber).find(Boolean) ?? "",
       rooms: members.map(labelOf).sort(compareRoomNumbers),
       guests: members.reduce((sum, reservation) => sum + Math.max(0, reservation.guestCount), 0),
       isShared,

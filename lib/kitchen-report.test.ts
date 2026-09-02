@@ -6,6 +6,7 @@ import {
   chooseSheetPrintSize,
   buildPrepList,
   groupRoomRowsByTable,
+  type RoomRow,
   buildGuestCsv,
   buildGuestRows,
   buildOptionColumns,
@@ -598,5 +599,96 @@ describe("the promotions slip", () => {
   /** Bookings made before promotions existed have no `addOns` at all. */
   it("copes with a booking that predates promotions", () => {
     expect(buildExtrasList([{ ...roomWithTwo, addOns: undefined }])).toEqual([]);
+  });
+});
+
+/**
+ * Rooms that asked to sit together, and the sheet that did not always say so.
+ *
+ * Reported from service: three rooms booked together, each entering the
+ * reservation number they were given, and the dashboard showed them apart.
+ * Saving one merged two of them; the third never joined, whatever was tried.
+ *
+ * The join was never at fault — all three carry the same `tableGroupId`. These
+ * are the display, and they need no database because this function is pure.
+ */
+describe("grouping rooms that asked to sit together", () => {
+  const roomRow = (over: Partial<RoomRow>): RoomRow => ({
+    key: over.reservationNumber ?? "ALC-AAA111",
+    reservationNumber: "ALC-AAA111",
+    table: "7",
+    room: "402",
+    guests: 2,
+    counts: {},
+    comment: "",
+    extras: [],
+    cancelled: false,
+    ...over,
+  });
+
+  /**
+   * The reported fault at its smallest. A row with no table number sorts to the
+   * end of the sheet, away from its own party, and grouping that only merged
+   * with the row *before* it could never bring them back together.
+   */
+  it("keeps a room with no table number with the group it joined", () => {
+    const groups = groupRoomRowsByTable(
+      [
+        roomRow({ reservationNumber: "ALC-AAA111", table: "7", tableGroupId: "ALC-AAA111" }),
+        roomRow({ reservationNumber: "ALC-BBB222", table: "7", tableGroupId: "ALC-AAA111" }),
+        roomRow({ reservationNumber: "ALC-CCC333", table: "", tableGroupId: "ALC-AAA111" }),
+      ],
+      [],
+    );
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].rows).toHaveLength(3);
+    expect(groups[0].isShared).toBe(true);
+    // The heading still names the table the others are at.
+    expect(groups[0].table).toBe("7");
+  });
+
+  it("keeps a group together when its rooms are on different tables", () => {
+    const groups = groupRoomRowsByTable(
+      [
+        roomRow({ reservationNumber: "ALC-AAA111", table: "7", tableGroupId: "ALC-AAA111" }),
+        roomRow({ reservationNumber: "ALC-BBB222", table: "9", tableGroupId: "ALC-AAA111" }),
+      ],
+      [],
+    );
+
+    expect(groups).toHaveLength(1);
+  });
+
+  /** Order must not decide it. Two members separated by a stranger still merge. */
+  it("merges rooms of one group that are not next to each other", () => {
+    const groups = groupRoomRowsByTable(
+      [
+        roomRow({ reservationNumber: "ALC-AAA111", table: "7", tableGroupId: "ALC-AAA111" }),
+        roomRow({ reservationNumber: "ALC-ZZZ999", table: "12" }),
+        roomRow({ reservationNumber: "ALC-BBB222", table: "7", tableGroupId: "ALC-AAA111" }),
+      ],
+      [],
+    );
+
+    expect(groups).toHaveLength(2);
+    expect(groups[0].rows.map((row) => row.reservationNumber)).toEqual([
+      "ALC-AAA111",
+      "ALC-BBB222",
+    ]);
+  });
+
+  /** Unchanged: two rooms reception put at one table are sharing it. */
+  it("still groups two rooms seated at the same table", () => {
+    const groups = groupRoomRowsByTable(
+      [
+        roomRow({ reservationNumber: "ALC-AAA111", table: "7" }),
+        roomRow({ reservationNumber: "ALC-BBB222", table: "7" }),
+        roomRow({ reservationNumber: "ALC-ZZZ999", table: "8" }),
+      ],
+      [],
+    );
+
+    expect(groups).toHaveLength(2);
   });
 });

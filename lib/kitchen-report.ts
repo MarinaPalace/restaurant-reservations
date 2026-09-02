@@ -308,19 +308,74 @@ export type TableGroup = {
   isShared: boolean;
 };
 
+/**
+ * What makes two rows one table on the sheet.
+ *
+ * **The group comes first, and that is the fix.** The key used to prefer the
+ * table number and fall back to the group only when there was no number at all
+ * — so a party was split the moment one of its rooms was missing a table, or had
+ * been moved to a different one. What the guests asked for does not stop being
+ * true because a table number changed, and it is the thing they actually said.
+ * The table is what a group is *labelled* with, not what defines it.
+ *
+ * Falling back to the table keeps what was right about the old key: two rooms
+ * seated at one table by reception, who never formally joined, are still sharing
+ * it and still read as one row of the sheet.
+ */
+function groupKeyOf(row: RoomRow): string {
+  if (row.tableGroupId) {
+    return `group:${row.tableGroupId}`;
+  }
+
+  if (row.table) {
+    return `table:${row.table}`;
+  }
+
+  return `booking:${row.reservationNumber}`;
+}
+
 export function groupRoomRowsByTable(rows: RoomRow[], columns: OptionColumn[]): TableGroup[] {
   const groups: TableGroup[] = [];
 
-  for (const row of rows) {
-    // Rooms are one table when they share a number, or asked to sit together
-    // before a number was assigned.
-    const key = row.table || row.tableGroupId || row.reservationNumber;
-    const last = groups[groups.length - 1];
+  /**
+   * Keyed on a map rather than compared with the row before it.
+   *
+   * The old loop only ever merged a row with the group immediately preceding
+   * it, so two rows with an identical key that were not *adjacent* became two
+   * groups and never reconciled. Which rows end up adjacent is decided by the
+   * sort — and `sortReservations` puts a booking with no table number **last**
+   * — so a room that had joined a party but had not been given the table number
+   * was carried to the end of the sheet, away from the party it joined, where
+   * nothing could bring it back.
+   *
+   * That is the reported fault: three rooms booked together, two shown as one
+   * table, the third never, whatever was tried. Insertion order is kept, so the
+   * sheet reads in the order it always did.
+   */
+  const byKey = new Map<string, TableGroup>();
 
-    if (last && last.key === key) {
-      last.rows.push(row);
+  for (const row of rows) {
+    const key = groupKeyOf(row);
+    const existing = byKey.get(key);
+
+    if (existing) {
+      existing.rows.push(row);
+      // The heading takes the first real table number in the group. A member
+      // that has not been given one must not blank the heading for those that
+      // have.
+      existing.table = existing.table || row.table;
     } else {
-      groups.push({ key, table: row.table, rows: [row], subtotals: {}, guests: 0, isShared: false });
+      const group: TableGroup = {
+        key,
+        table: row.table,
+        rows: [row],
+        subtotals: {},
+        guests: 0,
+        isShared: false,
+      };
+
+      byKey.set(key, group);
+      groups.push(group);
     }
   }
 

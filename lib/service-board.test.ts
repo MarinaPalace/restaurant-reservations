@@ -392,3 +392,47 @@ describe("records from the first version of the board", () => {
     expect(table.courses[0].plates[0].servedAt).toBe("2026-08-25T18:30:00.000Z");
   });
 });
+
+/**
+ * Rooms that asked to sit together, on the board rather than the sheet.
+ *
+ * Reported from service: three rooms booked together, each entering the
+ * reservation number they were given, and they did not read as one table. The
+ * sheet was corrected first; the board kept its own copy of the rule and went
+ * on splitting the same party, so the two screens disagreed about the same
+ * evening. Both now ask `tableGroupKey`.
+ */
+describe("grouping rooms that asked to sit together", () => {
+  const anchor = booking({ reservationNumber: "VDM-AAA111", roomNumber: "402", tableGroupId: "VDM-AAA111", tableNumber: "7" });
+  const joined = booking({ reservationNumber: "VDM-BBB222", roomNumber: "403", tableGroupId: "VDM-AAA111", tableNumber: "7" });
+  /** Joined the party, never given the table number. */
+  const numberless = booking({ reservationNumber: "VDM-CCC333", roomNumber: "404", tableGroupId: "VDM-AAA111", tableNumber: undefined });
+
+  it("is one table, and one tap writes to all three bookings", () => {
+    const board = buildBoard([anchor, joined, numberless], menu);
+
+    expect(board).toHaveLength(1);
+    expect(board[0].rooms).toEqual(["402", "403", "404"]);
+    expect(board[0].reservationNumbers).toHaveLength(3);
+    expect(board[0].isShared).toBe(true);
+    expect(board[0].guests).toBe(6);
+  });
+
+  /**
+   * The heading takes the first *real* number. The floor plan matches its
+   * tables on this string, so a member without one blanking it would leave the
+   * table unfindable on the plan.
+   */
+  it("names the table even when the room without a number comes first", () => {
+    const [table] = buildBoard([numberless, anchor, joined], menu);
+
+    expect(table.table).toBe("7");
+  });
+
+  /** A group whose rooms were moved to different tables is still one party. */
+  it("keeps a group together when its rooms sit at different tables", () => {
+    const moved = booking({ reservationNumber: "VDM-BBB222", roomNumber: "403", tableGroupId: "VDM-AAA111", tableNumber: "9" });
+
+    expect(buildBoard([anchor, moved], menu)).toHaveLength(1);
+  });
+});

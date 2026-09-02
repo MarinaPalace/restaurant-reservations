@@ -1,6 +1,7 @@
 import { isNoneSelection, NONE_OPTION_ID } from "@/lib/menu-selection";
 import { compareRoomNumbers, formatRoomList } from "@/lib/room";
 import { sortReservationsBy, type ReservationOrder } from "@/lib/reservation-order";
+import { tableGroupKey } from "@/lib/table-group";
 import type { MenuCourse, ReservationRecord } from "@/types/booking";
 
 /**
@@ -308,32 +309,6 @@ export type TableGroup = {
   isShared: boolean;
 };
 
-/**
- * What makes two rows one table on the sheet.
- *
- * **The group comes first, and that is the fix.** The key used to prefer the
- * table number and fall back to the group only when there was no number at all
- * — so a party was split the moment one of its rooms was missing a table, or had
- * been moved to a different one. What the guests asked for does not stop being
- * true because a table number changed, and it is the thing they actually said.
- * The table is what a group is *labelled* with, not what defines it.
- *
- * Falling back to the table keeps what was right about the old key: two rooms
- * seated at one table by reception, who never formally joined, are still sharing
- * it and still read as one row of the sheet.
- */
-function groupKeyOf(row: RoomRow): string {
-  if (row.tableGroupId) {
-    return `group:${row.tableGroupId}`;
-  }
-
-  if (row.table) {
-    return `table:${row.table}`;
-  }
-
-  return `booking:${row.reservationNumber}`;
-}
-
 export function groupRoomRowsByTable(rows: RoomRow[], columns: OptionColumn[]): TableGroup[] {
   const groups: TableGroup[] = [];
 
@@ -355,7 +330,7 @@ export function groupRoomRowsByTable(rows: RoomRow[], columns: OptionColumn[]): 
   const byKey = new Map<string, TableGroup>();
 
   for (const row of rows) {
-    const key = groupKeyOf(row);
+    const key = tableGroupKey(row);
     const existing = byKey.get(key);
 
     if (existing) {

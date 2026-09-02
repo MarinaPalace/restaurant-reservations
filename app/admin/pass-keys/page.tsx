@@ -39,15 +39,23 @@ export default async function AdminPassKeysPage() {
   const invitationUrl = `${host}/premium`;
 
   /**
+   * The address each key points at, worked out once and used twice: it is what
+   * the QR encodes and what reception copies into an email. Two separate
+   * derivations is how a link pasted into a message could differ from the one
+   * printed on the card, which is a fault nobody would notice until a guest
+   * did.
+   */
+  const links = Object.fromEntries(
+    passKeys.map((key) => [key.id, absoluteUrl(passKeyTargetUrl(key, { bookingUrl, invitationUrl }))]),
+  );
+
+  /**
    * Drawn here, on the server, and handed to the cards already encoded. The
    * browser never has to fetch or generate one, which is what kept leaving an
    * empty square on the printed card.
    */
   const initialQrCodes = await qrDataUris(
-    passKeys.map((key) => ({
-      id: key.id,
-      value: absoluteUrl(passKeyTargetUrl(key, { bookingUrl, invitationUrl })),
-    })),
+    passKeys.map((key) => ({ id: key.id, value: links[key.id] })),
   );
 
   return (
@@ -55,6 +63,7 @@ export default async function AdminPassKeysPage() {
       <PassKeyManager
         initialPassKeys={passKeys}
         initialQrCodes={initialQrCodes}
+        initialLinks={links}
         canDelete={hasPermission(user, "reservations:delete")}
         restaurantName={RESTAURANT_NAME}
       />

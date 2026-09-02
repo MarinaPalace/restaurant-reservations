@@ -96,18 +96,26 @@ export async function POST(request: Request) {
      */
     const headerList = await headers();
     const host = headerList.get("x-forwarded-host") ?? headerList.get("host") ?? "";
-    const qrCodes = await qrDataUris(
-      passKeys.map((passKey) => ({
-        id: passKey.id,
-        value: absoluteUrl(
+
+    // The link travels back with the key so a freshly issued invitation can be
+    // copied into an email without reloading the page — and it is the same
+    // string the QR encodes, because it is the string the QR is drawn from.
+    const links = Object.fromEntries(
+      passKeys.map((passKey) => [
+        passKey.id,
+        absoluteUrl(
           passKeyTargetUrl(passKey, { bookingUrl: `${host}/booking`, invitationUrl: `${host}/premium` }),
         ),
-      })),
+      ]),
+    );
+
+    const qrCodes = await qrDataUris(
+      passKeys.map((passKey) => ({ id: passKey.id, value: links[passKey.id] })),
     );
 
     // `passKey` is kept alongside the list so a caller expecting one still
     // works; the UI reads `passKeys`.
-    return NextResponse.json({ passKeys, passKey: passKeys[0], qrCodes }, { status: 201 });
+    return NextResponse.json({ passKeys, passKey: passKeys[0], qrCodes, links }, { status: 201 });
   } catch (error) {
     if (error instanceof ShortStayError) {
       return NextResponse.json(

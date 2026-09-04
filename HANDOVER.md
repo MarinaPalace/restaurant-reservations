@@ -390,6 +390,52 @@ bookable at midnight, hours after everyone had eaten.
 presentation). The staff routes deliberately do not consult it: reception takes bookings for tables
 standing at the desk.
 
+### 2.22 Seats are held from the calendar onwards, and no refusal is silent
+
+Seats used to be claimed by the **last** request of the booking. Everything before it was a guess,
+and on a nearly full evening the guess was sometimes wrong: two guests were both shown four seats,
+both walked the whole flow, and the second was refused at the very end. Worse, the summary said
+nothing — it pushed them back to `/booking/date` with no message, so a guest who had done everything
+right could not tell whether they had lost the seats, mistyped something, or broken the app.
+
+**A guest takes a hold as soon as they have said the two things that decide how many seats they
+need** — the party size and the evening. `POST /api/booking/hold`, on Continue at the date step. The
+seats come out of the room for `SEAT_HOLD_MINUTES` (15) and are given back if the booking is not
+finished. The second guest now meets a full evening *on the calendar*, before choosing anything.
+
+`heldSeats` on the date is a second counter beside `reservedSeats`, and it is **not** covered by
+rule 2.7's "must always match live bookings" — that is still true of `reservedSeats` alone. What
+holds here is the arithmetic: `remainingSeats = capacity − reservedSeats − heldSeats`, and **every**
+claim path subtracts both — booking, restoring a cancellation (2.12), moving a booking to another
+date. A path that forgot would let staff sell a seat a guest is mid-way through taking, and the
+count would go over capacity the moment that guest pressed Confirm.
+
+The properties are rule 2.7's, applied to a third exhaustible thing (`lib/services/seat-holds.ts`):
+
+- **The claim is one conditional update.** `$inc` on `heldSeats` with an `$expr` guard. Two requests
+  for the last four seats both run it; the second's filter no longer matches.
+- **Release is idempotent by filter.** `findOneAndDelete` decides who owns the release, and only the
+  winner decrements — so a release racing an expiry sweep cannot give the same seats back twice.
+- **Conversion never lets go.** Spending a hold deletes the receipt (one winner, so a double-tapped
+  Confirm cannot book twice) and then moves the seats `heldSeats → reservedSeats` in a single
+  update. There is no instant when they are in neither.
+- **Expiry is swept, never TTL'd.** A TTL index would delete the receipt and leave the counter
+  holding seats for nobody. `sweepExpiredHolds` deletes and decrements together, and runs whenever
+  seats are taken. Reads that only *display* availability use the throttled form — the calendar is
+  read on every page and paying for a sweep each time was measurable.
+- **`heldSeatsTouchedAt` is the net under a crash.** Stamped as a hold takes its seats, before the
+  receipt is written. Held seats with no live hold and nothing taken for longer than a hold can last
+  are stranded rather than busy, and only then are they put back.
+
+**And nothing refuses in silence.** Every failure answers with a `code` the screen turns into a
+sentence (`lib/i18n/errors.ts`), and the summary page **never navigates on a refusal**: it shows the
+reason and offers the step that fixes it as a button. `HOLD_EXPIRED` is its own code deliberately —
+the guest is not at fault, the evening may well still have room, and "start again" is a different
+instruction from "choose another date".
+
+The hold does **not** spend the pass-key. That is the booking's job, once (rule 2.11): a hold that
+runs out must leave the guest exactly as they were.
+
 ## 3. Configuration
 
 | Variable | Required | Purpose |
@@ -431,11 +477,13 @@ components/
   ui/                 Design-system primitives (Button, Card, Field, Alert…).
   brand.tsx           House mark + wordmark.  month-calendar.tsx  Shared ARIA grid.
 hooks/                useBookingSession — sessionStorage via useSyncExternalStore.
+                      useSeatHold — the countdown, and taking/releasing a hold.
 lib/
   auth/               Credentials, signed sessions, permissions, route guard.
   db/                 Mongo connection, JSON store, seed data, store-lock.
   services/           booking-rules, reservations, restaurant/menu,
-                      pass-keys, staff-users, audit-log.
+                      pass-keys, seat-holds, staff-users, audit-log.
+  seat-hold.ts        How long seats are held, and the countdown arithmetic.
   pass-key.ts         Code generation, normalisation, formatting.
   i18n/               The guest interface in seven languages: en.ts is the
                       master, the rest are partials merged over it.

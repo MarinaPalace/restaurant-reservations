@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { PageShell } from "@/components/page-shell";
 import { BookingSteps } from "@/components/booking-steps";
 import { MenuChooser } from "@/app/booking/menu/menu-chooser";
+import { SeatHoldBanner } from "@/components/seat-hold-banner";
 import { getCachedMenuCatalog } from "@/lib/services/menu-cache";
 
 export const metadata: Metadata = { title: "Choose your menu" };
@@ -30,6 +31,9 @@ export default async function MenuPage() {
   return (
     <PageShell width="lg">
       <BookingSteps current="menu" />
+      {/* The menu is the longest step, so it is the one that most needs to say
+          how long the seats are held. */}
+      <SeatHoldBanner />
       <MenuChooser courses={courses} />
     </PageShell>
   );

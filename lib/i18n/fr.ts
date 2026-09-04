@@ -105,6 +105,7 @@ export const fr: PartialDictionary = {
     previousMonth: "Mois précédent",
     nextMonth: "Mois suivant",
     chooseAvailable: "Veuillez choisir une date disponible.",
+    holdingSeats: "Nous retenons vos places…",
     noDates: "Aucune date n'est encore ouverte à la réservation. Veuillez contacter la réception.",
     alreadyBooked:
       "Vous avez déjà une réservation ce soir-là. Pour la modifier, {link} — ne continuez que si vous réservez une seconde table, pour une autre chambre.",
@@ -160,6 +161,15 @@ export const fr: PartialDictionary = {
     guestsFinished: "{done} convive(s) sur {total} ont terminé.",
   },
 
+  seatHold: {
+    holding: "Vos places sont retenues pendant encore {clock}.",
+    endingSoon: "Il ne reste que {clock} pour vos places — veuillez terminer votre réservation.",
+    expired:
+      "Vos places n'étaient retenues qu'un court instant et ce délai est écoulé : elles sont rendues au restaurant. Rien d'autre n'est perdu — veuillez choisir à nouveau votre date.",
+    chooseAgain: "Choisir une autre date",
+    couldNotHold: "Nous n'avons pas pu retenir de places pour cette soirée. Veuillez en choisir une autre.",
+  },
+
   summary: {
     eyebrow: "Votre table",
     title: "Vérifiez votre réservation",
@@ -172,6 +182,8 @@ export const fr: PartialDictionary = {
     joinHint: "Demandez-leur le numéro figurant sur leur confirmation, par ex. VDM-3E94B8.",
     joinPlaceholder: "par ex. VDM-3E94B8",
     confirm: "Confirmer la réservation",
+    chooseAnotherDate: "Choisir une autre date",
+    chooseAnotherTable: "Choisir une autre table",
     confirming: "Confirmation…",
     failed: "Un problème est survenu lors de la création de votre réservation. Veuillez réessayer.",
   },
@@ -339,6 +351,8 @@ export const fr: PartialDictionary = {
     passKeyAfterStay: "Cette soirée est postérieure à la fin de votre séjour. Veuillez choisir une date antérieure.",
     passKeyTooManyGuests: "Votre réservation chez nous est pour moins de personnes. Veuillez vous adresser à la réception.",
     dateUnavailable: "Cette date n'est malheureusement plus disponible. Veuillez en choisir une autre.",
+    holdExpired:
+      "Vos places n'étaient retenues qu'un court instant et ce délai est écoulé. Veuillez choisir à nouveau votre date — la soirée a peut-être encore de la place.",
     dateFull: "Cette date est malheureusement complète. Veuillez choisir une autre soirée.",
     bookingClosed:
       "Les réservations pour cette soirée sont closes. Composez le 9 depuis votre chambre et la réception s'en chargera.",

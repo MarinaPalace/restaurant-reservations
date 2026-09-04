@@ -4,6 +4,7 @@ import { connectToDatabase, isMongoConfigured } from "@/lib/db/connect";
 import { MenuCourseModel } from "@/lib/models/menu-course";
 import { MenuOptionModel } from "@/lib/models/menu-option";
 import { RestaurantDateModel } from "@/lib/models/restaurant-date";
+import { sweepExpiredHoldsThrottled } from "@/lib/services/seat-holds";
 import { localizeMenuCatalog } from "@/lib/menu-localization";
 import { decodeStoredImage, isStoredImage, storedImageIdFrom, toPublicImageUrl } from "@/lib/menu-images";
 import { discountedPrice, toCents } from "@/lib/money";
@@ -18,7 +19,26 @@ import {
   type RestaurantDateAvailability,
 } from "@/types/booking";
 
+/**
+ * Every evening, with what is left of it.
+ *
+ * Sweeps expired seat holds first, so the calendar a guest is looking at counts
+ * only seats somebody is actually still choosing. It is the one read that must
+ * do this: the calendar is where a guest decides, and an evening greyed out by
+ * three abandoned tabs is the same lie as an evening offered with no room in it.
+ *
+ * Throttled, because this list is read on every page of the flow and by every
+ * screen in the dashboard. Seconds of staleness cannot change an answer when a
+ * hold lasts fifteen minutes, and the paths that take seats sweep for real.
+ *
+ * The sweep is deliberately not in `getRestaurantDate`. That one is called on
+ * nearly every request in the app, most of them nowhere near a guest choosing a
+ * date, and a stale held seat there costs nothing that the next read of this
+ * list does not immediately correct.
+ */
 export async function getRestaurantDates(): Promise<RestaurantDateAvailability[]> {
+  await sweepExpiredHoldsThrottled();
+
   if (!isMongoConfigured()) {
     return getLocalDates();
   }

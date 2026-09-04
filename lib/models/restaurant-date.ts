@@ -6,6 +6,14 @@ const restaurantDateSchema = new Schema(
     isOpen: { type: Boolean, required: true, default: true },
     capacity: { type: Number, required: true, default: 0 },
     reservedSeats: { type: Number, required: true, default: 0 },
+    /**
+     * Seats a guest is part-way through booking. Added later, so absent reads
+     * as 0 (rule 2.2) — which is what every date written before holds existed
+     * meant. Counts against capacity exactly as `reservedSeats` does.
+     */
+    heldSeats: { type: Number, default: 0 },
+    /** When a hold was last taken here. The safety net under `heldSeats`. */
+    heldSeatsTouchedAt: { type: Date },
     // Strict arrival time, "HH:MM".
     serviceTime: { type: String },
     serviceEndTime: { type: String },

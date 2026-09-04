@@ -8,6 +8,7 @@ import { Alert, Skeleton } from "@/components/ui/feedback";
 import { Field, Input } from "@/components/ui/field";
 import { BookingSteps } from "@/components/booking-steps";
 import { PageShell } from "@/components/page-shell";
+import { SeatHoldBanner } from "@/components/seat-hold-banner";
 import { useBookingGuard, writeBookingSession } from "@/hooks/use-booking-session";
 import { hasOffer, type ZoneOffer } from "@/lib/floor-plan-availability";
 import { TableChooser, findOffer } from "@/components/table-chooser";
@@ -319,6 +320,7 @@ export function TablePicker() {
   return (
     <PageShell width="lg">
       <BookingSteps current="table" />
+      <SeatHoldBanner />
       <Card elevated className="p-4 sm:p-6">
         <CardHeader
           as="h1"

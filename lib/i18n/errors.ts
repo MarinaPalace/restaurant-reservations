@@ -26,6 +26,7 @@ const CODES: Record<string, keyof Dictionary["errors"]> = {
   USED: "passKeyUsed",
   EXPIRED: "passKeyExpired",
   DATE_UNAVAILABLE: "dateUnavailable",
+  HOLD_EXPIRED: "holdExpired",
   DATE_FULL: "dateFull",
   BOOKING_CLOSED: "bookingClosed",
   TABLE_JOIN_FAILED: "tableJoinFailed",

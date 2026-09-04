@@ -88,6 +88,10 @@ type SessionPatch = Partial<
     | "joinNumber"
     | "selections"
     | "language"
+    | "holdId"
+    | "holdExpiresAt"
+    | "holdDate"
+    | "holdGuests"
   >
 >;
 
@@ -122,6 +126,16 @@ export function writeBookingSession(patch: SessionPatch) {
   if (patch.selections !== undefined) {
     storage.setItem(BOOKING_STORAGE_KEYS.selections, JSON.stringify(patch.selections));
   }
+  // Empty is a real answer for all four: "we are holding nothing", which is
+  // what letting a hold go has to be able to say.
+  if (patch.holdId !== undefined) storage.setItem(BOOKING_STORAGE_KEYS.holdId, patch.holdId);
+  if (patch.holdExpiresAt !== undefined) {
+    storage.setItem(BOOKING_STORAGE_KEYS.holdExpiresAt, patch.holdExpiresAt);
+  }
+  if (patch.holdDate !== undefined) storage.setItem(BOOKING_STORAGE_KEYS.holdDate, patch.holdDate);
+  if (patch.holdGuests !== undefined) {
+    storage.setItem(BOOKING_STORAGE_KEYS.holdGuests, String(patch.holdGuests));
+  }
 
   emitChange();
 }
@@ -143,6 +157,25 @@ export function storeConfirmation(reservation: unknown) {
     return;
   }
   window.sessionStorage.setItem(BOOKING_STORAGE_KEYS.confirmation, JSON.stringify(reservation));
+
+  /**
+   * The hold is spent by the time a confirmation exists — the seats moved from
+   * held to booked to produce it — so the session must stop naming it.
+   *
+   * A key may allow several dinners, and a guest who books a second one would
+   * otherwise arrive at the calendar with a receipt for seats that are now a
+   * booking: the evening would be drawn with four seats added back that nobody
+   * has, and the countdown would still be running on the steps after it.
+   */
+  for (const key of [
+    BOOKING_STORAGE_KEYS.holdId,
+    BOOKING_STORAGE_KEYS.holdExpiresAt,
+    BOOKING_STORAGE_KEYS.holdDate,
+    BOOKING_STORAGE_KEYS.holdGuests,
+  ]) {
+    window.sessionStorage.removeItem(key);
+  }
+
   emitChange();
 }
 

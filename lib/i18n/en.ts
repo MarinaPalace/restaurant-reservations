@@ -124,6 +124,7 @@ export const en = {
     previousMonth: "Previous month",
     nextMonth: "Next month",
     chooseAvailable: "Please choose an available date.",
+    holdingSeats: "Holding your seats…",
     noDates: "No dinner dates are open for reservations yet. Please contact guest services.",
     alreadyBooked:
       "You already have a reservation on this evening. To change it, {link} instead — carry on only if you are booking a second table, for another room.",
@@ -180,6 +181,25 @@ export const en = {
     guestsFinished: "{done} of {total} guests have finished choosing.",
   },
 
+  /**
+   * The seats held while the guest finishes booking.
+   *
+   * Worded as a courtesy rather than a warning, because that is what it is:
+   * nothing has been taken from the guest, something has been kept for them.
+   * The expired sentence is the one that matters most — it has to say what
+   * happened, that it was not their fault, and what to do, in the moment they
+   * have just lost fifteen minutes of choosing.
+   */
+  seatHold: {
+    holding: "Your seats are held for {clock}.",
+    endingSoon: "Only {clock} left on your seats — please finish your booking.",
+    expired:
+      "Your seats were held for a short while and that time has passed, so they have gone back to the restaurant. Nothing else has been lost — please choose your date again.",
+    chooseAgain: "Choose a date again",
+    /** Said on the calendar when the seats could not be held at all. */
+    couldNotHold: "We could not hold seats for that evening. Please choose another.",
+  },
+
   summary: {
     eyebrow: "Your table",
     title: "Review your reservation",
@@ -192,6 +212,8 @@ export const en = {
     joinHint: "Ask them for the number on their confirmation, e.g. VDM-3E94B8.",
     joinPlaceholder: "e.g. VDM-3E94B8",
     confirm: "Confirm reservation",
+    chooseAnotherDate: "Choose another date",
+    chooseAnotherTable: "Choose another table",
     confirming: "Confirming…",
     failed: "Something went wrong while creating your reservation. Please try again.",
   },
@@ -377,6 +399,8 @@ export const en = {
     passKeyAfterStay: "That evening falls after your stay ends. Please choose an earlier date.",
     passKeyTooManyGuests: "Your booking with us is for fewer guests than that. Please speak to reception.",
     dateUnavailable: "Unfortunately, this date is no longer available. Please select another date.",
+    holdExpired:
+      "Your seats were only held for a short while and that time has now passed. Please choose your date again — the evening may still have room.",
     dateFull: "Unfortunately, this date is fully booked. Please choose another evening.",
     bookingClosed:
       "Bookings for that evening have closed. Please dial 9 from your room and reception will arrange it.",

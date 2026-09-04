@@ -82,6 +82,39 @@ export const passKeySchema = z
   .transform(normalizePassKey)
   .refine((code) => code.length === PASS_KEY_LENGTH, "Please enter the pass-key exactly as it appears on your slip.");
 
+/**
+ * A seat hold's id, as the guest's browser hands it back.
+ *
+ * Opaque: the server issued it, and the only thing that matters is that it is
+ * short enough not to be a payload and long enough not to be guessed. It is
+ * checked against the store, so a made-up one simply finds no hold — the same
+ * answer an expired one gives, which is the answer the screen already knows how
+ * to say.
+ */
+export const seatHoldIdSchema = z.string().trim().min(8).max(64);
+
+/**
+ * Holding seats needs the three things that decide whether there are any: who
+ * is asking, for how many, on which evening.
+ *
+ * `previousHoldId` is the hold this one replaces — the guest changed the date
+ * or the size of the party. Sent rather than looked up, because the browser is
+ * the only thing that knows which hold belongs to this tab.
+ */
+export const createSeatHoldSchema = z.object({
+  passKey: passKeySchema,
+  date: dateKeySchema,
+  guestCount: z.number().int().min(1).max(MAX_GUESTS_PER_RESERVATION),
+  previousHoldId: seatHoldIdSchema.optional(),
+});
+
+export type CreateSeatHoldInput = z.infer<typeof createSeatHoldSchema>;
+
+/** Letting seats go needs only the receipt. */
+export const releaseSeatHoldSchema = z.object({
+  holdId: seatHoldIdSchema,
+});
+
 export const createReservationSchema = z.object({
   /**
    * The proof that this person is staying here. Without it the room number is
@@ -106,6 +139,16 @@ export const createReservationSchema = z.object({
    * claim a two-top for six.
    */
   tableId: z.string().trim().max(MAX_TABLE_SELECTION_LENGTH).optional(),
+  /**
+   * The hold whose seats this booking is spending.
+   *
+   * Optional, and that is deliberate rather than lax: staff routes book without
+   * one, and so does any screen still open from before holds existed. A booking
+   * with no hold claims its seats the old way and is refused if the evening
+   * filled up — which is the behaviour this feature exists to spare guests, not
+   * a hole in it.
+   */
+  holdId: seatHoldIdSchema.optional(),
 });
 
 export type CreateReservationInput = z.infer<typeof createReservationSchema>;

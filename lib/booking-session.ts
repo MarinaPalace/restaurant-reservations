@@ -16,6 +16,10 @@ export const BOOKING_STORAGE_KEYS = {
   joinNumber: "booking-join-number",
   selections: "booking-selections",
   language: "booking-language",
+  holdId: "booking-hold-id",
+  holdExpiresAt: "booking-hold-expires",
+  holdDate: "booking-hold-date",
+  holdGuests: "booking-hold-guests",
   confirmation: "reservation-confirmation",
 } as const;
 
@@ -60,6 +64,24 @@ export type BookingSession = {
   joinNumber: string;
   selections: ReservationSelection[];
   language: string;
+  /**
+   * The seats this booking is holding, as the server issued them.
+   *
+   * Taken the moment the guest has said the two things that decide how many
+   * seats they need — the party size and the evening — so that the rest of the
+   * flow is spent on seats that are actually theirs. Empty means no hold, which
+   * is the state on the first three steps and after one has been let go.
+   *
+   * The date and the party size are kept alongside the id because a hold is
+   * only good for what it was taken for: a guest who goes back and changes
+   * either has a hold that no longer matches, and the screen has to notice that
+   * rather than submit a booking the server will refuse.
+   */
+  holdId: string;
+  /** ISO instant. What the countdown counts down to. */
+  holdExpiresAt: string;
+  holdDate: string;
+  holdGuests: number;
 };
 
 export const EMPTY_BOOKING_SESSION: BookingSession = {
@@ -74,6 +96,10 @@ export const EMPTY_BOOKING_SESSION: BookingSession = {
   joinNumber: "",
   selections: [],
   language: "en",
+  holdId: "",
+  holdExpiresAt: "",
+  holdDate: "",
+  holdGuests: 0,
 };
 
 export { isValidRoomNumber } from "@/lib/room";
@@ -130,6 +156,7 @@ export function readBookingSession(storage: Storage | null | undefined): Booking
   const roomNumber = storage.getItem(BOOKING_STORAGE_KEYS.roomNumber) ?? "";
   const date = storage.getItem(BOOKING_STORAGE_KEYS.date) ?? "";
   const passKey = storage.getItem(BOOKING_STORAGE_KEYS.passKey) ?? "";
+  const holdDate = storage.getItem(BOOKING_STORAGE_KEYS.holdDate) ?? "";
 
   const passKeyExpiresOn = storage.getItem(BOOKING_STORAGE_KEYS.passKeyExpiresOn) ?? "";
   const bookedDates = parseJson(storage.getItem(BOOKING_STORAGE_KEYS.passKeyBookedDates));
@@ -174,6 +201,16 @@ export function readBookingSession(storage: Storage | null | undefined): Booking
     ),
     selections: normalizeSelections(parseJson(storage.getItem(BOOKING_STORAGE_KEYS.selections))),
     language: storage.getItem(BOOKING_STORAGE_KEYS.language) || "en",
+    /**
+     * Read back as it was written. Whether the hold is still live, and still
+     * for what this session is booking, is `seatHoldStanding`'s question — and
+     * it has to be asked at the moment of use rather than here, because the
+     * answer changes with the clock while the value does not.
+     */
+    holdId: (storage.getItem(BOOKING_STORAGE_KEYS.holdId) ?? "").slice(0, 64),
+    holdExpiresAt: storage.getItem(BOOKING_STORAGE_KEYS.holdExpiresAt) ?? "",
+    holdDate: isValidDateKey(holdDate) ? holdDate : "",
+    holdGuests: parseGuestCount(storage.getItem(BOOKING_STORAGE_KEYS.holdGuests)),
   };
 }
 
@@ -251,3 +288,61 @@ export const REQUIREMENT_ROUTES: Record<BookingStepRequirement, string> = {
   date: "/booking/date",
   selections: "/booking/menu",
 };
+
+/* ------------------------------------------------------------------ *
+ * The seats this booking is holding
+ * ------------------------------------------------------------------ */
+
+export type SeatHoldStanding =
+  /** No hold has been taken — the first three steps, and after one is let go. */
+  | { state: "none" }
+  /** Live, and for exactly what this session is booking. */
+  | { state: "held"; secondsLeft: number }
+  /** The fifteen minutes ran out. The seats are back in the room. */
+  | { state: "expired" }
+  /**
+   * Live, but for a different evening or a different number of people.
+   *
+   * Reached by going back and changing one of them, which is a thing guests do
+   * constantly. Its own state rather than lumped in with `expired`, because the
+   * fix is different: nothing has been lost, the hold simply has to be moved,
+   * and the screen can do that without saying anything alarming.
+   */
+  | { state: "stale" };
+
+/**
+ * What the seats this session is holding are worth, right now.
+ *
+ * Every screen past the calendar asks this, and it is the reason a guest is
+ * never bounced anywhere without being told why: the three ways a hold can stop
+ * being good for a booking are told apart here, and each gets its own sentence
+ * on the screen instead of a redirect.
+ *
+ * `now` is passed in so a countdown can drive it from a tick and tests can put
+ * the clock where they like.
+ */
+export function seatHoldStanding(
+  session: Pick<BookingSession, "holdId" | "holdExpiresAt" | "holdDate" | "holdGuests" | "date" | "guestCount">,
+  now: Date = new Date(),
+): SeatHoldStanding {
+  if (!session.holdId || !session.holdExpiresAt) {
+    return { state: "none" };
+  }
+
+  const expiry = Date.parse(session.holdExpiresAt);
+  if (!Number.isFinite(expiry) || expiry <= now.getTime()) {
+    return { state: "expired" };
+  }
+
+  /**
+   * A hold covers a party that has since shrunk — the guest went back and said
+   * three instead of four — and that is fine: the server spends the hold for
+   * what is booked and hands the difference back. Growing is not fine, and
+   * neither is a different evening.
+   */
+  if (session.holdDate !== session.date || session.holdGuests < session.guestCount) {
+    return { state: "stale" };
+  }
+
+  return { state: "held", secondsLeft: Math.max(0, Math.floor((expiry - now.getTime()) / 1000)) };
+}

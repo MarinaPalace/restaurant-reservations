@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { writeBookingSession, useBookingSession } from "@/hooks/use-booking-session";
 import { seatHoldStanding, type BookingSession, type SeatHoldStanding } from "@/lib/booking-session";
+import type { SeatHoldStep } from "@/lib/seat-hold";
 
 /**
  * The guest's side of the seat hold.
@@ -45,6 +46,7 @@ export async function takeSeatHold(input: {
   passKey: string;
   date: string;
   guestCount: number;
+  roomNumber?: string;
   previousHoldId?: string;
 }): Promise<SeatHoldOutcome> {
   try {
@@ -55,6 +57,9 @@ export async function takeSeatHold(input: {
         passKey: input.passKey,
         date: input.date,
         guestCount: input.guestCount,
+        // So an attempt nobody finishes has a room on it when staff are asked
+        // about it later.
+        roomNumber: input.roomNumber || undefined,
         previousHoldId: input.previousHoldId || undefined,
       }),
     });
@@ -146,4 +151,40 @@ export function useSeatHold(): { session: BookingSession; standing: SeatHoldStan
   }, [ticking]);
 
   return { session, standing };
+}
+
+/**
+ * Tells the server how far the guest has got.
+ *
+ * Fire-and-forget, and deliberately so: this exists for the desk, not for the
+ * guest, and nothing about their booking may wait on it or fail with it. A
+ * `keepalive` request survives the page navigating away, which is exactly the
+ * moment worth recording — the guest reached the menu and then closed the tab.
+ */
+export function reportSeatHoldStep(holdId: string, step: SeatHoldStep) {
+  if (!holdId) {
+    return;
+  }
+
+  void fetch("/api/booking/hold", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ holdId, step }),
+    keepalive: true,
+  }).catch(() => undefined);
+}
+
+/**
+ * Records that this screen was reached, once.
+ *
+ * Keyed on the hold and the step, so re-rendering does not re-send and a guest
+ * moving back and forth sends one request per screen they actually arrive at.
+ */
+export function useReportSeatHoldStep(step: SeatHoldStep) {
+  const session = useBookingSession();
+  const holdId = session.holdId;
+
+  useEffect(() => {
+    reportSeatHoldStep(holdId, step);
+  }, [holdId, step]);
 }

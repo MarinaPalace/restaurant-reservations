@@ -551,6 +551,9 @@ export async function createReservationEntry(input: {
         date: input.date,
         guests: input.guestCount,
         passKeyId: input.seatHold.passKeyId,
+        // Written onto the closed hold, so the attempt and the booking it
+        // became can be read as one thing.
+        reservationNumber: input.reservationNumber,
       })
     : null;
 

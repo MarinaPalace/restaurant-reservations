@@ -3,6 +3,7 @@ import { isValidDateKey } from "@/lib/date";
 import { CURRENCIES } from "@/lib/money";
 import { TIME_ZONES } from "@/lib/timezone";
 import { PASS_KEY_LENGTH, normalizePassKey } from "@/lib/pass-key";
+import { SEAT_HOLD_STEPS } from "@/lib/seat-hold";
 import { isValidRoomNumber, normalizeRoomNumber } from "@/lib/room";
 import { MAX_USES_CAP, MENU_CATALOGS, STAFF_PERMISSIONS } from "@/types/booking";
 import {
@@ -106,6 +107,13 @@ export const createSeatHoldSchema = z.object({
   date: dateKeySchema,
   guestCount: z.number().int().min(1).max(MAX_GUESTS_PER_RESERVATION),
   previousHoldId: seatHoldIdSchema.optional(),
+  /**
+   * Recorded on the hold so an attempt nobody finished can be recognised by
+   * the person at the desk being asked about it. Optional, because the hold is
+   * about seats and must not fail over a label — the pass-key is what actually
+   * identifies the guest.
+   */
+  roomNumber: roomNumberSchema.optional(),
 });
 
 export type CreateSeatHoldInput = z.infer<typeof createSeatHoldSchema>;
@@ -113,6 +121,18 @@ export type CreateSeatHoldInput = z.infer<typeof createSeatHoldSchema>;
 /** Letting seats go needs only the receipt. */
 export const releaseSeatHoldSchema = z.object({
   holdId: seatHoldIdSchema,
+});
+
+/**
+ * Saying how far the guest has got.
+ *
+ * The step is checked against the known list rather than stored as whatever
+ * arrives: it is read back by staff as a sentence, and a made-up value would
+ * put words into the log that nobody in the app ever wrote.
+ */
+export const advanceSeatHoldSchema = z.object({
+  holdId: seatHoldIdSchema,
+  step: z.enum(SEAT_HOLD_STEPS),
 });
 
 export const createReservationSchema = z.object({

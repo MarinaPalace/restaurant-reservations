@@ -176,7 +176,7 @@ export default function SummaryPage() {
     <PageShell width="md">
       <BookingSteps current="summary" />
       {/* How long the seats are held, and what happened if they no longer are. */}
-      <SeatHoldBanner />
+      <SeatHoldBanner step="summary" />
       <Card elevated className="aurora p-5 sm:p-8">
         <CardHeader as="h1" align="center" flourish eyebrow={t.summary.eyebrow} title={t.summary.title} />
 

@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { useI18n } from "@/components/i18n-provider";
 import { format } from "@/lib/i18n";
 import { formatSeatHoldClock } from "@/lib/seat-hold";
-import { releaseSeatHold, useSeatHold } from "@/hooks/use-seat-hold";
+import { releaseSeatHold, useReportSeatHoldStep, useSeatHold } from "@/hooks/use-seat-hold";
+import type { SeatHoldStep } from "@/lib/seat-hold";
 
 /**
  * What is happening to the guest's seats, on every screen after the calendar.
@@ -31,10 +32,17 @@ import { releaseSeatHold, useSeatHold } from "@/hooks/use-seat-hold";
  * warning, which is the point at which somebody deciding between two desserts
  * should know they are deciding against a clock.
  */
-export function SeatHoldBanner() {
+export function SeatHoldBanner({ step }: { step: SeatHoldStep }) {
   const router = useRouter();
   const { session, standing } = useSeatHold();
   const { t } = useI18n();
+
+  /**
+   * The banner is on every step past the calendar, so it is also the natural
+   * place to record which one the guest reached — one mounting, one fact,
+   * rather than the same effect copied onto three pages.
+   */
+  useReportSeatHoldStep(step);
 
   /**
    * Nothing to say. Either the guest has not reached the calendar yet, or this

@@ -804,7 +804,18 @@ export type AuditAction =
   | "menu:save"
   | "settings:save"
   | "reservation:attendance"
-  | "date:update";
+  | "date:update"
+  /**
+   * A guest held seats, walked through part of the booking, and never
+   * finished. Written when the hold runs out.
+   *
+   * The only action here that is not about something that exists: there is no
+   * reservation number, because there is no reservation — which is exactly the
+   * question it answers. Guests come to the desk certain they booked when they
+   * got as far as the menu and stopped, and until this there was nothing to
+   * check.
+   */
+  | "booking:abandoned";
 
 export type AuditEntry = {
   _id?: string;

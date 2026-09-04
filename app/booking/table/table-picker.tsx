@@ -320,7 +320,7 @@ export function TablePicker() {
   return (
     <PageShell width="lg">
       <BookingSteps current="table" />
-      <SeatHoldBanner />
+      <SeatHoldBanner step="table" />
       <Card elevated className="p-4 sm:p-6">
         <CardHeader
           as="h1"

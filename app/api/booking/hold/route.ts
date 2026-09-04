@@ -9,9 +9,13 @@ import {
   getPassKeyByCode,
   isDateWithinStay,
 } from "@/lib/services/pass-keys";
-import { SeatHoldError, holdSeats, releaseSeatHold } from "@/lib/services/seat-holds";
+import { SeatHoldError, advanceSeatHoldStep, holdSeats, releaseSeatHold } from "@/lib/services/seat-holds";
 import { SEAT_HOLD_MINUTES } from "@/lib/seat-hold";
-import { createSeatHoldSchema, releaseSeatHoldSchema } from "@/lib/validation/booking";
+import {
+  advanceSeatHoldSchema,
+  createSeatHoldSchema,
+  releaseSeatHoldSchema,
+} from "@/lib/validation/booking";
 import { checkRateLimit, clientKeyFrom } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
 
@@ -132,6 +136,10 @@ export async function POST(request: Request) {
       date: parsed.data.date,
       guests: parsed.data.guestCount,
       passKeyId: passKey.id,
+      // The room the guest typed, so an unfinished attempt has a name on it.
+      // The key's own room is the fallback: it is the one reception issued it
+      // for, and it cannot be got wrong by a guest reading a different door.
+      roomNumber: parsed.data.roomNumber || passKey.roomNumber,
       previousHoldId: parsed.data.previousHoldId,
     });
 
@@ -211,4 +219,43 @@ export async function DELETE(request: Request) {
     reportError({ scope: "seat-holds", event: "hold:release", error });
     return NextResponse.json({ error: GENERIC_ERROR }, { status: 500 });
   }
+}
+
+/**
+ * Says how far the guest has got, so an attempt nobody finishes says so.
+ *
+ * This is the difference between a log line reading "started a booking" and one
+ * reading "was choosing from the menu" — and that is the difference between a
+ * record and an answer, when a guest is at the desk insisting they booked.
+ *
+ * Deliberately unauthenticated beyond holding the id, like the release: the
+ * hold id is unguessable, it names no guest, and the worst a stolen one could
+ * do is claim somebody got further than they did. Asking for the pass-key on
+ * every step of the flow would be a real cost for no real protection.
+ *
+ * It answers `204` whatever happens. A hold that has expired, been spent, or
+ * never existed is not an error the guest should ever see — this runs behind a
+ * screen they are in the middle of using, and nothing about their booking
+ * depends on it.
+ */
+export async function PATCH(request: Request) {
+  const limit = checkRateLimit(clientKeyFrom(request, "seat-hold"), { limit: 60, windowMs: 60_000 });
+
+  if (!limit.allowed) {
+    return new Response(null, { status: 204 });
+  }
+
+  try {
+    const parsed = advanceSeatHoldSchema.safeParse(await request.json());
+
+    if (parsed.success) {
+      await advanceSeatHoldStep(parsed.data.holdId, parsed.data.step);
+    }
+  } catch (error) {
+    // Worth knowing about, never worth showing: the footprint is for staff and
+    // the guest is mid-booking.
+    reportError({ scope: "seat-holds", event: "hold:step", error });
+  }
+
+  return new Response(null, { status: 204 });
 }

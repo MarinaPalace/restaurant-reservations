@@ -56,6 +56,17 @@ export async function getRestaurantDates(): Promise<RestaurantDateAvailability[]
       serviceEndTime: date.serviceEndTime ? String(date.serviceEndTime) : undefined,
       premium: Boolean(date.premium),
       bookingCutoffHours: Number(date.bookingCutoffHours ?? 0),
+      /**
+       * Seats a guest is part-way through taking. Carried, because
+       * `withRemainingSeats` subtracts it — leaving it out here does not make
+       * the calendar generous, it makes it **wrong**, offering seats somebody
+       * is in the middle of booking.
+       *
+       * This is the trap `readStoredConfirmation` already carries a note about:
+       * a reader that whitelists fields silently drops anything added later,
+       * and the drop looks exactly like the field not existing.
+       */
+      heldSeats: Number(date.heldSeats ?? 0),
       // Absent stays absent: it is "follow the restaurant", not "off".
       features: toEveningOverrides(date.features),
     }),
@@ -82,6 +93,9 @@ export async function getRestaurantDate(date: string): Promise<RestaurantDateAva
     serviceEndTime: record.serviceEndTime ? String(record.serviceEndTime) : undefined,
     premium: Boolean(record.premium),
     bookingCutoffHours: Number(record.bookingCutoffHours ?? 0),
+    // Carried for the same reason as above: `remainingSeats` is derived from
+    // it, and the booking route judges availability on that.
+    heldSeats: Number(record.heldSeats ?? 0),
     features: toEveningOverrides(record.features),
   });
 }

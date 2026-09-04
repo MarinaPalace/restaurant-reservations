@@ -412,3 +412,169 @@ describe("a booking with no hold behind it", () => {
     expect((await restaurant.getRestaurantDate(EVENING))?.reservedSeats).toBe(2);
   });
 });
+
+describe("the footprint an unfinished booking leaves", () => {
+  /** Winds a hold past its fifteen minutes, in the store. */
+  async function expireHolds() {
+    const holdsFile = path.join(temporaryDirectory, "seat-holds.json");
+    const holds = JSON.parse(await fs.readFile(holdsFile, "utf8"));
+
+    for (const hold of holds) {
+      hold.expiresAt = new Date(Date.now() - 60_000).toISOString();
+    }
+
+    await fs.writeFile(holdsFile, JSON.stringify(holds, null, 2), "utf8");
+  }
+
+  /**
+   * The problem this is for: guests say they booked when they got part of the
+   * way and stopped, and there was nothing to check. Now there is a row saying
+   * who, how many, when, and how far.
+   */
+  it("records who started, and how far they got", async () => {
+    const { EVENING, first } = await setUp(10);
+    const { POST: hold, PATCH: step } = await import("@/app/api/booking/hold/route");
+    const { listSeatHolds } = await import("@/lib/services/seat-holds");
+
+    const held = await hold(
+      json("/api/booking/hold", {
+        passKey: first.code,
+        date: EVENING,
+        guestCount: 4,
+        roomNumber: "402",
+      }),
+    );
+    const { hold: receipt } = await held.json();
+
+    await step(json("/api/booking/hold", { holdId: receipt.holdId, step: "menu" }, "PATCH"));
+
+    await expireHolds();
+    // Any read of the evening sweeps it, which is what closes the attempt.
+    await (await import("@/lib/services/seat-holds")).sweepExpiredHolds(EVENING);
+
+    const [attempt] = await listSeatHolds(EVENING);
+
+    expect(attempt).toMatchObject({
+      status: "abandoned",
+      roomNumber: "402",
+      guests: 4,
+      step: "menu",
+      date: EVENING,
+    });
+    expect(attempt.createdAt).toBeTruthy();
+  });
+
+  it("says so in the log, in words the desk can use", async () => {
+    const { EVENING, first } = await setUp(10);
+    const { POST: hold } = await import("@/app/api/booking/hold/route");
+    const { sweepExpiredHolds } = await import("@/lib/services/seat-holds");
+    const { getAuditEntries } = await import("@/lib/services/audit-log");
+
+    await hold(
+      json("/api/booking/hold", {
+        passKey: first.code,
+        date: EVENING,
+        guestCount: 2,
+        roomNumber: "402",
+      }),
+    );
+
+    await expireHolds();
+    await sweepExpiredHolds(EVENING);
+
+    const entry = (await getAuditEntries({ limit: 20 })).find(
+      (candidate) => candidate.action === "booking:abandoned",
+    );
+
+    expect(entry).toBeDefined();
+    expect(entry?.summary).toContain("Room 402");
+    expect(entry?.summary).toContain("did not finish");
+  });
+
+  /** A booking that completed is not an unfinished one. */
+  it("leaves no unfinished attempt behind a booking that worked", async () => {
+    const { EVENING, first, main } = await setUp(10);
+    const { POST: hold } = await import("@/app/api/booking/hold/route");
+    const { POST: book } = await import("@/app/api/reservations/route");
+    const { listSeatHolds } = await import("@/lib/services/seat-holds");
+
+    const held = await hold(
+      json("/api/booking/hold", {
+        passKey: first.code,
+        date: EVENING,
+        guestCount: 2,
+        roomNumber: "402",
+      }),
+    );
+    const { hold: receipt } = await held.json();
+
+    const booked = await book(
+      json("/api/reservations", {
+        passKey: first.code,
+        roomNumber: "402",
+        guestCount: 2,
+        date: EVENING,
+        contact: { method: "email", email: "guest@example.com" },
+        selections: choicesFor(main, 2),
+        holdId: receipt.holdId,
+      }),
+    );
+
+    expect(booked.status).toBe(201);
+    expect(await listSeatHolds(EVENING)).toEqual([]);
+  });
+
+  /**
+   * The room is taken from the pass-key when the request does not name one, so
+   * an attempt can never be anonymous — the key is what reception issued, and
+   * it cannot be got wrong by a guest reading a different door.
+   */
+  it("falls back to the room the key was issued for", async () => {
+    const { EVENING, first } = await setUp(10);
+    const { POST: hold } = await import("@/app/api/booking/hold/route");
+    const { listSeatHolds } = await import("@/lib/services/seat-holds");
+
+    await hold(json("/api/booking/hold", { passKey: first.code, date: EVENING, guestCount: 2 }));
+
+    const [attempt] = await listSeatHolds(EVENING);
+    expect(attempt.roomNumber).toBe("402");
+  });
+
+  /** Never in the guest's way: a step for a hold that is gone is not an error. */
+  it("shrugs at a step for a hold that has gone", async () => {
+    await setUp(10);
+    const { PATCH: step } = await import("@/app/api/booking/hold/route");
+
+    const response = await step(
+      json("/api/booking/hold", { holdId: "no-such-hold", step: "menu" }, "PATCH"),
+    );
+
+    expect(response.status).toBe(204);
+  });
+});
+
+describe("what an evening shows the desk", () => {
+  it("counts held seats as gone, and names who is holding them", async () => {
+    const { EVENING, first, restaurant } = await setUp(10);
+    const { POST: hold } = await import("@/app/api/booking/hold/route");
+    const { listSeatHolds } = await import("@/lib/services/seat-holds");
+
+    await hold(
+      json("/api/booking/hold", {
+        passKey: first.code,
+        date: EVENING,
+        guestCount: 3,
+        roomNumber: "402",
+      }),
+    );
+
+    // The calendar, guest and staff alike, reads six of ten free...
+    const evening = (await restaurant.getRestaurantDates()).find((entry) => entry.date === EVENING);
+    expect(evening?.heldSeats).toBe(3);
+    expect(evening?.remainingSeats).toBe(7);
+
+    // ...and the panel underneath says where the other three went.
+    const [live] = await listSeatHolds(EVENING);
+    expect(live).toMatchObject({ status: "live", roomNumber: "402", guests: 3 });
+  });
+});

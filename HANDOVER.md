@@ -436,6 +436,48 @@ instruction from "choose another date".
 The hold does **not** spend the pass-key. That is the booking's job, once (rule 2.11): a hold that
 runs out must leave the guest exactly as they were.
 
+**Held seats are visible on both calendars, and the difference has a name.** An evening whose last
+seats are being chosen is not the same as one that is booked out, and showing "Full" for both had a
+guest give up on a table that came back four minutes later. The guest calendar says *the last seats
+are being booked right now*; the staff calendar shows `N held` on the day and a badge on the
+evening. A number that moves with nothing on screen to explain it is the thing this replaced.
+
+### 2.23 A booking attempt is closed, never deleted
+
+A hold used to be removed when it was spent or expired, which was tidy and threw away the only
+evidence that anything had happened. Guests come to the desk regularly, certain they booked, when
+they got as far as the menu and stopped — and there was no way to be fair to anybody: "there is no
+reservation" sounds like an accusation, and staff genuinely could not tell whether the guest had got
+halfway or never opened the page.
+
+So a hold carries a `status` — `live`, `booked`, `released`, `abandoned` — and every transition is a
+conditional update requiring `status: "live"`. **That is also the atomic gate**: of two requests
+racing to spend or release the same hold exactly one matches, and only that one moves `heldSeats`.
+It is the same "one winner" property deleting had, without the forgetting. Only `live` holds count
+against the room.
+
+Each attempt records the room, the party, when it started and **how far it got** (`step`, advanced
+by `PATCH /api/booking/hold` and never allowed to walk backwards, so tapping Back does not shrink
+the footprint, and changing the date carries it across). An expired hold writes a
+`booking:abandoned` line into the audit log — the only action there with no reservation number,
+because the absence of a reservation is the thing it is recording — and the evening's attempts are
+listed under the dashboard calendar by `app/admin/unfinished-bookings.tsx`.
+
+The JSON store prunes closed attempts after `SEAT_HOLD_HISTORY_MS` because it reads its file whole
+on every request. Mongo keeps them.
+
+### 2.24 A reader that whitelists fields will silently drop the next one added
+
+`getRestaurantDates` and `getRestaurantDate` build their result field by field, and when `heldSeats`
+was added they did not carry it. Nothing failed. `remainingSeats` is derived from it, so under Mongo
+the calendar quietly went back to offering seats a guest was in the middle of booking — and the drop
+is indistinguishable from the field not existing, so there was nothing to notice.
+
+`readStoredConfirmation` already carries a note about this exact trap, from when the arrival time
+went missing the same way. **If a reader lists its fields, adding a field to the model is not
+finished until the reader lists it too**, and a test should assert the value survives the round trip
+(`lib/services/seat-holds.mongo.test.ts`, "what the calendar is told").
+
 ## 3. Configuration
 
 | Variable | Required | Purpose |

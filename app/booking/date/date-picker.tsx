@@ -51,6 +51,18 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
     [session.holdDate, session.holdGuests],
   );
 
+  /**
+   * Seats somebody *else* is in the middle of taking, on an evening.
+   *
+   * The guest's own hold is not one of these: it is theirs, and adding it back
+   * is what lets them go forward again. What is left is the number that
+   * explains an evening reading fuller than it did a minute ago.
+   */
+  const heldByOthers = useCallback(
+    (entry: RestaurantDateAvailability) => Math.max(0, (entry.heldSeats ?? 0) - heldHere(entry.date)),
+    [heldHere],
+  );
+
   const getDayState = useCallback(
     (dateKey: string): DayState => {
       const entry = findDate(dateKey);
@@ -86,16 +98,33 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
       }
 
       const remaining = entry.remainingSeats + heldHere(dateKey);
+      const held = heldByOthers(entry);
 
+      /**
+       * Full, or full *for now*.
+       *
+       * An evening whose last seats are being chosen by somebody else is not
+       * the same as one that is booked out, and saying "Full" for both is the
+       * thing that had a guest give up on a table that came back four minutes
+       * later. The day says which it is, and the panel below says how long.
+       */
       if (remaining <= 0) {
-        return { disabled: true, hint: t.dateStep.day.fullHint, status: t.dateStep.day.full };
+        return held > 0
+          ? { disabled: true, hint: t.dateStep.day.beingBookedHint, status: t.dateStep.day.beingBooked }
+          : { disabled: true, hint: t.dateStep.day.fullHint, status: t.dateStep.day.full };
       }
 
       if (remaining < guestCount) {
         return {
           disabled: true,
           hint: format(t.dateStep.day.leftHint, { count: remaining }),
-          status: format(t.dateStep.day.notEnough, { count: remaining, guests: guestCount }),
+          status: held > 0
+            ? format(t.dateStep.day.notEnoughWhileHeld, {
+                count: remaining,
+                guests: guestCount,
+                held,
+              })
+            : format(t.dateStep.day.notEnough, { count: remaining, guests: guestCount }),
         };
       }
 
@@ -115,7 +144,7 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
         tone: "positive",
       };
     },
-    [findDate, guestCount, heldHere, session.passKeyExpiresOn, t],
+    [findDate, guestCount, heldByOthers, heldHere, session.passKeyExpiresOn, t],
   );
 
   /**
@@ -159,6 +188,7 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
       passKey: session.passKey,
       date: selectedDate,
       guestCount,
+      roomNumber: session.roomNumber,
       // Moves the hold rather than taking a second one, so a guest who tries
       // three evenings does not end up holding all three.
       previousHoldId: session.holdId,
@@ -280,13 +310,28 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
                 // day they have just tapped.
                 const remaining = selectedEntry.remainingSeats + heldHere(selectedEntry.date);
 
-                if (remaining <= 0) return t.dateStep.full;
+                if (remaining <= 0) {
+                  // Being chosen rather than gone: worth waiting a few minutes
+                  // for, which "fully booked" would never tell them.
+                  return heldByOthers(selectedEntry) > 0 ? t.dateStep.beingBooked : t.dateStep.full;
+                }
                 if (remaining < guestCount) {
                   return format(t.dateStep.notEnoughSeats, { count: remaining, guests: guestCount });
                 }
                 return format(t.dateStep.seatsRemaining, { count: remaining });
               })()}
             </p>
+
+            {/*
+              Why the number may move while they are looking at it. Only when
+              somebody else is actually holding seats, so it is news rather than
+              furniture.
+            */}
+            {selectedEntry && heldByOthers(selectedEntry) > 0 ? (
+              <p className="mt-1 text-accent-ink">
+                {format(t.dateStep.heldByOthers, { count: heldByOthers(selectedEntry) })}
+              </p>
+            ) : null}
           </>
         ) : (
           <p>{t.dateStep.selectToContinue}</p>

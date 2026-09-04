@@ -33,7 +33,7 @@ export default async function MenuPage() {
       <BookingSteps current="menu" />
       {/* The menu is the longest step, so it is the one that most needs to say
           how long the seats are held. */}
-      <SeatHoldBanner />
+      <SeatHoldBanner step="menu" />
       <MenuChooser courses={courses} />
     </PageShell>
   );

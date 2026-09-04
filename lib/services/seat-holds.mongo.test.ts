@@ -248,6 +248,58 @@ describe("running out of time", () => {
     await SeatHoldModel.updateOne({ holdId }, { $set: { expiresAt: new Date(Date.now() - 60_000) } });
   }
 
+  /**
+   * The attempt is kept, not deleted — that is the whole footprint. A guest at
+   * the desk saying they booked can be answered from this row.
+   */
+  it("keeps the attempt on the record as abandoned", async () => {
+    const { holdSeats, sweepExpiredHolds, getSeatHold } = await load();
+    await openEvening(10);
+
+    const hold = await holdSeats({ date: DATE, guests: 4, passKeyId: "key-1", roomNumber: "402" });
+    await expireHold(hold.holdId);
+    await sweepExpiredHolds(DATE);
+
+    const after = await getSeatHold(hold.holdId);
+    expect(after).toMatchObject({ status: "abandoned", roomNumber: "402", guests: 4, date: DATE });
+    expect(after?.closedAt).toBeTruthy();
+  });
+
+  /** And it says so in the log, where the desk actually looks. */
+  it("writes a line into the log saying who did not finish", async () => {
+    const { holdSeats, sweepExpiredHolds } = await load();
+    const { getAuditEntries } = await import("@/lib/services/audit-log");
+    await openEvening(10);
+
+    const hold = await holdSeats({ date: DATE, guests: 2, passKeyId: "key-1", roomNumber: "402" });
+    await expireHold(hold.holdId);
+    await sweepExpiredHolds(DATE);
+
+    const entries = await getAuditEntries({ limit: 10 });
+    const abandoned = entries.find((entry) => entry.action === "booking:abandoned");
+
+    expect(abandoned).toBeDefined();
+    expect(abandoned?.summary).toContain("Room 402");
+    expect(abandoned?.summary).toContain(DATE);
+  });
+
+  /** Swept twice, logged once: the status filter is what decides the winner. */
+  it("does not log the same abandoned attempt twice", async () => {
+    const { holdSeats, sweepExpiredHolds } = await load();
+    const { getAuditEntries } = await import("@/lib/services/audit-log");
+    await openEvening(10);
+
+    const hold = await holdSeats({ date: DATE, guests: 2, passKeyId: "key-1", roomNumber: "402" });
+    await expireHold(hold.holdId);
+
+    await sweepExpiredHolds(DATE);
+    await sweepExpiredHolds(DATE);
+
+    const entries = await getAuditEntries({ limit: 20 });
+    expect(entries.filter((entry) => entry.action === "booking:abandoned")).toHaveLength(1);
+    expect(await evening()).toEqual({ reservedSeats: 0, heldSeats: 0 });
+  });
+
   it("gives an expired hold's seats back to the room", async () => {
     const { holdSeats, sweepExpiredHolds } = await load();
     await openEvening(10);
@@ -394,6 +446,26 @@ describe("spending a hold on a booking", () => {
   });
 
   /**
+   * A finished booking must never appear in the unfinished list — that is the
+   * difference the desk is reading it for.
+   */
+  it("is recorded as booked, not abandoned", async () => {
+    const { holdSeats, consumeSeatHold, listSeatHolds } = await load();
+    await openEvening(10);
+
+    const hold = await holdSeats({ date: DATE, guests: 4, passKeyId: "key-1", roomNumber: "402" });
+    await consumeSeatHold({
+      holdId: hold.holdId,
+      date: DATE,
+      guests: 4,
+      passKeyId: "key-1",
+      reservationNumber: "VDM-1",
+    });
+
+    expect(await listSeatHolds(DATE)).toEqual([]);
+  });
+
+  /**
    * The booking failed after the hold was spent. The hold is gone, so the seats
    * go back to the room rather than to a receipt that no longer exists — the
    * same shape as the pass-key being handed back on that path.
@@ -407,5 +479,103 @@ describe("spending a hold on a booking", () => {
     await refundConsumedHold(DATE, 4);
 
     expect(await evening()).toEqual({ reservedSeats: 0, heldSeats: 0 });
+  });
+});
+
+describe("what an evening can say about unfinished bookings", () => {
+  /** Fifteen minutes ago, so the sweep has something to find. */
+  async function expireHold(holdId: string) {
+    const { SeatHoldModel } = await import("@/lib/models/seat-hold");
+    await SeatHoldModel.updateOne({ holdId }, { $set: { expiresAt: new Date(Date.now() - 60_000) } });
+  }
+
+  it("lists who is holding seats now and who walked away", async () => {
+    const { holdSeats, sweepExpiredHolds, listSeatHolds } = await load();
+    await openEvening(20);
+
+    const gone = await holdSeats({ date: DATE, guests: 2, passKeyId: "key-1", roomNumber: "402" });
+    await expireHold(gone.holdId);
+    await sweepExpiredHolds(DATE);
+
+    await holdSeats({ date: DATE, guests: 3, passKeyId: "key-2", roomNumber: "403" });
+
+    const holds = await listSeatHolds(DATE);
+
+    expect(holds).toHaveLength(2);
+    expect(holds.map((hold) => hold.status).sort()).toEqual(["abandoned", "live"]);
+  });
+
+  /**
+   * How far they got is the difference between "they glanced at the calendar"
+   * and "they were choosing dessert", which is what settles the conversation.
+   */
+  it("remembers how far the guest got", async () => {
+    const { holdSeats, advanceSeatHoldStep, sweepExpiredHolds, getSeatHold } = await load();
+    await openEvening(10);
+
+    const hold = await holdSeats({ date: DATE, guests: 2, passKeyId: "key-1", roomNumber: "402" });
+    await advanceSeatHoldStep(hold.holdId, "menu");
+    await expireHold(hold.holdId);
+    await sweepExpiredHolds(DATE);
+
+    expect((await getSeatHold(hold.holdId))?.step).toBe("menu");
+  });
+
+  /** Tapping Back must not make the footprint shrink. */
+  it("never walks the step backwards", async () => {
+    const { holdSeats, advanceSeatHoldStep, getSeatHold } = await load();
+    await openEvening(10);
+
+    const hold = await holdSeats({ date: DATE, guests: 2, passKeyId: "key-1" });
+    await advanceSeatHoldStep(hold.holdId, "summary");
+    await advanceSeatHoldStep(hold.holdId, "table");
+
+    expect((await getSeatHold(hold.holdId))?.step).toBe("summary");
+  });
+
+  /**
+   * And changing the date carries it across. Otherwise every change of mind
+   * would reset the record to "chose a date" and hide how far they really got.
+   */
+  it("carries the step across a change of date", async () => {
+    const { holdSeats, advanceSeatHoldStep } = await load();
+    await openEvening(10);
+
+    const first = await holdSeats({ date: DATE, guests: 2, passKeyId: "key-1" });
+    await advanceSeatHoldStep(first.holdId, "menu");
+
+    const second = await holdSeats({
+      date: DATE,
+      guests: 2,
+      passKeyId: "key-1",
+      previousHoldId: first.holdId,
+    });
+
+    expect(second.step).toBe("menu");
+  });
+});
+
+describe("what the calendar is told", () => {
+  /**
+   * The reader used to whitelist its fields, so `heldSeats` was silently
+   * dropped on the way out of Mongo and `remainingSeats` counted held seats as
+   * free. The calendar offered seats a guest was in the middle of booking, and
+   * nothing looked wrong anywhere — the drop is indistinguishable from the
+   * field not existing.
+   */
+  it("carries held seats out of the database, so remaining seats are true", async () => {
+    const { holdSeats } = await load();
+    const { getRestaurantDate, getRestaurantDates } = await import("@/lib/services/restaurant");
+    await openEvening(10);
+
+    await holdSeats({ date: DATE, guests: 4, passKeyId: "key-1" });
+
+    const one = await getRestaurantDate(DATE);
+    expect(one?.heldSeats).toBe(4);
+    expect(one?.remainingSeats).toBe(6);
+
+    const listed = (await getRestaurantDates()).find((entry) => entry.date === DATE);
+    expect(listed?.heldSeats).toBe(4);
+    expect(listed?.remainingSeats).toBe(6);
   });
 });

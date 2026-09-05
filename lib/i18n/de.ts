@@ -347,6 +347,21 @@ export const de: PartialDictionary = {
     },
   },
 
+  /**
+   * The card a guest shows at the door.
+   *
+   * The footnote is the only line staff will ever read off it, so it says
+   * the two ways the card can be used rather than describing itself.
+   */
+  card: {
+    title: "Ihre Reservierungskarte",
+    footnote: "Zeigen Sie dies im Restaurant. Das Personal kann den Code scannen oder die Nummer ablesen.",
+    qrAlt: "Code für Ihre Reservierungsnummer",
+    saveImage: "Karte als Bild speichern",
+    saving: "Wird vorbereitet…",
+    saveFailed: "Die Karte konnte nicht gespeichert werden. Bitte machen Sie stattdessen einen Screenshot.",
+  },
+
   errors: {
     rateLimited: "Zu viele Versuche. Bitte warten Sie einen Moment und versuchen Sie es erneut.",
     passKeyInvalid: "Dieser Zugangscode ist ungültig. Bitte prüfen Sie ihn und versuchen Sie es erneut.",

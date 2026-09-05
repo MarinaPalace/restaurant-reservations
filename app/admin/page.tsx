@@ -6,6 +6,7 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { ButtonLink } from "@/components/ui/button";
 import { getCurrentStaffUser } from "@/lib/auth/guard";
 import { hasPermission, permissionsOf } from "@/lib/auth/permissions";
+import type { StaffPermission } from "@/types/booking";
 import { getDashboardCounts, getReservationsByDate } from "@/lib/services/reservations";
 import { getFullMenuCatalog, getRestaurantDates } from "@/lib/services/restaurant";
 import { todayKey } from "@/lib/date";
@@ -65,18 +66,32 @@ export default async function AdminPage() {
    * Links are hidden when the account cannot use them. This is presentation
    * only — every page and route behind these also checks the permission
    * itself, because hiding something is not access control.
+   *
+   * A link with no permission is one every signed-in account may follow, and
+   * it is written as an absent field rather than as some permission that
+   * happens to be widely held: the two look identical on the screen and are
+   * completely different the day that permission is taken off somebody.
    */
-  const links = [
-    { href: "/admin/reservation/new", label: "New reservation", permission: "reservations:create" as const, primary: true },
-    { href: "/admin/service", label: "Service board", permission: "service:record" as const, primary: true },
-    { href: "/admin/pass-keys", label: "Pass-keys", permission: "passkeys:issue" as const },
-    { href: "/admin/menu", label: "Menu editor", permission: "menu:edit" as const },
-    { href: "/admin/menu?menu=premium", label: "Premium menu", permission: "menu:edit" as const },
-    { href: "/admin/menu?menu=promo", label: "Promotions", permission: "menu:edit" as const },
-    { href: "/admin/floor-plan", label: "Floor plan", permission: "floorplan:edit" as const },
-    { href: "/admin/analytics", label: "Analytics", permission: "analytics:view" as const },
-    { href: "/admin/users", label: "Staff accounts", permission: "users:manage" as const },
-  ].filter((link) => hasPermission(user, link.permission));
+  const links = ([
+    { href: "/admin/reservation/new", label: "New reservation", permission: "reservations:create", primary: true },
+    { href: "/admin/service", label: "Service board", permission: "service:record", primary: true },
+    /*
+      Scan a guest's card and see everything they have booked — and everything
+      they started and did not finish. Open to anybody signed in, matching the
+      page itself: it shows rooms, parties and reservation numbers, which is
+      what the dashboard below already shows.
+    */
+    { href: "/admin/guests", label: "Find a guest", primary: true },
+    { href: "/admin/pass-keys", label: "Pass-keys", permission: "passkeys:issue" },
+    { href: "/admin/menu", label: "Menu editor", permission: "menu:edit" },
+    { href: "/admin/menu?menu=premium", label: "Premium menu", permission: "menu:edit" },
+    { href: "/admin/menu?menu=promo", label: "Promotions", permission: "menu:edit" },
+    { href: "/admin/floor-plan", label: "Floor plan", permission: "floorplan:edit" },
+    { href: "/admin/analytics", label: "Analytics", permission: "analytics:view" },
+    { href: "/admin/users", label: "Staff accounts", permission: "users:manage" },
+  ] satisfies { href: string; label: string; permission?: StaffPermission; primary?: boolean }[]).filter(
+    (link) => link.permission === undefined || hasPermission(user, link.permission),
+  );
 
   return (
     <PageShell width="xl" headerHref="/admin" showLanguage={false}>

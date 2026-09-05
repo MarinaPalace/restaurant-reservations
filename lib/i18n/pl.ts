@@ -359,6 +359,21 @@ export const pl: PartialDictionary = {
     },
   },
 
+  /**
+   * The card a guest shows at the door.
+   *
+   * The footnote is the only line staff will ever read off it, so it says
+   * the two ways the card can be used rather than describing itself.
+   */
+  card: {
+    title: "Twoja karta rezerwacji",
+    footnote: "Pokaż to w restauracji. Obsługa może zeskanować kod lub odczytać numer.",
+    qrAlt: "Kod Twojego numeru rezerwacji",
+    saveImage: "Zapisz kartę jako obraz",
+    saving: "Przygotowujemy…",
+    saveFailed: "Nie udało się zapisać karty. Prosimy zrobić zrzut ekranu.",
+  },
+
   errors: {
     rateLimited: "Zbyt wiele prób. Prosimy chwilę odczekać i spróbować ponownie.",
     passKeyInvalid: "Ten klucz dostępu jest nieprawidłowy. Prosimy go sprawdzić i spróbować ponownie.",

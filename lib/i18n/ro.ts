@@ -353,6 +353,21 @@ export const ro: PartialDictionary = {
     },
   },
 
+  /**
+   * The card a guest shows at the door.
+   *
+   * The footnote is the only line staff will ever read off it, so it says
+   * the two ways the card can be used rather than describing itself.
+   */
+  card: {
+    title: "Cardul dumneavoastră de rezervare",
+    footnote: "Arătați acest card la restaurant. Personalul poate scana codul sau citi numărul.",
+    qrAlt: "Cod pentru numărul rezervării dumneavoastră",
+    saveImage: "Salvați cardul ca imagine",
+    saving: "Se pregătește…",
+    saveFailed: "Nu am putut salva cardul. Vă rugăm să faceți o captură de ecran.",
+  },
+
   errors: {
     rateLimited: "Prea multe încercări. Așteptați un moment și încercați din nou.",
     passKeyInvalid: "Această cheie de acces nu este validă. Verificați-o și încercați din nou.",

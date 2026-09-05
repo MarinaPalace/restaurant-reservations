@@ -8,12 +8,12 @@ import { EmptyState } from "@/components/ui/feedback";
 import { useBookingSession, useConfirmation, storeConfirmation } from "@/hooks/use-booking-session";
 import { useCallback, useEffect, useState } from "react";
 import { PromoPicker } from "@/components/promo-picker";
+import { ReservationCard } from "@/components/reservation-card";
 import { useI18n } from "@/components/i18n-provider";
 import { format, localeOf } from "@/lib/i18n";
 import { manageHref } from "@/lib/pass-key-links";
 import { buildGoogleCalendarUrl, buildIcsFile, describeReservationTime } from "@/lib/calendar";
 import { formatContact, MESSAGING_APP_LABELS } from "@/lib/contact";
-import { formatLongDate } from "@/lib/date";
 import type { Currency } from "@/lib/money";
 import type { MenuCourse, ReservationRecord } from "@/types/booking";
 
@@ -147,57 +147,34 @@ export function ConfirmationView({
           />
         </div>
 
-        <div className="mt-6 rounded-control border border-line bg-surface-muted p-4 text-center">
-          <p className="eyebrow">{t.confirmation.number}</p>
-          <p className="mt-2 font-mono text-3xl font-semibold tracking-[0.2em] text-ink">
-            {reservation.reservationNumber}
-          </p>
-        </div>
+        {/*
+          The same booking as an object: a code staff can scan, and an image
+          the guest can keep.
 
-        <dl className="mt-5 space-y-3 rounded-control bg-surface-muted p-4 text-sm">
-          <div className="flex justify-between gap-3">
-            <dt className="text-ink-subtle">{t.common.room}</dt>
-            <dd className="font-semibold text-ink">{reservation.roomNumber}</dd>
-          </div>
-          <div className="flex justify-between gap-3">
-            <dt className="text-ink-subtle">{t.common.date}</dt>
-            <dd className="font-semibold text-ink">
-              <time dateTime={reservation.date}>{formatLongDate(reservation.date, locale)}</time>
-            </dd>
-          </div>
-          {reservation.time ? (
-            <div className="flex justify-between gap-3">
-              <dt className="text-ink-subtle">{t.confirmation.arrivalTime}</dt>
-              <dd className="text-right font-semibold text-ink">
-                {reservation.time}
-                {/*
-                  Which 19:00. A guest who booked from another country, or who
-                  is reading this on a phone still set to home, has no way to
-                  know otherwise — and the offset moves with the seasons, so it
-                  cannot be written into the copy.
-                */}
-                <span className="block text-xs font-normal text-ink-muted">{timeZoneLabel}</span>
-              </dd>
-            </div>
-          ) : null}
-          <div className="flex justify-between gap-3">
-            <dt className="text-ink-subtle">{t.common.guests}</dt>
-            <dd className="font-semibold text-ink">{reservation.guestCount}</dd>
-          </div>
-          {/*
-            The table, when there is one. It is one of the two things a guest
-            has to carry down to dinner — the other is the reservation number —
-            and it was on the service sheet, in the log and nowhere the guest
-            could see it. Absent when the restaurant is doing the seating, which
-            is not the same as an empty line.
-          */}
-          {reservation.tableNumber ? (
-            <div className="flex justify-between gap-3">
-              <dt className="text-ink-subtle">{t.common.table}</dt>
-              <dd className="text-lg font-semibold text-ink">{reservation.tableNumber}</dd>
-            </div>
-          ) : null}
-          {reservation.contact ? (
+          It replaced a plain box holding the reservation number and a list
+          repeating the evening, the party and the room. Both are on the card,
+          and a screen that states the same five facts twice reads as a mistake
+          — the guest looks for the difference between the two and there is
+          none. What is left below is only what the card does not carry.
+        */}
+        <ReservationCard
+          reservation={reservation}
+          passKey={session.passKey}
+          timeZoneLabel={timeZoneLabel}
+        />
+
+        {/*
+          Only what is not on the card.
+
+          The room, the evening, the arrival time and the table all moved onto
+          it — including the table, which is one of the two things a guest
+          carries down to dinner and which used to appear nowhere they could
+          see. What stays here is how we will reach them, which is a note about
+          us rather than about the booking and has no business on a card they
+          hold up at a door.
+        */}
+        {reservation.contact ? (
+          <dl className="mt-5 space-y-3 rounded-control bg-surface-muted p-4 text-sm">
             <div className="flex justify-between gap-3">
               <dt className="text-ink-subtle">{t.confirmation.contactOn}</dt>
               <dd className="text-right font-semibold text-ink">
@@ -214,8 +191,8 @@ export function ConfirmationView({
                 ) : null}
               </dd>
             </div>
-          ) : null}
-        </dl>
+          </dl>
+        ) : null}
 
         {reservation.tableGroupId ? (
           <p className="mt-4 rounded-control border border-success/30 bg-success-soft p-3 text-sm font-medium text-success">

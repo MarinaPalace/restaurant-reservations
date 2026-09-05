@@ -395,6 +395,21 @@ export const en = {
   },
 
   /** Answers from the server, keyed by the code it sends. See `i18n/errors.ts`. */
+  /**
+   * The card a guest shows at the door.
+   *
+   * The footnote is the only line staff will ever read off it, so it says
+   * the two ways the card can be used rather than describing itself.
+   */
+  card: {
+    title: "Your confirmation card",
+    footnote: "Show this at the restaurant. Staff can scan the code or read the number.",
+    qrAlt: "Code for your reservation number",
+    saveImage: "Save card as image",
+    saving: "Preparing…",
+    saveFailed: "We could not save the card. Please take a screenshot instead.",
+  },
+
   errors: {
     rateLimited: "Too many attempts. Please wait a moment and try again.",
     passKeyInvalid: "That pass-key is not valid. Please check it and try again.",

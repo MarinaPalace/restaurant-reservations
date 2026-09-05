@@ -347,6 +347,21 @@ export const bg: PartialDictionary = {
     },
   },
 
+  /**
+   * The card a guest shows at the door.
+   *
+   * The footnote is the only line staff will ever read off it, so it says
+   * the two ways the card can be used rather than describing itself.
+   */
+  card: {
+    title: "Вашата карта за резервация",
+    footnote: "Покажете това в ресторанта. Персоналът може да сканира кода или да прочете номера.",
+    qrAlt: "Код за номера на вашата резервация",
+    saveImage: "Запази картата като изображение",
+    saving: "Подготвяме…",
+    saveFailed: "Не успяхме да запазим картата. Моля, направете екранна снимка.",
+  },
+
   errors: {
     rateLimited: "Твърде много опити. Изчакайте малко и опитайте отново.",
     passKeyInvalid: "Този код за достъп не е валиден. Проверете го и опитайте отново.",

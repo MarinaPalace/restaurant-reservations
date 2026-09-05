@@ -478,6 +478,47 @@ went missing the same way. **If a reader lists its fields, adding a field to the
 finished until the reader lists it too**, and a test should assert the value survives the round trip
 (`lib/services/seat-holds.mongo.test.ts`, "what the calendar is told").
 
+### 2.25 The confirmation card carries the reservation number, never the pass-key
+
+The card on the confirmation screen exists to be *shown*: held up at a door, saved to a phone,
+photographed, left face-up on a table. Its QR therefore encodes the **reservation number** and
+nothing else. That number authorises nothing on its own — guest self-service deliberately refuses to
+identify a booking by it, because guests read it aloud to other rooms to be seated together — and
+staff resolve it behind a login. Encoding the pass-key would turn a photograph of the card into the
+power to cancel that guest’s dinner.
+
+**The code is drawn on the server, the card is drawn in the browser**, and both directions matter.
+`lib/qr.ts` records three failures from drawing codes client-side, the worst printing a blank square
+silently; so the code comes from `POST /api/booking/card`, authorised by the pass-key in the body.
+Rasterising the *card* server-side was the first plan and was wrong for the mirror-image reason: a
+serverless runtime has almost no fonts, and the failure is silent and lands on the guest’s phone.
+The browser has the fonts and `lib/reservation-card-image.ts` paints to a canvas — no screenshot
+library, no DOM cloning.
+
+`lib/reservation-card.ts` describes what is on the card; the screen and the saved image both render
+from it, so the two cannot drift. The saved image is deliberately always the light palette: a photo
+gallery has no theme, and a dark card prints as a block of ink.
+
+### 2.26 The desk lookup accepts anything a guest can produce, and is staff-only
+
+`/admin/guests` takes one string and tries every reading of it (`lib/guest-lookup.ts`): a scanned
+pass-key card, whose QR is a booking *link* rather than a bare code; a scanned confirmation card,
+whose QR is the reservation number; a pass-key typed by hand; and the hotel’s own booking
+reference. It returns every candidate rather than classifying, and the service tries them all — a
+search that finds the guest beats a classifier that is certain and wrong.
+
+**It resolves a reservation number back to its pass-key** and returns everything on that key, because
+what reception is asked is about the guest and not the one dinner that happened to be scanned. The
+unfinished attempts (rule 2.23) come with it.
+
+Two things must not change. It is **staff-only**, and must never share a lookup path with the guest
+flow, for the reason in rule 2.5 and above: the reservation number is not a secret. And the query
+travels in the **body**, never the URL, because it may be a pass-key.
+
+Scanning is never the only way in. `components/qr-scanner.tsx` uses `BarcodeDetector` where it
+exists and `jsQR` where it does not — an iPad at reception has neither Chrome nor that API — and
+every screen using it keeps a text box beside it, because cameras get refused and break.
+
 ## 3. Configuration
 
 | Variable | Required | Purpose |
@@ -526,6 +567,10 @@ lib/
   services/           booking-rules, reservations, restaurant/menu,
                       pass-keys, seat-holds, staff-users, audit-log.
   seat-hold.ts        How long seats are held, and the countdown arithmetic.
+  reservation-card.ts What is on the card a guest shows at the door; the
+                      screen and the saved image both render from it.
+  guest-lookup.ts     What reception was handed: a scanned card, a code, or
+                      the hotel's booking reference.
   pass-key.ts         Code generation, normalisation, formatting.
   i18n/               The guest interface in seven languages: en.ts is the
                       master, the rest are partials merged over it.

@@ -5,6 +5,7 @@ import {
   createLocalPassKey,
   deleteLocalPassKey,
   getLocalPassKey,
+  findLocalPassKeysByReservationRef,
   getLocalPassKeyByCode,
   listLocalPassKeys,
   reclaimLocalPassKey,
@@ -224,6 +225,36 @@ export async function getPassKeyById(id: string): Promise<PassKeyRecord | null> 
   await connectToDatabase();
   const key = await PassKeyModel.findById(id).lean();
   return key ? toPassKeyRecord(key as MongoPassKeyDocument) : null;
+}
+
+/**
+ * Every key issued against one hotel booking reference.
+ *
+ * The reference is what does *not* change when a guest is moved to another
+ * room, which is why reception keeps it on the paperwork and why the desk
+ * lookup accepts it. Usually it finds one key; a stay that was extended, or a
+ * card reissued after being lost, produces more, and all of them are returned
+ * because the guest at the desk is holding one and cannot say which.
+ */
+export async function findPassKeysByReservationRef(ref: string): Promise<PassKeyRecord[]> {
+  const normalized = ref.trim().toUpperCase();
+
+  if (!normalized) {
+    return [];
+  }
+
+  if (!isMongoConfigured()) {
+    return findLocalPassKeysByReservationRef(normalized);
+  }
+
+  await connectToDatabase();
+
+  const keys = await PassKeyModel.find({ reservationRef: normalized })
+    .sort({ createdAt: -1 })
+    .limit(20)
+    .lean();
+
+  return keys.map((key) => toPassKeyRecord(key as MongoPassKeyDocument));
 }
 
 export async function listPassKeys(): Promise<PassKeyRecord[]> {

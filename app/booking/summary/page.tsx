@@ -138,6 +138,17 @@ export default function SummaryPage() {
           return;
         }
 
+        /**
+         * They already have a dinner on this evening. Almost always a guest who
+         * tapped back and started again rather than one who wants a second
+         * table — so the way out is the calendar, and the booking they already
+         * have is named in the message.
+         */
+        if (data.code === "ALREADY_BOOKED") {
+          setFailureRoute({ href: "/booking/date", label: t.summary.chooseAnotherDate });
+          return;
+        }
+
         // The evening filled up or closed. With seats held from the calendar
         // onwards this should now be unreachable through the flow — it is left
         // in for a booking made without a hold, and for the day somebody finds

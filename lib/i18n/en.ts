@@ -147,6 +147,8 @@ export const en = {
       closedHint: "Closed",
       full: "fully booked",
       fullHint: "Full",
+      alreadyBooked: "you already have a dinner booked on this evening",
+      alreadyBookedHint: "Already booked",
       beingBooked: "the last seats are being booked right now",
       beingBookedHint: "In progress",
       notEnoughWhileHeld: "only {count} seats left for {guests} guests, and {held} are being booked right now",
@@ -420,6 +422,8 @@ export const en = {
     passKeyAfterStay: "That evening falls after your stay ends. Please choose an earlier date.",
     passKeyTooManyGuests: "Your booking with us is for fewer guests than that. Please speak to reception.",
     dateUnavailable: "Unfortunately, this date is no longer available. Please select another date.",
+    alreadyBookedOnDate:
+      "You already have a reservation on this evening. To change it, open your booking from the confirmation, or speak to reception.",
     holdExpired:
       "Your seats were only held for a short while and that time has now passed. Please choose your date again — the evening may still have room.",
     dateFull: "Unfortunately, this date is fully booked. Please choose another evening.",

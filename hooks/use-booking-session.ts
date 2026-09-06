@@ -167,6 +167,22 @@ export function storeConfirmation(reservation: unknown) {
    * booking: the evening would be drawn with four seats added back that nobody
    * has, and the countdown would still be running on the steps after it.
    */
+  /**
+   * The calendar reads which evenings this key has booked, and it read that
+   * list once, at the entry step — so without this a guest booking a second
+   * dinner in the same session would be offered the evening they had just
+   * taken. The route refuses it either way; this stops the offer being made.
+   */
+  const booked = readBookingSession(window.sessionStorage).passKeyBookedDates;
+  const date = (reservation as { date?: unknown })?.date;
+
+  if (typeof date === "string" && date && !booked.includes(date)) {
+    window.sessionStorage.setItem(
+      BOOKING_STORAGE_KEYS.passKeyBookedDates,
+      JSON.stringify([...booked, date]),
+    );
+  }
+
   for (const key of [
     BOOKING_STORAGE_KEYS.holdId,
     BOOKING_STORAGE_KEYS.holdExpiresAt,

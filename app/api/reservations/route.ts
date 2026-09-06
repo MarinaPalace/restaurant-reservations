@@ -3,6 +3,7 @@ import {
   BookingError,
   TableJoinError,
   createReservationEntry,
+  findBookingOnDate,
   reserveReservationNumber,
 } from "@/lib/services/reservations";
 import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
@@ -158,6 +159,32 @@ export async function POST(request: Request) {
     if (restaurantDate && !canGuestBookDate(restaurantDate).allowed) {
       return NextResponse.json(
         { error: BOOKING_MESSAGES.bookingClosed, code: "BOOKING_CLOSED" },
+        { status: 409 },
+      );
+    }
+
+    /**
+     * One dinner per evening per key.
+     *
+     * Checked in the route rather than only on the calendar (rule 2.5): the
+     * calendar's copy of what this key has booked is read once, at the entry
+     * step, so a guest who books an evening and then starts again is looking at
+     * a list that predates their own booking. The server is the only place that
+     * knows.
+     *
+     * Reception is not bound by it — a room that genuinely wants a second table
+     * is a booking staff take at the desk, where somebody can see it is
+     * deliberate.
+     */
+    const existing = await findBookingOnDate(passKey.id, parsed.data.date);
+
+    if (existing) {
+      return NextResponse.json(
+        {
+          error: `You already have a reservation on this evening (${existing.reservationNumber}). To change it, use the link on your confirmation, or speak to reception.`,
+          code: "ALREADY_BOOKED",
+          reservationNumber: existing.reservationNumber,
+        },
         { status: 409 },
       );
     }

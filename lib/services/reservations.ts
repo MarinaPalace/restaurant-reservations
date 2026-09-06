@@ -1047,6 +1047,31 @@ export async function restoreReservation(reservationNumber: string): Promise<Res
  * guest reaches their own reservations: the key is a secret, the reservation
  * number is not.
  */
+/**
+ * The dinner this key already has on an evening, if it has one.
+ *
+ * A key may be worth several dinners, and nothing stopped it spending two of
+ * them on the *same* night — so a guest who tapped back, or opened the flow
+ * twice, could end up with two or three tables for one evening and no idea
+ * until they arrived. The calendar warned about it and let them carry on
+ * anyway, which is a warning nobody reads once they have decided.
+ *
+ * **Cancelled bookings do not count.** A guest who cancelled Friday must be
+ * able to book Friday again; that is the whole point of cancelling.
+ */
+export async function findBookingOnDate(
+  passKeyId: string,
+  date: string,
+): Promise<ReservationRecord | null> {
+  if (!passKeyId || !date) {
+    return null;
+  }
+
+  const booked = await getReservationsByPassKey(passKeyId);
+
+  return booked.find((entry) => entry.date === date && entry.status === "confirmed") ?? null;
+}
+
 export async function getReservationsByPassKey(passKeyId: string): Promise<ReservationRecord[]> {
   if (!passKeyId) {
     return [];

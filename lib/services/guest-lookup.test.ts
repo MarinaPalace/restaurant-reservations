@@ -277,3 +277,54 @@ describe("what the desk is allowed to see", () => {
     expect(match.passKey.usedCount).toBe(1);
   });
 });
+
+describe("a booking that is happening right now", () => {
+  /**
+   * The urgent half of the same question. A guest at the desk with no booking
+   * may be one who gave up last night, or one whose partner is upstairs on the
+   * menu step this minute — and those need opposite replies. Without the live
+   * holds the desk cannot tell them apart.
+   */
+  it("shows a hold the guest is still choosing against", async () => {
+    const { EVENING, key } = await setUp({ withBooking: false });
+    const { holdSeats, advanceSeatHoldStep } = await import("@/lib/services/seat-holds");
+    const { findGuestBy } = await import("@/lib/services/guest-lookup");
+
+    const hold = await holdSeats({ date: EVENING, guests: 3, passKeyId: key.id, roomNumber: "402" });
+    await advanceSeatHoldStep(hold.holdId, "menu");
+
+    const [match] = (await findGuestBy(formatPassKey(key.code))).matches;
+
+    expect(match.reservations).toEqual([]);
+    expect(match.unfinished).toHaveLength(1);
+    expect(match.unfinished[0]).toMatchObject({
+      status: "live",
+      date: EVENING,
+      guests: 3,
+      step: "menu",
+    });
+  });
+
+  /**
+   * And a hold whose clock ran out but which nothing has swept yet is not one:
+   * telling the desk somebody is mid-booking when their seats went back ten
+   * minutes ago is the misreading this list exists to prevent.
+   */
+  it("does not call a lapsed hold live", async () => {
+    const { EVENING, key } = await setUp({ withBooking: false });
+    const { holdSeats } = await import("@/lib/services/seat-holds");
+    const { findGuestBy } = await import("@/lib/services/guest-lookup");
+
+    await holdSeats({ date: EVENING, guests: 2, passKeyId: key.id });
+
+    const holdsFile = path.join(temporaryDirectory, "seat-holds.json");
+    const holds = JSON.parse(await fs.readFile(holdsFile, "utf8"));
+    holds[0].expiresAt = new Date(Date.now() - 60_000).toISOString();
+    await fs.writeFile(holdsFile, JSON.stringify(holds, null, 2), "utf8");
+
+    const [match] = (await findGuestBy(formatPassKey(key.code))).matches;
+    const live = match.unfinished.filter((hold) => hold.status === "live");
+
+    expect(live).toEqual([]);
+  });
+});

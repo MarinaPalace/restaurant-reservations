@@ -8,7 +8,7 @@ import { Alert, Badge, EmptyState, Skeleton } from "@/components/ui/feedback";
 import { Field, Input } from "@/components/ui/field";
 import { QrScanner } from "@/components/qr-scanner";
 import { formatLongDate, isPastDateKey } from "@/lib/date";
-import { SEAT_HOLD_STEP_LABELS } from "@/lib/seat-hold";
+import { SEAT_HOLD_STEP_LABELS, isSeatHoldHolding, seatHoldSecondsLeft } from "@/lib/seat-hold";
 import type { SeatHoldRecord } from "@/lib/seat-hold";
 import type { GuestLookupKey } from "@/lib/services/guest-lookup";
 import type { ReservationRecord } from "@/types/booking";
@@ -221,6 +221,12 @@ function GuestPanel({ match }: { match: Match }) {
   const upcoming = reservations.filter((entry) => !isPastDateKey(entry.date));
   const past = reservations.filter((entry) => isPastDateKey(entry.date));
 
+  // Live is decided here rather than trusted from the status, so a hold whose
+  // clock ran out between the server answering and the desk reading does not
+  // show as somebody still choosing.
+  const inProgress = unfinished.filter((hold) => isSeatHoldHolding(hold));
+  const abandoned = unfinished.filter((hold) => !isSeatHoldHolding(hold));
+
   return (
     <Card className="p-5 sm:p-6" as="section">
       <CardHeader
@@ -287,8 +293,27 @@ function GuestPanel({ match }: { match: Match }) {
       {/*
         The list this page exists for. A guest certain they booked, and no
         booking — this says whether they are remembering right.
+
+        Split, because the two halves call for opposite replies. Somebody still
+        going is "they are booking it now, give them a minute"; somebody who
+        stopped is "that one came to nothing, shall we do it here". Shown as one
+        list, the desk would read every row as the second.
       */}
-      {unfinished.length > 0 ? (
+      {inProgress.length > 0 ? (
+        <section className="mt-5 rounded-control border border-success/30 bg-success-soft p-4">
+          <h3 className="eyebrow text-success">Booking right now</h3>
+          <p className="mt-1 text-sm text-success">
+            Seats are held for them while they choose. This becomes a reservation if they finish.
+          </p>
+          <ul className="mt-3 space-y-2">
+            {inProgress.map((hold) => (
+              <HoldRow key={hold.holdId} hold={hold} live />
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {abandoned.length > 0 ? (
         <section className="mt-5 rounded-control border border-warning/30 bg-warning-soft p-4">
           <h3 className="eyebrow text-warning">Started and never finished</h3>
           <p className="mt-1 text-sm text-warning">
@@ -296,24 +321,44 @@ function GuestPanel({ match }: { match: Match }) {
             then released.
           </p>
           <ul className="mt-3 space-y-2">
-            {unfinished.map((hold) => (
-              <li key={hold.holdId} className="rounded-control border border-line bg-surface p-3 text-sm">
-                <p className="font-semibold text-ink">
-                  {formatLongDate(hold.date)}
-                  <span className="ml-2 font-normal text-ink-muted">
-                    · {hold.guests} guest{hold.guests === 1 ? "" : "s"}
-                  </span>
-                </p>
-                <p className="mt-1 text-ink-muted">
-                  {hold.step ? SEAT_HOLD_STEP_LABELS[hold.step] : "started a booking"}
-                  {hold.createdAt ? ` · started ${new Date(hold.createdAt).toLocaleString()}` : ""}
-                </p>
-              </li>
+            {abandoned.map((hold) => (
+              <HoldRow key={hold.holdId} hold={hold} />
             ))}
           </ul>
         </section>
       ) : null}
     </Card>
+  );
+}
+
+/**
+ * One attempt, live or abandoned.
+ *
+ * The minutes left are shown only while there are any: a countdown beside an
+ * attempt that is over reads as though the guest were still choosing, which is
+ * the misreading this whole panel exists to prevent.
+ */
+function HoldRow({ hold, live = false }: { hold: SeatHoldRecord; live?: boolean }) {
+  const minutesLeft = Math.ceil(seatHoldSecondsLeft(hold.expiresAt) / 60);
+
+  return (
+    <li className="rounded-control border border-line bg-surface p-3 text-sm">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="font-semibold text-ink">
+          {formatLongDate(hold.date)}
+          <span className="ml-2 font-normal text-ink-muted">
+            · {hold.guests} guest{hold.guests === 1 ? "" : "s"}
+          </span>
+        </p>
+        {live && minutesLeft > 0 ? (
+          <Badge tone="success">{minutesLeft} min left</Badge>
+        ) : null}
+      </div>
+      <p className="mt-1 text-ink-muted">
+        {hold.step ? SEAT_HOLD_STEP_LABELS[hold.step] : "started a booking"}
+        {hold.createdAt ? ` · started ${new Date(hold.createdAt).toLocaleString()}` : ""}
+      </p>
+    </li>
   );
 }
 

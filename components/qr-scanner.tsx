@@ -116,11 +116,52 @@ export function QrScanner({
     void (async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          // The back camera on a phone or tablet. `ideal` rather than `exact`
-          // so a laptop with only a front camera still works.
-          video: { facingMode: { ideal: "environment" } },
+          video: {
+            // The back camera on a phone or tablet. `ideal` rather than
+            // `exact` so a laptop with only a front camera still works.
+            facingMode: { ideal: "environment" },
+            /**
+             * A big frame, and **only the width is asked for**.
+             *
+             * Nothing is displayed at this size — it is decoded at it, and a
+             * code held across a desk is a handful of pixels per module, so
+             * asking small is the difference between a card that scans at
+             * arm's length and one that has to be pressed against the glass.
+             *
+             * Naming the height too would quietly make this worse. Asking a
+             * 4:3 sensor for 16:9 does not letterbox it, it **crops** it — the
+             * browser throws away the top and bottom of the sensor to satisfy
+             * the shape, which is exactly the narrowed view being fixed here.
+             * One dimension leaves the camera on its own aspect.
+             */
+            width: { ideal: 1280 }
+          },
           audio: false,
         });
+
+        /**
+         * And take the zoom back off.
+         *
+         * Some phones and most tablets open the back camera part-way zoomed in,
+         * which crops the field of view before anything of ours has seen a
+         * pixel — the guest holds the card up, it is plainly inside the frame
+         * on their side, and the desk sees the middle third of it. Where the
+         * track exposes `zoom`, it is wound back to the widest the hardware
+         * offers; where it does not, nothing happens and nothing breaks.
+         */
+        for (const track of stream.getVideoTracks()) {
+          const zoom = (track.getCapabilities?.() as { zoom?: { min?: number } } | undefined)?.zoom;
+
+          if (typeof zoom?.min === "number") {
+            try {
+              await track.applyConstraints({
+                advanced: [{ zoom: zoom.min } as MediaTrackConstraintSet],
+              });
+            } catch {
+              // A camera that will not be told. Not worth failing a scan over.
+            }
+          }
+        }
 
         if (cancelled) {
           for (const track of stream.getTracks()) {
@@ -239,12 +280,32 @@ export function QrScanner({
         played is the reliable way to get a black rectangle on iOS.
       */}
       <div className={active ? "mt-3" : "hidden"}>
+        {/*
+          `object-contain`, never `object-cover`.
+
+          Cover fills the box by cropping, which on a wide short box throws away
+          the top and bottom of the frame — and the decoder reads the *whole*
+          frame, so the preview was showing less than was being scanned. The
+          card could sit plainly inside what the camera saw and outside what the
+          person aiming it saw, which is the one thing a viewfinder must never
+          do. Contain letterboxes instead: black bars, and what is on screen is
+          exactly what is read.
+        */}
         <div className="relative overflow-hidden rounded-control border border-line-strong bg-black">
-          <video ref={videoRef} className="block max-h-72 w-full object-cover" playsInline muted />
-          {/* The frame to hold the card inside. Purely a guide. */}
+          <video
+            ref={videoRef}
+            className="mx-auto block max-h-[60vh] w-full object-contain"
+            playsInline
+            muted
+          />
+          {/*
+            A guide, and only a guide: the code is found anywhere in the frame,
+            so this is sized as a share of the preview rather than a fixed
+            square that would sit in a different place on every device.
+          */}
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute inset-0 m-auto size-40 rounded-lg border-2 border-white/70"
+            className="pointer-events-none absolute inset-0 m-auto aspect-square w-1/2 max-w-56 rounded-lg border-2 border-white/70"
           />
         </div>
         <p className="mt-2 text-sm text-ink-muted">{labels.hint}</p>

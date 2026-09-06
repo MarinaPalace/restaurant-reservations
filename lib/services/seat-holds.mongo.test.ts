@@ -579,3 +579,150 @@ describe("what the calendar is told", () => {
     expect(listed?.remainingSeats).toBe(6);
   });
 });
+
+describe("one key, one evening", () => {
+  /**
+   * The invariant the model claims, now actually enforced on the server.
+   *
+   * It used to rest on the browser sending `previousHoldId`, and several
+   * ordinary things break that: a reply lost on lobby wi-fi, a refusal that
+   * returns before a hold is taken while the screen clears its copy anyway, or
+   * simply two tabs. Each left a live hold nobody could name — and the guest's
+   * next attempt was then refused by their own abandoned seats.
+   */
+  it("closes a hold the browser forgot to mention", async () => {
+    const { holdSeats } = await load();
+    await openEvening(10);
+
+    // The guest's first attempt. The reply is lost, so the browser keeps no id.
+    await holdSeats({ date: DATE, guests: 4, passKeyId: "key-1" });
+
+    // They tap Continue again, with nothing to hand back.
+    await holdSeats({ date: DATE, guests: 4, passKeyId: "key-1" });
+
+    // Four seats held, not eight.
+    expect(await evening()).toEqual({ reservedSeats: 0, heldSeats: 4 });
+  });
+
+  /**
+   * And the evening is not shut against them by their own ghost. This is the
+   * case that matters: on a tight evening the second attempt used to be refused
+   * `DATE_FULL` by the seats the first attempt was still holding.
+   */
+  it("does not let a guest lock themselves out of the last seats", async () => {
+    const { holdSeats } = await load();
+    await openEvening(4);
+
+    await holdSeats({ date: DATE, guests: 4, passKeyId: "key-1" });
+
+    await expect(holdSeats({ date: DATE, guests: 4, passKeyId: "key-1" })).resolves.toMatchObject({
+      guests: 4,
+    });
+    expect(await evening()).toEqual({ reservedSeats: 0, heldSeats: 4 });
+  });
+
+  /** Two tabs on two evenings is still one key, so still one hold. */
+  it("moves the hold when the same key takes another evening", async () => {
+    const { holdSeats, listSeatHolds } = await load();
+    const { RestaurantDateModel } = await import("@/lib/models/restaurant-date");
+    await openEvening(10);
+    await RestaurantDateModel.create({ date: "2026-09-19", isOpen: true, capacity: 10, reservedSeats: 0 });
+
+    await holdSeats({ date: DATE, guests: 2, passKeyId: "key-1" });
+    await holdSeats({ date: "2026-09-19", guests: 2, passKeyId: "key-1" });
+
+    expect(await evening()).toEqual({ reservedSeats: 0, heldSeats: 0 });
+    expect((await listSeatHolds(DATE)).every((hold) => hold.status !== "live")).toBe(true);
+  });
+
+  /** Another guest's live hold is none of this key's business. */
+  it("leaves other keys alone", async () => {
+    const { holdSeats } = await load();
+    await openEvening(10);
+
+    await holdSeats({ date: DATE, guests: 3, passKeyId: "key-1" });
+    await holdSeats({ date: DATE, guests: 2, passKeyId: "key-2" });
+
+    expect(await evening()).toEqual({ reservedSeats: 0, heldSeats: 5 });
+  });
+
+  /** And the footprint survives being moved, however it was moved. */
+  it("carries the furthest step across a hold the browser forgot", async () => {
+    const { holdSeats, advanceSeatHoldStep } = await load();
+    await openEvening(10);
+
+    const first = await holdSeats({ date: DATE, guests: 2, passKeyId: "key-1" });
+    await advanceSeatHoldStep(first.holdId, "menu");
+
+    // No `previousHoldId` — the browser lost it.
+    const second = await holdSeats({ date: DATE, guests: 2, passKeyId: "key-1" });
+
+    expect(second.step).toBe("menu");
+  });
+});
+
+describe("recording how far the guest got", () => {
+  /**
+   * Steps are reported with `keepalive` as the guest moves, so two can be in
+   * flight at once. Read-then-write let them land summary-then-menu and walk
+   * the footprint backwards; the filter now does the comparison.
+   */
+  it("cannot be walked backwards by a late report", async () => {
+    const { holdSeats, advanceSeatHoldStep, getSeatHold } = await load();
+    await openEvening(10);
+
+    const hold = await holdSeats({ date: DATE, guests: 2, passKeyId: "key-1" });
+
+    await Promise.all([
+      advanceSeatHoldStep(hold.holdId, "summary"),
+      advanceSeatHoldStep(hold.holdId, "menu"),
+      advanceSeatHoldStep(hold.holdId, "table"),
+    ]);
+
+    expect((await getSeatHold(hold.holdId))?.step).toBe("summary");
+  });
+});
+
+describe("what a saved evening says about its held seats", () => {
+  /**
+   * The calendar writes this answer straight back into its own state, so a
+   * reader that lists its fields and forgets one makes held seats vanish from
+   * the screen while the hold is still live (rule 2.24).
+   */
+  it("still knows about them after staff edit the evening", async () => {
+    const { holdSeats } = await load();
+    const { updateRestaurantDate } = await import("@/lib/services/reservations");
+    await openEvening(10);
+
+    await holdSeats({ date: DATE, guests: 4, passKeyId: "key-1" });
+
+    const saved = await updateRestaurantDate({
+      date: DATE,
+      isOpen: true,
+      capacity: 10,
+      serviceTime: "19:30",
+    });
+
+    expect(saved.heldSeats).toBe(4);
+    expect(saved.remainingSeats).toBe(6);
+  });
+
+  /** The field that had been dropped since it was added, on master too. */
+  it("keeps the table cutoff staff set on it", async () => {
+    await load();
+    const { updateRestaurantDate } = await import("@/lib/services/reservations");
+    const { getRestaurantDate, getRestaurantDates } = await import("@/lib/services/restaurant");
+
+    await updateRestaurantDate({
+      date: DATE,
+      isOpen: true,
+      capacity: 10,
+      tableCutoffHours: 6,
+    });
+
+    expect((await getRestaurantDate(DATE))?.tableCutoffHours).toBe(6);
+    expect(
+      (await getRestaurantDates()).find((entry) => entry.date === DATE)?.tableCutoffHours,
+    ).toBe(6);
+  });
+});

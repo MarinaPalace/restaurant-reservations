@@ -1,4 +1,5 @@
 import { parseGuestLookup, type GuestLookupCandidates } from "@/lib/guest-lookup";
+import { fromDateKey, toDateKey, todayKey } from "@/lib/date";
 import {
   findPassKeysByReservationRef,
   getPassKeyByCode,
@@ -39,8 +40,51 @@ import type { SeatHoldRecord } from "@/lib/seat-hold";
  * is certain there is.
  */
 
+/**
+ * What the desk is told about a guest's key — deliberately not the key itself.
+ *
+ * The code is **omitted**, and that is the whole point of this type existing.
+ * A reservation number is not a secret: guests read it aloud to other rooms so
+ * they can be seated together, and rule 2.5 turns on that fact. This page
+ * resolves a number back to its key, so returning the code would have handed
+ * anybody who overheard a number — through any signed-in account, including the
+ * tablet left at the pass with only `service:record` — the one credential that
+ * cancels that guest's dinner.
+ *
+ * Reception does not need it. They need to know whose key it is, whether it
+ * still works, and what is booked on it. Reading a code is `/admin/pass-keys`,
+ * which requires `passkeys:issue`.
+ */
+export type GuestLookupKey = Pick<
+  PassKeyRecord,
+  | "id"
+  | "kind"
+  | "roomNumber"
+  | "guestName"
+  | "reservationRef"
+  | "status"
+  | "expiresOn"
+  | "usedCount"
+  | "maxUses"
+>;
+
+/** Strips a key down to what the desk may see. */
+function toLookupKey(key: PassKeyRecord): GuestLookupKey {
+  return {
+    id: key.id,
+    kind: key.kind,
+    roomNumber: key.roomNumber,
+    guestName: key.guestName,
+    reservationRef: key.reservationRef,
+    status: key.status,
+    expiresOn: key.expiresOn,
+    usedCount: key.usedCount,
+    maxUses: key.maxUses,
+  };
+}
+
 export type GuestLookupMatch = {
-  passKey: PassKeyRecord;
+  passKey: GuestLookupKey;
   reservations: ReservationRecord[];
   /**
    * Bookings this key started and never finished, newest first.
@@ -78,17 +122,25 @@ async function unfinishedFor(passKey: PassKeyRecord, reservations: ReservationRe
    * their own. The upcoming ones are added: an abandoned attempt is nearly
    * always for a night still ahead, which is exactly when somebody asks.
    */
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayKey();
+
   if (passKey.expiresOn && passKey.expiresOn >= today) {
-    for (let date = new Date(today); ; ) {
-      const key = date.toISOString().slice(0, 10);
+    /**
+     * Walked with `fromDateKey`/`toDateKey` rather than `toISOString().slice(0,10)`
+     * (rule 2.1). The banned form converts to UTC first, so west of Greenwich
+     * it names yesterday — and this is the lookup whose whole job is to find
+     * *tonight's* abandoned attempt.
+     */
+    for (const day = fromDateKey(today); ; day.setDate(day.getDate() + 1)) {
+      const key = toDateKey(day);
+
       if (key > passKey.expiresOn) {
         break;
       }
+
       if (!evenings.includes(key)) {
         evenings.push(key);
       }
-      date = new Date(date.getTime() + 86_400_000);
     }
   }
 
@@ -109,7 +161,14 @@ async function unfinishedFor(passKey: PassKeyRecord, reservations: ReservationRe
 async function matchFor(passKey: PassKeyRecord): Promise<GuestLookupMatch> {
   const reservations = await getReservationsByPassKey(passKey.id);
 
-  return { passKey, reservations, unfinished: await unfinishedFor(passKey, reservations) };
+  return {
+    // Stripped here rather than in the screen: hiding a credential in the UI
+    // is not access control (rule 2.5), and the route serves JSON to anything
+    // that asks.
+    passKey: toLookupKey(passKey),
+    reservations,
+    unfinished: await unfinishedFor(passKey, reservations),
+  };
 }
 
 /**

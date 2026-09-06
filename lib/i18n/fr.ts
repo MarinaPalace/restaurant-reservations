@@ -357,6 +357,7 @@ export const fr: PartialDictionary = {
     title: "Votre carte de réservation",
     footnote: "Présentez ceci au restaurant. Le personnel peut scanner le code ou lire le numéro.",
     qrAlt: "Code de votre numéro de réservation",
+    noCode: "Code indisponible — communiquez le numéro à la place.",
     saveImage: "Enregistrer la carte en image",
     saving: "Préparation…",
     saveFailed: "Nous n'avons pas pu enregistrer la carte. Veuillez faire une capture d'écran.",

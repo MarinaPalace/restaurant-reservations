@@ -872,16 +872,20 @@ function holding(hold: SeatHoldRecord, now: Date) {
  * which is the only way a guest is not refused seats that an abandoned tab is
  * still nominally sitting in.
  *
- * Returns the attempts it closed, so the caller can write them to the log once
- * it is outside the lock.
+ * Returns the attempts it closed *and* whether it touched the dates, because
+ * those are two different questions and conflating them lost the repair below:
+ * the stranded-seat net can be the only thing that changed anything, and a
+ * caller that decides whether to save by counting closed holds would compute
+ * the fix and then drop it on the floor.
  */
 function sweepHoldsInPlace(
   holds: SeatHoldRecord[],
   dates: StoredRestaurantDate[],
   date?: string,
   now: Date = new Date(),
-): SeatHoldRecord[] {
+): { abandoned: SeatHoldRecord[]; changedDates: boolean } {
   const abandoned: SeatHoldRecord[] = [];
+  let changedDates = false;
 
   for (let index = 0; index < holds.length; index += 1) {
     const hold = holds[index];
@@ -911,6 +915,7 @@ function sweepHoldsInPlace(
         ...dates[dateIndex],
         heldSeats: Math.max(0, (dates[dateIndex].heldSeats ?? 0) - hold.guests),
       };
+      changedDates = true;
     }
   }
 
@@ -940,9 +945,10 @@ function sweepHoldsInPlace(
     }
 
     dates[index] = { ...entry, heldSeats: 0 };
+    changedDates = true;
   }
 
-  return abandoned;
+  return { abandoned, changedDates };
 }
 
 /**
@@ -973,10 +979,18 @@ export async function sweepLocalSeatHolds(date?: string): Promise<SeatHoldRecord
     const holds = await readSeatHolds();
     const dates = await readDates();
 
-    const abandoned = sweepHoldsInPlace(holds, dates, date, now);
+    const { abandoned, changedDates } = sweepHoldsInPlace(holds, dates, date, now);
     const kept = forgetOldHolds(holds, now);
 
-    if (abandoned.length === 0 && kept.length === holds.length) {
+    /**
+     * `changedDates` is the one that matters here. Without it, a date left
+     * holding seats no receipt accounts for — a process killed between the two
+     * writes below — was repaired in memory on every read and saved on none of
+     * them, so the phantom seats came back from the file for ever and reception
+     * could not sell them either. The Mongo path recovers from that state; this
+     * one has to as well.
+     */
+    if (abandoned.length === 0 && !changedDates && kept.length === holds.length) {
       return [];
     }
 
@@ -1000,6 +1014,7 @@ export async function holdLocalSeats(input: {
     const dates = await readDates();
 
     sweepHoldsInPlace(holds, dates, input.date, now);
+
 
     const index = dates.findIndex((entry) => entry.date === input.date);
     const dateEntry = index === -1 ? null : dates[index];
@@ -1101,6 +1116,12 @@ export async function releaseLocalSeatHold(holdId: string): Promise<SeatHoldReco
 export async function getLocalSeatHold(holdId: string): Promise<SeatHoldRecord | null> {
   const holds = await readSeatHolds();
   return holds.find((hold) => hold.holdId === holdId) ?? null;
+}
+
+/** The holds a key is still holding seats with. Usually none, sometimes one. */
+export async function listLocalLiveHoldsForKey(passKeyId: string): Promise<SeatHoldRecord[]> {
+  const now = new Date();
+  return (await readSeatHolds()).filter((hold) => hold.passKeyId === passKeyId && holding(hold, now));
 }
 
 /** One evening's attempts — who is holding seats now, and who walked away. */

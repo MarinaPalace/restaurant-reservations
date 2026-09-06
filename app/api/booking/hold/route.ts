@@ -177,9 +177,18 @@ export async function POST(request: Request) {
 /**
  * Gives seats back before the hold runs out.
  *
- * Called when the guest goes back to the calendar, which is the moment they
- * have stopped wanting the evening they were holding. Waiting the full fifteen
- * minutes would keep an evening shut against everybody else for no reason.
+ * **What actually calls it today is the screen tidying up after a hold the
+ * server has already closed** — an expired hold on the summary, or the banner's
+ * way back to the calendar — so in the ordinary flow this is a no-op that keeps
+ * the session honest rather than a release.
+ *
+ * It is written to release a live one because that is the operation, and
+ * because the alternative was worse: an earlier draft let the calendar release
+ * on mount, which raced the hold the guest had just taken on their way *out* of
+ * it. A guest who backs out to the calendar and closes the tab therefore keeps
+ * the seats for the rest of the fifteen minutes, which is what the expiry is
+ * for. Wiring a release to leaving the flow needs a signal that cannot fire on
+ * a page reload, and none of the obvious ones qualify.
  *
  * No pass-key is asked for, and that is safe: the id is the only thing that
  * identifies a hold, it is unguessable, and the worst a stolen one could do is
@@ -239,7 +248,20 @@ export async function DELETE(request: Request) {
  * depends on it.
  */
 export async function PATCH(request: Request) {
-  const limit = checkRateLimit(clientKeyFrom(request, "seat-hold"), { limit: 60, windowMs: 60_000 });
+  /**
+   * Its own budget, not the one taking a hold uses.
+   *
+   * `clientKeyFrom` keys on the forwarded address, and a hotel's guests all
+   * share one. Reporting a step fires automatically on three screens, so four
+   * requests per booking were landing in the bucket that guards Continue on the
+   * calendar — about eight concurrent bookings and the next guest was told to
+   * wait a moment, with no seats held and nowhere to go. A footprint for staff
+   * must never be able to stop a guest booking dinner.
+   */
+  const limit = checkRateLimit(clientKeyFrom(request, "seat-hold-step"), {
+    limit: 60,
+    windowMs: 60_000,
+  });
 
   if (!limit.allowed) {
     return new Response(null, { status: 204 });

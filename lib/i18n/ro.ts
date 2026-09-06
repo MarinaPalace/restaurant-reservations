@@ -363,6 +363,7 @@ export const ro: PartialDictionary = {
     title: "Cardul dumneavoastră de rezervare",
     footnote: "Arătați acest card la restaurant. Personalul poate scana codul sau citi numărul.",
     qrAlt: "Cod pentru numărul rezervării dumneavoastră",
+    noCode: "Cod indisponibil — citiți numărul în schimb.",
     saveImage: "Salvați cardul ca imagine",
     saving: "Se pregătește…",
     saveFailed: "Nu am putut salva cardul. Vă rugăm să faceți o captură de ecran.",

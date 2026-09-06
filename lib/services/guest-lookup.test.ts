@@ -232,3 +232,48 @@ describe("the conversation this page exists for", () => {
     expect(found.matches[0].unfinished).toEqual([]);
   });
 });
+
+describe("what the desk is allowed to see", () => {
+  /**
+   * A reservation number is not a secret — guests read it aloud to other rooms
+   * so they can be seated together, which is exactly why guest self-service
+   * refuses to identify a booking by one. This page resolves a number back to
+   * its key, so returning the code would have handed anybody who overheard a
+   * number the one credential that cancels that guest's dinner, through any
+   * signed-in account including the tablet at the pass.
+   */
+  it("never returns the pass-key code", async () => {
+    const { key, reservationNumber } = await setUp();
+    const { findGuestBy } = await import("@/lib/services/guest-lookup");
+
+    for (const query of [reservationNumber, "10245", formatPassKey(key.code)]) {
+      const found = await findGuestBy(query);
+      const [match] = found.matches;
+
+      expect(match).toBeDefined();
+      // Not merely absent from the screen — absent from the payload.
+      expect(JSON.stringify(match.passKey)).not.toContain(key.code);
+      expect((match.passKey as Record<string, unknown>).code).toBeUndefined();
+    }
+  });
+
+  /** And still says everything reception actually needs. */
+  it("says whose key it is and whether it still works", async () => {
+    const { key } = await setUp();
+    const { findGuestBy } = await import("@/lib/services/guest-lookup");
+
+    const [match] = (await findGuestBy("10245")).matches;
+
+    expect(match.passKey).toMatchObject({
+      id: key.id,
+      roomNumber: "402",
+      guestName: "A. Guest",
+      reservationRef: "10245",
+      // Spent on the booking in the setup. A used key is still the guest's
+      // key — they need it to change or cancel — so the desk sees it plainly
+      // rather than being told there is nothing here.
+      status: "used",
+    });
+    expect(match.passKey.usedCount).toBe(1);
+  });
+});

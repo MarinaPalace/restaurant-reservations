@@ -10,6 +10,7 @@ import { Button, ButtonLink } from "@/components/ui/button";
 import { Alert } from "@/components/ui/feedback";
 import { useBookingGuard, writeBookingSession } from "@/hooks/use-booking-session";
 import { takeSeatHold } from "@/hooks/use-seat-hold";
+import { isSeatHoldLive } from "@/lib/seat-hold";
 import { useI18n } from "@/components/i18n-provider";
 import { translateApiError } from "@/lib/i18n/errors";
 import { format, localeOf, plural } from "@/lib/i18n";
@@ -47,8 +48,18 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
    * them back here is what makes going back and forth free.
    */
   const heldHere = useCallback(
-    (dateKey: string) => (session.holdDate === dateKey ? session.holdGuests : 0),
-    [session.holdDate, session.holdGuests],
+    (dateKey: string) =>
+      /**
+       * Live, and only live. Nothing clears these keys when a hold lapses, so a
+       * guest who left the tab for twenty minutes and came back would otherwise
+       * have their dead hold added to a genuinely full evening — "4 left", in
+       * positive green, on a night with nothing on it. Being shown seats that
+       * were never there is the failure this whole feature exists to delete.
+       */
+      session.holdDate === dateKey && isSeatHoldLive(session.holdExpiresAt)
+        ? session.holdGuests
+        : 0,
+    [session.holdDate, session.holdExpiresAt, session.holdGuests],
   );
 
   /**

@@ -67,6 +67,14 @@ export async function getRestaurantDates(): Promise<RestaurantDateAvailability[]
        * and the drop looks exactly like the field not existing.
        */
       heldSeats: Number(date.heldSeats ?? 0),
+      /**
+       * Dropped here since it was added, on `master` too — the same trap, one
+       * field along. Two consequences, both silent: `canGuestChooseTable` saw 0
+       * and never closed table selection, and because the admin calendar is
+       * seeded from this list and sends every field back on save, the next edit
+       * of any field on an evening wrote the cutoff back to 0.
+       */
+      tableCutoffHours: Number(date.tableCutoffHours ?? 0),
       // Absent stays absent: it is "follow the restaurant", not "off".
       features: toEveningOverrides(date.features),
     }),
@@ -96,6 +104,9 @@ export async function getRestaurantDate(date: string): Promise<RestaurantDateAva
     // Carried for the same reason as above: `remainingSeats` is derived from
     // it, and the booking route judges availability on that.
     heldSeats: Number(record.heldSeats ?? 0),
+    // And this one, which had been dropped since it was added — see the list
+    // reader above for what that cost.
+    tableCutoffHours: Number(record.tableCutoffHours ?? 0),
     features: toEveningOverrides(record.features),
   });
 }

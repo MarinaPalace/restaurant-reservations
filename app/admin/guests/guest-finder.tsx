@@ -8,10 +8,10 @@ import { Alert, Badge, EmptyState, Skeleton } from "@/components/ui/feedback";
 import { Field, Input } from "@/components/ui/field";
 import { QrScanner } from "@/components/qr-scanner";
 import { formatLongDate, isPastDateKey } from "@/lib/date";
-import { formatPassKey } from "@/lib/pass-key";
 import { SEAT_HOLD_STEP_LABELS } from "@/lib/seat-hold";
 import type { SeatHoldRecord } from "@/lib/seat-hold";
-import type { PassKeyRecord, ReservationRecord } from "@/types/booking";
+import type { GuestLookupKey } from "@/lib/services/guest-lookup";
+import type { ReservationRecord } from "@/types/booking";
 
 /**
  * Finding a guest at the desk.
@@ -33,7 +33,7 @@ import type { PassKeyRecord, ReservationRecord } from "@/types/booking";
  */
 
 type Match = {
-  passKey: PassKeyRecord;
+  passKey: GuestLookupKey;
   reservations: ReservationRecord[];
   unfinished: SeatHoldRecord[];
 };
@@ -234,11 +234,14 @@ function GuestPanel({ match }: { match: Match }) {
         }
       />
 
+      {/*
+        No pass-key code here, deliberately — see `GuestLookupKey`. Anybody who
+        overheard a reservation number could otherwise read the credential that
+        cancels that guest's dinner. Reading a code is `/admin/pass-keys`, which
+        requires `passkeys:issue`.
+      */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
-        <Badge tone={passKey.status === "revoked" ? "danger" : "info"}>
-          {formatPassKey(passKey.code)}
-        </Badge>
-        {passKey.status === "revoked" ? <Badge tone="danger">Withdrawn</Badge> : null}
+        {passKey.status === "revoked" ? <Badge tone="danger">Pass-key withdrawn</Badge> : null}
         {passKey.kind === "premium" ? <Badge tone="warning">Invitation</Badge> : null}
         {passKey.expiresOn ? (
           <Badge tone="info">Checks out {passKey.expiresOn}</Badge>

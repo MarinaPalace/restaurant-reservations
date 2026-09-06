@@ -7,12 +7,14 @@ import {
   consumeLocalSeatHold,
   getLocalSeatHold,
   holdLocalSeats,
+  listLocalLiveHoldsForKey,
   listLocalSeatHolds,
   releaseLocalConsumedSeats,
   releaseLocalSeatHold,
   sweepLocalSeatHolds,
 } from "@/lib/db/local-store";
 import {
+  SEAT_HOLD_STEPS,
   SEAT_HOLD_STEP_LABELS,
   SEAT_HOLD_STRAND_MS,
   SeatHoldError,
@@ -320,6 +322,56 @@ async function releaseStrandedSeats(date: string | undefined, now: Date): Promis
  * ------------------------------------------------------------------ */
 
 /**
+ * Closes every live hold a key still has, and reports the furthest step any of
+ * them reached.
+ *
+ * Called before a new hold is taken, so a key can never hold two evenings at
+ * once whatever the browser did or did not remember. The step comes back with
+ * it because an attempt that reached the menu and then changed date has still
+ * reached the menu, and the footprint should say so.
+ *
+ * Each is closed through `releaseSeatHold`, so the seats go back through the
+ * same one-winner filter as everywhere else rather than by a second path that
+ * could disagree with it.
+ */
+async function releaseOtherHolds(passKeyId: string): Promise<{ step?: SeatHoldStep }> {
+  let step: SeatHoldStep | undefined;
+
+  for (const hold of await listLiveHoldsForKey(passKeyId)) {
+    const released = await releaseSeatHold(hold.holdId);
+
+    if (released?.step) {
+      step = furthestSeatHoldStep(step, released.step);
+    }
+  }
+
+  return { step };
+}
+
+/** The holds a key is still holding seats with. Usually none, sometimes one. */
+async function listLiveHoldsForKey(passKeyId: string): Promise<SeatHoldRecord[]> {
+  if (!passKeyId) {
+    return [];
+  }
+
+  if (!isMongoConfigured()) {
+    return listLocalLiveHoldsForKey(passKeyId);
+  }
+
+  await connectToDatabase();
+
+  const holds = await SeatHoldModel.find({
+    passKeyId,
+    status: "live",
+    expiresAt: { $gt: new Date() },
+  })
+    .limit(20)
+    .lean();
+
+  return holds.map(toRecord);
+}
+
+/**
  * Holds seats for a party, or refuses because there are none.
  *
  * `previousHoldId` is closed first, so changing the date or the party size
@@ -340,16 +392,29 @@ export async function holdSeats(input: {
   previousHoldId?: string;
 }): Promise<SeatHoldRecord> {
   /**
-   * The step the new hold inherits, when it is replacing one.
+   * Every hold this key already has goes back first — not just the one the
+   * browser remembered.
    *
-   * A guest who reached the menu and then went back to change the date has
-   * still reached the menu, and the record of the attempt should say so —
-   * otherwise every change of mind would reset the footprint to "chose a date".
+   * The model says a key holds seats on one evening at a time, and until this
+   * that was enforced only by the client sending `previousHoldId`. Several
+   * ordinary things break that promise: a reply lost on a flaky lobby wi-fi
+   * (the hold committed, the browser forgot the id), a refusal that returns
+   * before a hold is taken while the screen still clears its copy, or simply
+   * two tabs, since `sessionStorage` is per-tab.
+   *
+   * Each of those left a live hold nobody could name, and the guest's *next*
+   * attempt was then refused `DATE_FULL` by their own abandoned seats — for a
+   * quarter of an hour, on the evening they were trying to book. That is the
+   * exact refusal this feature exists to delete, arriving from inside it.
+   *
+   * So the key is the thing asked about, and the id passed in is only used to
+   * decide which hold the step is inherited from.
    */
   const previous = input.previousHoldId ? await releaseSeatHold(input.previousHoldId) : null;
+  const inherited = previous?.step ?? (await releaseOtherHolds(input.passKeyId)).step;
 
   if (!isMongoConfigured()) {
-    return holdLocalSeats({ ...input, step: previous?.step });
+    return holdLocalSeats({ ...input, step: inherited });
   }
 
   await connectToDatabase();
@@ -397,7 +462,7 @@ export async function holdSeats(input: {
       guests: input.guests,
       passKeyId: input.passKeyId,
       roomNumber: input.roomNumber,
-      step: previous?.step ?? "date",
+      step: inherited ?? "date",
       status: "live",
       expiresAt,
     });
@@ -433,19 +498,27 @@ export async function advanceSeatHoldStep(holdId: string, step: SeatHoldStep): P
 
   await connectToDatabase();
 
-  const hold = await SeatHoldModel.findOne({ holdId, status: "live" }).lean();
-  if (!hold) {
-    return;
-  }
+  /**
+   * One conditional update, not a read followed by a write.
+   *
+   * The steps are reported with `keepalive` as the guest moves, so two can be
+   * in flight at once — and read-then-write let them land summary-then-menu and
+   * walk the recorded step *backwards*. Naming the steps this one is allowed to
+   * overwrite makes the filter do the comparison, which no interleaving can get
+   * wrong. A hold already further along matches nothing and is left alone.
+   */
+  await SeatHoldModel.updateOne(
+    { holdId, status: "live", step: { $in: stepsBefore(step) } },
+    { $set: { step } },
+  );
+}
 
-  const current = isSeatHoldStep(hold.step) ? hold.step : undefined;
-  const furthest = furthestSeatHoldStep(current, step);
+/** The steps a hold may be at for `step` to still be an advance on it. */
+function stepsBefore(step: SeatHoldStep): (SeatHoldStep | null)[] {
+  const earlier = SEAT_HOLD_STEPS.slice(0, SEAT_HOLD_STEPS.indexOf(step));
 
-  if (furthest === current) {
-    return;
-  }
-
-  await SeatHoldModel.updateOne({ holdId, status: "live" }, { $set: { step: furthest } });
+  // `null` and the absent field cover holds written before steps were recorded.
+  return [...earlier, null];
 }
 
 /**

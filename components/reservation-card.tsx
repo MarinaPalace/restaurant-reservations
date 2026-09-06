@@ -40,6 +40,8 @@ export function ReservationCard({
   const locale = localeOf(language);
 
   const [qr, setQr] = useState<string | null>(null);
+  /** Whether the code is still coming, so the square stops saying "loading". */
+  const [qrPending, setQrPending] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -77,18 +79,21 @@ export function ReservationCard({
           signal: controller.signal,
         });
 
-        if (!response.ok) {
-          return;
-        }
+        if (response.ok) {
+          const data = await response.json();
 
-        const data = await response.json();
-
-        if (typeof data.qr === "string") {
-          setQr(data.qr);
+          if (typeof data.qr === "string") {
+            setQr(data.qr);
+          }
         }
       } catch {
         // The card is drawn either way. A guest who cannot reach us at this
         // moment still has the number, which is the part staff can act on.
+      } finally {
+        // Whatever happened, stop saying the code is on its way. A square that
+        // reads "Loading…" for ever is worse than one that admits there is no
+        // code — the guest waits for something that is not coming.
+        setQrPending(false);
       }
     })();
 
@@ -114,8 +119,11 @@ export function ReservationCard({
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : t.card.saveFailed);
+    } catch {
+      // The guest's language, not the thrown message: everything
+      // `drawReservationCard` raises is an Error, so reading `.message` meant a
+      // guest booking in Bulgarian was shown an English sentence.
+      setError(t.card.saveFailed);
     } finally {
       setSaving(false);
     }
@@ -180,7 +188,9 @@ export function ReservationCard({
                 className="size-full"
               />
             ) : (
-              <span className="text-xs text-ink-subtle">{t.common.loading}</span>
+              <span className="px-2 text-center text-xs text-ink-subtle">
+                {qrPending ? t.common.loading : t.card.noCode}
+              </span>
             )}
           </div>
 

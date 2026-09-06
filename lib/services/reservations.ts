@@ -1650,6 +1650,16 @@ export async function updateRestaurantDate(input: {
     premium: Boolean(updated.premium),
     bookingCutoffHours: Number(updated.bookingCutoffHours ?? 0),
     tableCutoffHours: Number(updated.tableCutoffHours ?? 0),
+    /**
+     * Carried, because the calendar writes this answer straight back into its
+     * own state (rule 2.24). Without it, saving any field on an evening — an
+     * arrival time, a capacity — made the held seats vanish from the day and
+     * the badge disappear, while the unfinished-bookings panel below still
+     * listed the live hold. Reception would then offer seats a guest was in
+     * the middle of taking, and the booking route would refuse them against a
+     * calendar saying they were free.
+     */
+    heldSeats: Number(updated.heldSeats ?? 0),
     features: toEveningOverrides(updated.features),
   });
 }

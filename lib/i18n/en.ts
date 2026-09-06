@@ -405,6 +405,7 @@ export const en = {
     title: "Your confirmation card",
     footnote: "Show this at the restaurant. Staff can scan the code or read the number.",
     qrAlt: "Code for your reservation number",
+    noCode: "Code unavailable — read the number out instead.",
     saveImage: "Save card as image",
     saving: "Preparing…",
     saveFailed: "We could not save the card. Please take a screenshot instead.",

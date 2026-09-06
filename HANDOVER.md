@@ -519,6 +519,40 @@ Scanning is never the only way in. `components/qr-scanner.tsx` uses `BarcodeDete
 exists and `jsQR` where it does not — an iPad at reception has neither Chrome nor that API — and
 every screen using it keeps a text box beside it, because cameras get refused and break.
 
+### 2.27 One dinner per evening per pass-key
+
+A key may be worth several dinners, and until this nothing stopped it spending two of them on the
+same night. The calendar warned — *carry on only if you are booking a second table* — and let the
+guest through, which is a warning nobody reads once they have decided. What it produced was guests
+arriving to find they held two tables, sometimes three, for one evening.
+
+The gate is in **both routes that can take an evening** (rule 2.5): `/api/booking/hold` refuses so
+the guest is stopped at the calendar before choosing anything, and `/api/reservations` refuses
+because that is the one that decides. Both answer `ALREADY_BOOKED` and name the booking the guest
+already has. The calendar disables the day; that is presentation, not the rule.
+
+Two things it must keep letting through. **A cancelled booking does not count** — a guest who
+cancelled Friday has to be able to book Friday again, or cancelling becomes a trap. And **reception
+is not bound by it**: a room that genuinely wants a second table is a booking staff take at the
+desk, where somebody can see it is deliberate.
+
+The session's list of booked evenings is read once, at the entry step, so it cannot be the gate — a
+guest booking a second dinner in the same session is looking at a list that predates their own
+booking. `storeConfirmation` appends the evening it just booked so the offer is not made, but the
+server is what refuses.
+
+### 2.28 The desk is told what is in progress, not only what was abandoned
+
+`findGuestBy` returns live holds alongside abandoned ones, and the screen shows them apart. A guest
+at the desk with no booking may be one who gave up last night or one whose partner is upstairs on
+the menu step this minute, and those need opposite replies — shown as one list, every row reads as
+the second.
+
+Whether a hold is live is decided by `isSeatHoldHolding`, never by its stored `status` alone: a hold
+whose fifteen minutes ran out but which nothing has swept yet still says `live` in the store, and
+telling reception somebody is mid-booking when their seats went back ten minutes ago is exactly the
+misreading this panel exists to prevent.
+
 ## 3. Configuration
 
 | Variable | Required | Purpose |

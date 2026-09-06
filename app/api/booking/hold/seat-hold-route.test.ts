@@ -578,3 +578,150 @@ describe("what an evening shows the desk", () => {
     expect(live).toMatchObject({ status: "live", roomNumber: "402", guests: 3 });
   });
 });
+
+describe("one dinner per evening", () => {
+  /**
+   * A key can be worth several dinners, and nothing stopped it spending two of
+   * them on the same night. A guest who tapped back and started again ended up
+   * with two tables — sometimes three — for one evening, and found out on
+   * arrival. The calendar warned and let them carry on, which is a warning
+   * nobody reads once they have decided.
+   */
+  async function bookOnce(EVENING: string, code: string, main: MenuCourse) {
+    const { POST: book } = await import("@/app/api/reservations/route");
+
+    return book(
+      json("/api/reservations", {
+        passKey: code,
+        roomNumber: "402",
+        guestCount: 2,
+        date: EVENING,
+        contact: { method: "email", email: "guest@example.com" },
+        selections: choicesFor(main, 2),
+      }),
+    );
+  }
+
+  /** A key worth two dinners, so the refusal cannot be the used-up one. */
+  async function twoDinnerKey(EVENING: string) {
+    const passKeys = await import("@/lib/services/pass-keys");
+
+    return passKeys.issuePassKey({
+      roomNumber: "402",
+      checkInOn: toDateKey(new Date()),
+      expiresOn: EVENING,
+      maxUses: 2,
+      actor: ACTOR,
+    });
+  }
+
+  it("refuses a second booking on an evening the key already has", async () => {
+    const { EVENING, main } = await setUp(40);
+    const key = await twoDinnerKey(EVENING);
+
+    expect((await bookOnce(EVENING, key.code, main)).status).toBe(201);
+
+    const second = await bookOnce(EVENING, key.code, main);
+    expect(second.status).toBe(409);
+
+    const refusal = await second.json();
+    expect(refusal.code).toBe("ALREADY_BOOKED");
+    // Named, so the guest can recognise the booking they already have.
+    expect(refusal.reservationNumber).toBeTruthy();
+  });
+
+  /** And stops them at the calendar, before they choose anything. */
+  it("will not even hold seats for that evening", async () => {
+    const { EVENING, main, restaurant } = await setUp(40);
+    const key = await twoDinnerKey(EVENING);
+    const { POST: hold } = await import("@/app/api/booking/hold/route");
+
+    await bookOnce(EVENING, key.code, main);
+
+    const response = await hold(
+      json("/api/booking/hold", { passKey: key.code, date: EVENING, guestCount: 2 }),
+    );
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("ALREADY_BOOKED");
+    // And no seats were taken out of the room on the way to refusing.
+    expect((await restaurant.getRestaurantDate(EVENING))?.heldSeats ?? 0).toBe(0);
+  });
+
+  /** The second dinner the key is worth is still there, on another evening. */
+  it("still allows another evening on the same key", async () => {
+    const { EVENING, main } = await setUp(40);
+    const reservations = await import("@/lib/services/reservations");
+    const key = await twoDinnerKey(EVENING);
+
+    // Inside the stay: the key expires on EVENING, so a later night would be
+    // refused for being after check-out rather than for being a second dinner.
+    const otherEvening = (() => {
+      const day = new Date();
+      day.setDate(day.getDate() + 6);
+      return toDateKey(day);
+    })();
+
+    await reservations.updateRestaurantDate({ date: otherEvening, isOpen: true, capacity: 40 });
+    await bookOnce(EVENING, key.code, main);
+
+    const { POST: book } = await import("@/app/api/reservations/route");
+    const second = await book(
+      json("/api/reservations", {
+        passKey: key.code,
+        roomNumber: "402",
+        guestCount: 2,
+        date: otherEvening,
+        contact: { method: "email", email: "guest@example.com" },
+        selections: choicesFor(main, 2),
+      }),
+    );
+
+    expect(second.status).toBe(201);
+  });
+
+  /**
+   * Cancelling has to give the evening back. A guest who cancelled Friday and
+   * wants Friday again is doing the ordinary thing, and refusing them would
+   * make cancelling a trap.
+   */
+  it("lets them book again after cancelling", async () => {
+    const { EVENING, main } = await setUp(40);
+    const key = await twoDinnerKey(EVENING);
+
+    const first = await bookOnce(EVENING, key.code, main);
+    const { reservation } = await first.json();
+
+    const { POST: cancel } = await import("@/app/api/booking/manage/cancel/route");
+    await cancel(
+      json("/api/booking/manage/cancel", {
+        passKey: key.code,
+        reservationNumber: reservation.reservationNumber,
+      }),
+    );
+
+    expect((await bookOnce(EVENING, key.code, main)).status).toBe(201);
+  });
+
+  /** Two rooms with their own keys are two guests, and both may book. */
+  it("does not stop a different key booking the same evening", async () => {
+    const { EVENING, second, main } = await setUp(40);
+    const key = await twoDinnerKey(EVENING);
+
+    expect((await bookOnce(EVENING, key.code, main)).status).toBe(201);
+
+    const { POST: book } = await import("@/app/api/reservations/route");
+    const other = await book(
+      json("/api/reservations", {
+        passKey: second.code,
+        roomNumber: "403",
+        guestCount: 2,
+        date: EVENING,
+        contact: { method: "email", email: "other@example.com" },
+        selections: choicesFor(main, 2),
+      }),
+    );
+
+    expect(other.status).toBe(201);
+  });
+});

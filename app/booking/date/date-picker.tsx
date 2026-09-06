@@ -140,6 +140,25 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
       }
 
       /**
+       * An evening this key already has a dinner on.
+       *
+       * Disabled rather than warned about. It used to be selectable with a note
+       * saying "carry on only if you are booking a second table", and what that
+       * produced was guests with two and three tables on one night who had
+       * simply tapped back and started again. Nobody reads a warning about the
+       * thing they have already decided to do. The route refuses it too — this
+       * is presentation (rule 2.5) — and reception can still take a genuine
+       * second table at the desk, where somebody can see it is deliberate.
+       */
+      if (session.passKeyBookedDates.includes(dateKey)) {
+        return {
+          disabled: true,
+          hint: t.dateStep.day.alreadyBookedHint,
+          status: t.dateStep.day.alreadyBooked,
+        };
+      }
+
+      /**
        * The pass-key stops working at check-out, so an evening after that is
        * not bookable however many seats it has. Blocking it here means the
        * guest sees the limit of their stay on the calendar instead of picking
@@ -155,7 +174,7 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
         tone: "positive",
       };
     },
-    [findDate, guestCount, heldByOthers, heldHere, session.passKeyExpiresOn, t],
+    [findDate, guestCount, heldByOthers, heldHere, session.passKeyBookedDates, session.passKeyExpiresOn, t],
   );
 
   /**
@@ -252,8 +271,8 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
       />
 
       {/*
-        Allowed, but almost always a mistake: the guest meant to change the
-        booking they already have on this evening.
+        Not a warning any more — the evening is not selectable. This says why,
+        and offers the thing the guest almost always actually wants.
       */}
       {ready && selectedDate && session.passKeyBookedDates.includes(selectedDate) ? (
         <Alert tone="warning" className="mt-4">

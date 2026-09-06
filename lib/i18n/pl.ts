@@ -137,6 +137,8 @@ export const pl: PartialDictionary = {
       closedHint: "Zamknięte",
       full: "brak miejsc",
       fullHint: "Komplet",
+      alreadyBooked: "masz już zarezerwowaną kolację na ten wieczór",
+      alreadyBookedHint: "Już zarezerwowane",
       beingBooked: "ostatnie miejsca są właśnie rezerwowane",
       beingBookedHint: "W trakcie",
       notEnoughWhileHeld: "zostało tylko {count} miejsc dla {guests} gości, a {held} jest właśnie rezerwowanych",
@@ -384,6 +386,8 @@ export const pl: PartialDictionary = {
     passKeyAfterStay: "Ten wieczór wypada po zakończeniu Państwa pobytu. Prosimy wybrać wcześniejszy termin.",
     passKeyTooManyGuests: "Państwa rezerwacja u nas obejmuje mniej osób. Prosimy o kontakt z recepcją.",
     dateUnavailable: "Niestety ten termin nie jest już dostępny. Prosimy wybrać inny.",
+    alreadyBookedOnDate:
+      "Masz już rezerwację na ten wieczór. Aby ją zmienić, otwórz swoją rezerwację z potwierdzenia lub skontaktuj się z recepcją.",
     holdExpired:
       "Twoje miejsca były zarezerwowane tylko przez chwilę i ten czas już minął. Prosimy wybrać datę ponownie — tego wieczoru może jeszcze być miejsce.",
     dateFull: "Niestety na ten termin nie ma już miejsc. Prosimy wybrać inny wieczór.",

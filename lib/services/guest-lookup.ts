@@ -11,7 +11,7 @@ import {
 } from "@/lib/services/reservations";
 import { listSeatHolds } from "@/lib/services/seat-holds";
 import type { PassKeyRecord, ReservationRecord } from "@/types/booking";
-import type { SeatHoldRecord } from "@/lib/seat-hold";
+import { isSeatHoldHolding, type SeatHoldRecord } from "@/lib/seat-hold";
 
 /**
  * Finding a guest from whatever they can show the desk.
@@ -87,10 +87,17 @@ export type GuestLookupMatch = {
   passKey: GuestLookupKey;
   reservations: ReservationRecord[];
   /**
-   * Bookings this key started and never finished, newest first.
+   * Bookings this key started and did not turn into a reservation, newest
+   * first — both the ones still going and the ones that came to nothing.
+   *
+   * The live ones matter as much as the abandoned ones, and are the answer to
+   * the more urgent version of the question: a guest at the desk with no
+   * booking may be one who gave up last night, or one whose partner is
+   * upstairs on the menu step right now. Those need opposite replies, and
+   * without the live ones the desk cannot tell them apart.
    *
    * Only ever a few: they are read per evening from the reservations this key
-   * has plus the evenings it holds seats on, rather than by scanning history.
+   * has plus the evenings still ahead of it, rather than by scanning history.
    */
   unfinished: SeatHoldRecord[];
 };
@@ -149,7 +156,18 @@ async function unfinishedFor(passKey: PassKeyRecord, reservations: ReservationRe
   // Capped: a long stay is a lot of evenings, and this is a desk panel.
   for (const evening of evenings.slice(0, 21)) {
     for (const hold of await listSeatHolds(evening, 20)) {
-      if (hold.passKeyId === passKey.id && hold.status === "abandoned") {
+      if (hold.passKeyId !== passKey.id) {
+        continue;
+      }
+
+      /**
+       * `listSeatHolds` returns live and abandoned, and both belong here. A
+       * hold whose clock has run out but which nothing has swept yet reads as
+       * live in the store and is not — `isSeatHoldHolding` asks the question
+       * properly, so the desk is never told somebody is mid-booking when their
+       * seats went back ten minutes ago.
+       */
+      if (hold.status === "abandoned" || isSeatHoldHolding(hold)) {
         found.push(hold);
       }
     }

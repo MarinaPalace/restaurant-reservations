@@ -132,6 +132,8 @@ export const ro: PartialDictionary = {
       closedHint: "Închis",
       full: "ocupat complet",
       fullHint: "Ocupat",
+      alreadyBooked: "aveți deja o cină rezervată pentru această seară",
+      alreadyBookedHint: "Deja rezervat",
       beingBooked: "ultimele locuri sunt rezervate chiar acum",
       beingBookedHint: "În curs",
       notEnoughWhileHeld: "au mai rămas doar {count} locuri pentru {guests} oaspeți, iar {held} sunt rezervate chiar acum",
@@ -378,6 +380,8 @@ export const ro: PartialDictionary = {
     passKeyAfterStay: "Această seară este după încheierea sejurului dumneavoastră. Alegeți o dată mai devreme.",
     passKeyTooManyGuests: "Rezervarea dumneavoastră la noi este pentru mai puține persoane. Adresați-vă recepției.",
     dateUnavailable: "Din păcate, această dată nu mai este disponibilă. Vă rugăm să alegeți alta.",
+    alreadyBookedOnDate:
+      "Aveți deja o rezervare pentru această seară. Pentru a o modifica, deschideți rezervarea din confirmare sau adresați-vă recepției.",
     holdExpired:
       "Locurile dumneavoastră au fost rezervate doar pentru scurt timp, iar acest timp a trecut. Vă rugăm să alegeți din nou data — seara respectivă poate avea încă locuri.",
     dateFull: "Din păcate, această dată este ocupată complet. Vă rugăm să alegeți altă seară.",

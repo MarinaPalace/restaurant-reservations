@@ -10,6 +10,7 @@ import {
   pruneSelectionsToGuestCount,
   readBookingSession,
   readStoredConfirmation,
+  seatHoldStanding,
 } from "@/lib/booking-session";
 
 function fakeStorage(values: Record<string, string>): Storage {
@@ -130,6 +131,10 @@ describe("step guards", () => {
     joinNumber: "",
     selections: [{ guestIndex: 0, courseId: "c1", courseName: "S", optionId: "o1", optionName: "O" }],
     language: "en",
+    holdId: "",
+    holdExpiresAt: "",
+    holdDate: "",
+    holdGuests: 0,
   };
 
   it("passes a complete session", () => {
@@ -210,5 +215,73 @@ describe("reading the party size back", () => {
       // Which leaves the house maximum, never something larger.
       expect(allowedGuestCount(session)).toBe(MAX_GUESTS_PER_RESERVATION);
     }
+  });
+});
+
+describe("what the seats a booking is holding are worth", () => {
+  const NOW = new Date("2026-09-04T18:00:00.000Z");
+
+  const holding = {
+    date: "2026-09-18",
+    guestCount: 4,
+    holdId: "hold-1",
+    holdExpiresAt: "2026-09-04T18:10:00.000Z",
+    holdDate: "2026-09-18",
+    holdGuests: 4,
+  };
+
+  it("is nothing before a hold has been taken", () => {
+    expect(seatHoldStanding({ ...holding, holdId: "", holdExpiresAt: "" }, NOW)).toEqual({
+      state: "none",
+    });
+  });
+
+  it("counts down while it is live", () => {
+    expect(seatHoldStanding(holding, NOW)).toEqual({ state: "held", secondsLeft: 600 });
+  });
+
+  it("is expired once the time has passed", () => {
+    expect(seatHoldStanding({ ...holding, holdExpiresAt: "2026-09-04T17:59:59.000Z" }, NOW)).toEqual({
+      state: "expired",
+    });
+  });
+
+  /**
+   * Going back and changing the evening is the commonest thing a guest does on
+   * this flow, and the hold left behind is for the wrong night. Its own state,
+   * because nothing has been lost — the calendar moves the hold when the guest
+   * comes forward again — and telling them their seats were gone would be both
+   * alarming and untrue.
+   */
+  it("is stale when the evening has changed under it", () => {
+    expect(seatHoldStanding({ ...holding, date: "2026-09-19" }, NOW)).toEqual({ state: "stale" });
+  });
+
+  it("is stale when the party has outgrown it", () => {
+    expect(seatHoldStanding({ ...holding, guestCount: 5 }, NOW)).toEqual({ state: "stale" });
+  });
+
+  /**
+   * Shrinking is fine, and has to be: the server spends the hold for what is
+   * actually booked and hands the difference back to the room. Calling this
+   * stale would send a guest who dropped a diner back to the calendar for no
+   * reason.
+   */
+  it("still stands when the party has shrunk", () => {
+    expect(seatHoldStanding({ ...holding, guestCount: 2 }, NOW)).toEqual({
+      state: "held",
+      secondsLeft: 600,
+    });
+  });
+
+  /** Expiry is asked first: a hold that has run out is not merely stale. */
+  it("reports an expired hold as expired even when it is also stale", () => {
+    expect(
+      seatHoldStanding({ ...holding, date: "2026-09-19", holdExpiresAt: "2026-09-04T17:00:00.000Z" }, NOW),
+    ).toEqual({ state: "expired" });
+  });
+
+  it("treats an unreadable expiry as expired", () => {
+    expect(seatHoldStanding({ ...holding, holdExpiresAt: "soon" }, NOW)).toEqual({ state: "expired" });
   });
 });

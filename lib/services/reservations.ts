@@ -40,6 +40,8 @@ import {
   upsertLocalDate,
 } from "@/lib/db/local-store";
 import { getRestaurantDate } from "@/lib/services/restaurant";
+import { consumeSeatHold, refundConsumedHold } from "@/lib/services/seat-holds";
+import type { SeatHoldRecord } from "@/lib/seat-hold";
 import {
   withRemainingSeats,
   type CancellationRecord,
@@ -53,7 +55,7 @@ import {
 } from "@/types/booking";
 
 export class BookingError extends Error {
-  constructor(public readonly code: "DATE_CLOSED" | "DATE_FULL") {
+  constructor(public readonly code: "DATE_CLOSED" | "DATE_FULL" | "HOLD_EXPIRED") {
     super(code);
     this.name = "BookingError";
   }
@@ -448,6 +450,30 @@ async function writePlanTable(
   return saved ? toReservationRecord(saved as MongoReservationDocument) : null;
 }
 
+/**
+ * Hands back the seats of a hold that was spent on a booking that then failed.
+ *
+ * The hold itself is gone — spending it deleted the receipt — so there is
+ * nothing to restore it to; the seats go back to the room and the guest starts
+ * again. The same shape as the pass-key being handed back on this path, and for
+ * the same reason: a failure that was not the guest's fault must not cost them
+ * anything.
+ *
+ * A booking with no hold behind it needs none of this: its unwind is the
+ * ordinary one that gives back what its own claim took.
+ */
+async function refundSpentHold(
+  spentHold: SeatHoldRecord | null,
+  date: string,
+  guestCount: number,
+): Promise<void> {
+  if (!spentHold) {
+    return;
+  }
+
+  await refundConsumedHold(date, guestCount);
+}
+
 export async function createReservationEntry(input: {
   roomNumber: string;
   /** Other rooms sharing this table, from a ticket that named several. */
@@ -496,15 +522,69 @@ export async function createReservationEntry(input: {
    * booking itself is written.
    */
   reservationNumber?: string;
+  /**
+   * The hold this booking is spending, when the guest reserved their seats at
+   * the start of the flow.
+   *
+   * Present, the seats are **already taken** — held rather than booked, but
+   * gone from the room either way — so the claim below turns into a transfer
+   * from one column to the other, and there is no moment where they could be
+   * taken by somebody else. Absent, the seats are claimed here as they always
+   * were: staff bookings take none, and neither does anything older than holds.
+   */
+  seatHold?: { holdId: string; passKeyId: string };
 }): Promise<ReservationRecord> {
   const tableGroupId = await resolveTableGroup(input.joinReservationNumber, input.date);
+
+  /**
+   * Spend the hold before anything else, in both stores.
+   *
+   * Deleting the receipt is what settles a double submission: of two requests
+   * carrying the same hold exactly one gets it, so the second cannot book the
+   * same seats again. It also moves the seats into `reservedSeats`, which is
+   * why every path below treats them as already claimed — including the unwind,
+   * which hands them back to the room the same way it always has.
+   */
+  const spentHold = input.seatHold
+    ? await consumeSeatHold({
+        holdId: input.seatHold.holdId,
+        date: input.date,
+        guests: input.guestCount,
+        passKeyId: input.seatHold.passKeyId,
+        // Written onto the closed hold, so the attempt and the booking it
+        // became can be read as one thing.
+        reservationNumber: input.reservationNumber,
+      })
+    : null;
+
+  if (input.seatHold && !spentHold) {
+    throw new BookingError("HOLD_EXPIRED");
+  }
 
   if (!isMongoConfigured()) {
     const reservationNumber =
       input.reservationNumber ?? (await allocateReservationNumber(reservationNumberExists));
-    const result = await createLocalReservation({ ...input, reservationNumber, tableGroupId });
+
+    let result: Awaited<ReturnType<typeof createLocalReservation>>;
+
+    try {
+      result = await createLocalReservation({
+        ...input,
+        reservationNumber,
+        tableGroupId,
+        // The hold already paid for them, inside its own locked section.
+        seatsAlreadyClaimed: Boolean(spentHold),
+      });
+    } catch (error) {
+      // A taken table throws from in here. The hold is already spent, so its
+      // seats are sitting in `reservedSeats` against a booking that does not
+      // exist — give them back before letting the error out.
+      await refundSpentHold(spentHold, input.date, input.guestCount);
+      throw error;
+    }
 
     if (!result.ok) {
+      await refundSpentHold(spentHold, input.date, input.guestCount);
       throw new BookingError(result.reason);
     }
 
@@ -524,20 +604,42 @@ export async function createReservationEntry(input: {
    * while the date is open and still has room, so concurrent bookings cannot
    * oversell — and unlike a transaction this also works on a standalone
    * mongod, which has no replica set to run transactions on.
+   *
+   * **Skipped when a hold was spent above**, because the seats are already in
+   * `reservedSeats` — `consumeSeatHold` put them there as it took the receipt
+   * away. Claiming again here would book the party twice over.
+   *
+   * Held seats count against the room alongside booked ones, so a booking
+   * arriving without a hold — staff at the desk, or a request from a screen
+   * older than this feature — cannot take seats a guest is in the middle of
+   * choosing. That is the direction to err in: at worst somebody is asked to
+   * wait fifteen minutes, where the alternative is a table that does not exist.
    */
-  const claimedDate = await RestaurantDateModel.findOneAndUpdate(
-    {
-      date: input.date,
-      isOpen: true,
-      $expr: { $gte: [{ $subtract: ["$capacity", "$reservedSeats"] }, input.guestCount] },
-    },
-    { $inc: { reservedSeats: input.guestCount } },
-    { returnDocument: "after" },
-  ).lean();
+  if (!spentHold) {
+    const claimedDate = await RestaurantDateModel.findOneAndUpdate(
+      {
+        date: input.date,
+        isOpen: true,
+        $expr: {
+          $gte: [
+            {
+              $subtract: [
+                "$capacity",
+                { $add: ["$reservedSeats", { $ifNull: ["$heldSeats", 0] }] },
+              ],
+            },
+            input.guestCount,
+          ],
+        },
+      },
+      { $inc: { reservedSeats: input.guestCount } },
+      { returnDocument: "after" },
+    ).lean();
 
-  if (!claimedDate) {
-    const existing = await RestaurantDateModel.findOne({ date: input.date }).lean();
-    throw new BookingError(!existing || !existing.isOpen ? "DATE_CLOSED" : "DATE_FULL");
+    if (!claimedDate) {
+      const existing = await RestaurantDateModel.findOne({ date: input.date }).lean();
+      throw new BookingError(!existing || !existing.isOpen ? "DATE_CLOSED" : "DATE_FULL");
+    }
   }
 
   const bookedDate = await getRestaurantDate(input.date);
@@ -855,7 +957,19 @@ export async function restoreReservation(reservationNumber: string): Promise<Res
     {
       date: existing.date,
       isOpen: true,
-      $expr: { $gte: [{ $subtract: ["$capacity", "$reservedSeats"] }, existing.guestCount] },
+      /**
+       * Held seats count against the room here too. Restoring is a fresh claim
+       * (rule 2.12), so it has to lose to a guest who is part-way through
+       * booking the same seats — otherwise the evening would be sold twice the
+       * moment that guest pressed Confirm, and the count would go over
+       * capacity with nothing to show which booking was the extra one.
+       */
+      $expr: {
+        $gte: [
+          { $subtract: ["$capacity", { $add: ["$reservedSeats", { $ifNull: ["$heldSeats", 0] }] }] },
+          existing.guestCount,
+        ],
+      },
     },
     { $inc: { reservedSeats: existing.guestCount } },
     { returnDocument: "after" },
@@ -1063,7 +1177,14 @@ export async function updateReservationDetails(
       {
         date: nextDate,
         isOpen: true,
-        $expr: { $gte: [{ $subtract: ["$capacity", "$reservedSeats"] }, seatsNeeded] },
+        // And held seats count here, for the same reason: moving a booking onto
+        // an evening somebody is in the middle of taking must lose to them.
+        $expr: {
+          $gte: [
+            { $subtract: ["$capacity", { $add: ["$reservedSeats", { $ifNull: ["$heldSeats", 0] }] }] },
+            seatsNeeded,
+          ],
+        },
       },
       { $inc: { reservedSeats: seatsNeeded } },
       { returnDocument: "after" },
@@ -1529,6 +1650,16 @@ export async function updateRestaurantDate(input: {
     premium: Boolean(updated.premium),
     bookingCutoffHours: Number(updated.bookingCutoffHours ?? 0),
     tableCutoffHours: Number(updated.tableCutoffHours ?? 0),
+    /**
+     * Carried, because the calendar writes this answer straight back into its
+     * own state (rule 2.24). Without it, saving any field on an evening — an
+     * arrival time, a capacity — made the held seats vanish from the day and
+     * the badge disappear, while the unfinished-bookings panel below still
+     * listed the live hold. Reception would then offer seats a guest was in
+     * the middle of taking, and the booking route would refuse them against a
+     * calendar saying they were free.
+     */
+    heldSeats: Number(updated.heldSeats ?? 0),
     features: toEveningOverrides(updated.features),
   });
 }

@@ -10,6 +10,16 @@ import {
   type TableClaimRecord,
 } from "@/lib/services/table-claims";
 import {
+  SEAT_HOLD_HISTORY_MS,
+  SEAT_HOLD_STRAND_MS,
+  SeatHoldError,
+  furthestSeatHoldStep,
+  isSeatHoldLive,
+  seatHoldExpiry,
+  type SeatHoldRecord,
+  type SeatHoldStep,
+} from "@/lib/seat-hold";
+import {
   withRemainingSeats,
   type CancellationRecord,
   type MenuCourse,
@@ -31,6 +41,7 @@ const MENU_FILE = "menu.json";
 const DATES_FILE = "dates.json";
 const RESERVATIONS_FILE = "reservations.json";
 const TABLE_CLAIMS_FILE = "table-claims.json";
+const SEAT_HOLDS_FILE = "seat-holds.json";
 
 async function readMenu(): Promise<MenuCourse[]> {
   const menu = await readJsonFile<MenuCourse[]>(getDataFilePath(MENU_FILE), []);
@@ -208,6 +219,16 @@ export async function createLocalReservation(input: {
   kind?: ReservationRecord["kind"];
   guestName?: string;
   passKeyId?: string;
+  /**
+   * The seats were already taken by a hold this booking has just spent.
+   *
+   * `consumeLocalSeatHold` moved them from `heldSeats` into `reservedSeats` in
+   * its own locked section, so the count below must not be raised a second
+   * time. The evening is still checked for being open — a date closed while the
+   * guest was choosing is a real refusal — but not for room, because the room
+   * was made fifteen minutes ago and is being sat in.
+   */
+  seatsAlreadyClaimed?: boolean;
 }): Promise<LocalBookingResult> {
   return withStoreLock(async () => {
     const dates = await readDates();
@@ -218,9 +239,21 @@ export async function createLocalReservation(input: {
       return { ok: false, reason: "DATE_CLOSED" };
     }
 
-    const remainingSeats = Math.max(dateEntry.capacity - dateEntry.reservedSeats, 0);
-    if (remainingSeats < input.guestCount) {
-      return { ok: false, reason: "DATE_FULL" };
+    /**
+     * Held seats count against the room alongside booked ones, so a booking
+     * with no hold behind it cannot take seats somebody is in the middle of
+     * choosing. A booking that *is* spending a hold skips the question: its
+     * seats are already in `reservedSeats`, put there as the hold was spent.
+     */
+    if (!input.seatsAlreadyClaimed) {
+      const remainingSeats = Math.max(
+        dateEntry.capacity - dateEntry.reservedSeats - (dateEntry.heldSeats ?? 0),
+        0,
+      );
+
+      if (remainingSeats < input.guestCount) {
+        return { ok: false, reason: "DATE_FULL" };
+      }
     }
 
     /**
@@ -282,7 +315,9 @@ export async function createLocalReservation(input: {
 
     const reservations = await readReservations();
     reservations.push(reservation);
-    dates[index] = { ...dateEntry, reservedSeats: dateEntry.reservedSeats + input.guestCount };
+    dates[index] = input.seatsAlreadyClaimed
+      ? dateEntry
+      : { ...dateEntry, reservedSeats: dateEntry.reservedSeats + input.guestCount };
 
     await writeJsonFile(getDataFilePath(RESERVATIONS_FILE), reservations);
     await writeJsonFile(getDataFilePath(DATES_FILE), dates);
@@ -368,7 +403,12 @@ export async function restoreLocalReservation(reservationNumber: string): Promis
       return { ok: false, reason: "DATE_CLOSED" };
     }
 
-    const remainingSeats = Math.max(dateEntry.capacity - dateEntry.reservedSeats, 0);
+    // Held seats count against the room here too: restoring is a fresh claim
+    // (rule 2.12) and has to lose to a guest part-way through booking.
+    const remainingSeats = Math.max(
+      dateEntry.capacity - dateEntry.reservedSeats - (dateEntry.heldSeats ?? 0),
+      0,
+    );
     if (remainingSeats < reservation.guestCount) {
       return { ok: false, reason: "DATE_FULL", remainingSeats };
     }
@@ -789,6 +829,391 @@ async function readTableClaims(): Promise<TableClaimRecord[]> {
   return Array.isArray(claims) ? claims : [];
 }
 
+/* ------------------------------------------------------------------ *
+ * Seats held while a guest finishes booking
+ * ------------------------------------------------------------------ */
+
+/**
+ * The local store's half of `lib/services/seat-holds.ts`.
+ *
+ * Everything the Mongo path has to arrange with conditional updates is free
+ * here: the store lock already serialises the whole read-modify-write, so a
+ * hold is taken, closed or spent in one uninterrupted section. What the two
+ * must agree on is the *arithmetic* — `heldSeats` counts against capacity
+ * alongside `reservedSeats`, only a `live` hold counts, and a hold gives back
+ * exactly what it took.
+ *
+ * They must also agree that a hold is **closed rather than removed**: an
+ * attempt that came to nothing is the only evidence that it happened at all,
+ * and it is what the dashboard reads when a guest says they booked and there is
+ * no booking.
+ *
+ * `heldSeatsTouchedAt` is written here too. Nothing local needs it — there is
+ * no crash window to sweep up after when one lock covers the whole operation —
+ * but a store that stopped stamping it would write dates a later import could
+ * not tell apart from stranded ones.
+ */
+
+async function readSeatHolds(): Promise<SeatHoldRecord[]> {
+  const holds = await readJsonFile<SeatHoldRecord[]>(getDataFilePath(SEAT_HOLDS_FILE), []);
+  return Array.isArray(holds) ? holds : [];
+}
+
+/** Only a live hold that has not run out is taking seats out of the room. */
+function holding(hold: SeatHoldRecord, now: Date) {
+  return hold.status === "live" && isSeatHoldLive(hold.expiresAt, now);
+}
+
+/**
+ * Closes holds whose time has run out and gives their seats back, in place.
+ *
+ * Takes the lists rather than reading them, so a caller already inside the
+ * store lock can sweep and then do its own work against the swept figures —
+ * which is the only way a guest is not refused seats that an abandoned tab is
+ * still nominally sitting in.
+ *
+ * Returns the attempts it closed *and* whether it touched the dates, because
+ * those are two different questions and conflating them lost the repair below:
+ * the stranded-seat net can be the only thing that changed anything, and a
+ * caller that decides whether to save by counting closed holds would compute
+ * the fix and then drop it on the floor.
+ */
+function sweepHoldsInPlace(
+  holds: SeatHoldRecord[],
+  dates: StoredRestaurantDate[],
+  date?: string,
+  now: Date = new Date(),
+): { abandoned: SeatHoldRecord[]; changedDates: boolean } {
+  const abandoned: SeatHoldRecord[] = [];
+  let changedDates = false;
+
+  for (let index = 0; index < holds.length; index += 1) {
+    const hold = holds[index];
+
+    if (hold.status !== "live" || (date && hold.date !== date)) {
+      continue;
+    }
+
+    if (isSeatHoldLive(hold.expiresAt, now)) {
+      continue;
+    }
+
+    // Closed, not dropped: this row is the footprint of an attempt nobody
+    // finished, and it is the whole reason the desk can answer the question.
+    const closed: SeatHoldRecord = {
+      ...hold,
+      status: "abandoned",
+      closedAt: now.toISOString(),
+    };
+
+    holds[index] = closed;
+    abandoned.push(closed);
+
+    const dateIndex = dates.findIndex((entry) => entry.date === hold.date);
+    if (dateIndex !== -1) {
+      dates[dateIndex] = {
+        ...dates[dateIndex],
+        heldSeats: Math.max(0, (dates[dateIndex].heldSeats ?? 0) - hold.guests),
+      };
+      changedDates = true;
+    }
+  }
+
+  /**
+   * And the same safety net the Mongo path keeps, for the same reason: a
+   * process killed between writing the holds file and the dates file can leave
+   * seats held by no live receipt at all. With nothing live on the evening and
+   * nothing taken for longer than a hold can last, held seats are stranded
+   * rather than busy.
+   */
+  const strandedBefore = now.getTime() - SEAT_HOLD_STRAND_MS;
+
+  for (let index = 0; index < dates.length; index += 1) {
+    const entry = dates[index];
+
+    if (!entry.heldSeats || (date && entry.date !== date)) {
+      continue;
+    }
+
+    const touched = entry.heldSeatsTouchedAt ? Date.parse(entry.heldSeatsTouchedAt) : 0;
+    if (Number.isFinite(touched) && touched > strandedBefore) {
+      continue;
+    }
+
+    if (holds.some((hold) => hold.date === entry.date && holding(hold, now))) {
+      continue;
+    }
+
+    dates[index] = { ...entry, heldSeats: 0 };
+    changedDates = true;
+  }
+
+  return { abandoned, changedDates };
+}
+
+/**
+ * Trims the file to the attempts still worth keeping.
+ *
+ * The record of an unfinished booking is only useful while somebody might ask
+ * about it, and a JSON file read whole on every request cannot grow without
+ * limit. Closed holds older than the window go; live ones never do, however old
+ * the file thinks they are.
+ */
+function forgetOldHolds(holds: SeatHoldRecord[], now: Date): SeatHoldRecord[] {
+  const keepAfter = now.getTime() - SEAT_HOLD_HISTORY_MS;
+
+  return holds.filter((hold) => {
+    if (hold.status === "live") {
+      return true;
+    }
+
+    const closed = Date.parse(hold.closedAt ?? hold.expiresAt);
+    return !Number.isFinite(closed) || closed >= keepAfter;
+  });
+}
+
+/** Sweeps, and hands back the attempts that were closed so they can be logged. */
+export async function sweepLocalSeatHolds(date?: string): Promise<SeatHoldRecord[]> {
+  return withStoreLock(async () => {
+    const now = new Date();
+    const holds = await readSeatHolds();
+    const dates = await readDates();
+
+    const { abandoned, changedDates } = sweepHoldsInPlace(holds, dates, date, now);
+    const kept = forgetOldHolds(holds, now);
+
+    /**
+     * `changedDates` is the one that matters here. Without it, a date left
+     * holding seats no receipt accounts for — a process killed between the two
+     * writes below — was repaired in memory on every read and saved on none of
+     * them, so the phantom seats came back from the file for ever and reception
+     * could not sell them either. The Mongo path recovers from that state; this
+     * one has to as well.
+     */
+    if (abandoned.length === 0 && !changedDates && kept.length === holds.length) {
+      return [];
+    }
+
+    await writeJsonFile(getDataFilePath(SEAT_HOLDS_FILE), kept);
+    await writeJsonFile(getDataFilePath(DATES_FILE), dates);
+
+    return abandoned;
+  });
+}
+
+export async function holdLocalSeats(input: {
+  date: string;
+  guests: number;
+  passKeyId: string;
+  roomNumber?: string;
+  step?: SeatHoldStep;
+}): Promise<SeatHoldRecord> {
+  return withStoreLock(async () => {
+    const now = new Date();
+    const holds = await readSeatHolds();
+    const dates = await readDates();
+
+    sweepHoldsInPlace(holds, dates, input.date, now);
+
+
+    const index = dates.findIndex((entry) => entry.date === input.date);
+    const dateEntry = index === -1 ? null : dates[index];
+
+    if (!dateEntry || !dateEntry.isOpen) {
+      throw new SeatHoldError("DATE_CLOSED");
+    }
+
+    const free = dateEntry.capacity - dateEntry.reservedSeats - (dateEntry.heldSeats ?? 0);
+    if (free < input.guests) {
+      throw new SeatHoldError("DATE_FULL");
+    }
+
+    const hold: SeatHoldRecord = {
+      holdId: randomUUID(),
+      date: input.date,
+      guests: input.guests,
+      passKeyId: input.passKeyId,
+      ...(input.roomNumber ? { roomNumber: input.roomNumber } : {}),
+      // Inherited when this replaces an earlier hold, so a guest who reached
+      // the menu and changed the date is not recorded as never having left the
+      // calendar.
+      step: input.step ?? "date",
+      status: "live",
+      expiresAt: seatHoldExpiry(now).toISOString(),
+      createdAt: now.toISOString(),
+    };
+
+    holds.push(hold);
+    dates[index] = {
+      ...dateEntry,
+      heldSeats: (dateEntry.heldSeats ?? 0) + input.guests,
+      heldSeatsTouchedAt: now.toISOString(),
+    };
+
+    await writeJsonFile(getDataFilePath(SEAT_HOLDS_FILE), forgetOldHolds(holds, now));
+    await writeJsonFile(getDataFilePath(DATES_FILE), dates);
+
+    return hold;
+  });
+}
+
+/** Records how far the guest got. Forward only, so Back does not shrink it. */
+export async function advanceLocalSeatHoldStep(holdId: string, step: SeatHoldStep): Promise<void> {
+  await withStoreLock(async () => {
+    const holds = await readSeatHolds();
+    const index = holds.findIndex((hold) => hold.holdId === holdId && hold.status === "live");
+
+    if (index === -1) {
+      return;
+    }
+
+    const furthest = furthestSeatHoldStep(holds[index].step, step);
+    if (furthest === holds[index].step) {
+      return;
+    }
+
+    holds[index] = { ...holds[index], step: furthest };
+    await writeJsonFile(getDataFilePath(SEAT_HOLDS_FILE), holds);
+  });
+}
+
+export async function releaseLocalSeatHold(holdId: string): Promise<SeatHoldRecord | null> {
+  return withStoreLock(async () => {
+    const holds = await readSeatHolds();
+    const index = holds.findIndex((hold) => hold.holdId === holdId && hold.status === "live");
+
+    // Idempotent for the same reason the table claim is: a hold that is no
+    // longer live gives nothing back rather than giving it back twice.
+    if (index === -1) {
+      return null;
+    }
+
+    const released: SeatHoldRecord = {
+      ...holds[index],
+      status: "released",
+      closedAt: new Date().toISOString(),
+    };
+
+    holds[index] = released;
+
+    const dates = await readDates();
+    const dateIndex = dates.findIndex((entry) => entry.date === released.date);
+
+    if (dateIndex !== -1) {
+      dates[dateIndex] = {
+        ...dates[dateIndex],
+        heldSeats: Math.max(0, (dates[dateIndex].heldSeats ?? 0) - released.guests),
+      };
+    }
+
+    await writeJsonFile(getDataFilePath(SEAT_HOLDS_FILE), holds);
+    await writeJsonFile(getDataFilePath(DATES_FILE), dates);
+
+    return released;
+  });
+}
+
+export async function getLocalSeatHold(holdId: string): Promise<SeatHoldRecord | null> {
+  const holds = await readSeatHolds();
+  return holds.find((hold) => hold.holdId === holdId) ?? null;
+}
+
+/** The holds a key is still holding seats with. Usually none, sometimes one. */
+export async function listLocalLiveHoldsForKey(passKeyId: string): Promise<SeatHoldRecord[]> {
+  const now = new Date();
+  return (await readSeatHolds()).filter((hold) => hold.passKeyId === passKeyId && holding(hold, now));
+}
+
+/** One evening's attempts — who is holding seats now, and who walked away. */
+export async function listLocalSeatHolds(date: string, limit = 50): Promise<SeatHoldRecord[]> {
+  const holds = await readSeatHolds();
+
+  return holds
+    .filter((hold) => hold.date === date && (hold.status === "live" || hold.status === "abandoned"))
+    .sort((one, other) => (other.createdAt ?? "").localeCompare(one.createdAt ?? ""))
+    .slice(0, Math.min(limit, 200));
+}
+
+/**
+ * Spends a hold: it is closed, and its seats move from held to reserved.
+ *
+ * One locked section, so unlike the Mongo path there is nothing to arrange —
+ * the seats are never momentarily in neither column, because nothing else can
+ * read the files in between.
+ */
+export async function consumeLocalSeatHold(input: {
+  holdId: string;
+  date: string;
+  guests: number;
+  passKeyId: string;
+  reservationNumber?: string;
+}): Promise<SeatHoldRecord | null> {
+  return withStoreLock(async () => {
+    const holds = await readSeatHolds();
+    const index = holds.findIndex(
+      (hold) =>
+        hold.holdId === input.holdId &&
+        hold.status === "live" &&
+        hold.date === input.date &&
+        hold.passKeyId === input.passKeyId &&
+        hold.guests >= input.guests &&
+        isSeatHoldLive(hold.expiresAt),
+    );
+
+    if (index === -1) {
+      return null;
+    }
+
+    const consumed: SeatHoldRecord = {
+      ...holds[index],
+      status: "booked",
+      step: "summary",
+      closedAt: new Date().toISOString(),
+      ...(input.reservationNumber ? { reservationNumber: input.reservationNumber } : {}),
+    };
+
+    holds[index] = consumed;
+
+    const dates = await readDates();
+    const dateIndex = dates.findIndex((entry) => entry.date === consumed.date);
+
+    if (dateIndex !== -1) {
+      const entry = dates[dateIndex];
+      dates[dateIndex] = {
+        ...entry,
+        // The hold gives up everything it took; the booking takes only what it
+        // is for, so a party that shrank hands the difference back.
+        heldSeats: Math.max(0, (entry.heldSeats ?? 0) - consumed.guests),
+        reservedSeats: entry.reservedSeats + input.guests,
+      };
+    }
+
+    await writeJsonFile(getDataFilePath(SEAT_HOLDS_FILE), holds);
+    await writeJsonFile(getDataFilePath(DATES_FILE), dates);
+
+    return consumed;
+  });
+}
+
+/** Hands back seats a spent hold paid for, when the booking then failed. */
+export async function releaseLocalConsumedSeats(date: string, guests: number): Promise<void> {
+  await withStoreLock(async () => {
+    const dates = await readDates();
+    const index = dates.findIndex((entry) => entry.date === date);
+
+    if (index === -1) {
+      return;
+    }
+
+    dates[index] = {
+      ...dates[index],
+      reservedSeats: Math.max(0, dates[index].reservedSeats - guests),
+    };
+
+    await writeJsonFile(getDataFilePath(DATES_FILE), dates);
+  });
+}
+
 export async function updateLocalReservationStaffNote(reservationNumber: string, note: string) {
   return withStoreLock(async () => {
     const reservations = await readReservations();
@@ -1073,7 +1498,10 @@ export async function updateLocalReservationDetails(
       // Seats this booking already holds on the target date do not count
       // against it, otherwise growing a party by one would need room for all.
       const seatsAlreadyHeld = dateChanged ? 0 : existing.guestCount;
-      const available = Math.max(target.capacity - target.reservedSeats, 0) + seatsAlreadyHeld;
+      // Seats a guest is part-way through booking count against the room, so
+      // moving a booking onto an evening somebody is taking loses to them.
+      const available =
+        Math.max(target.capacity - target.reservedSeats - (target.heldSeats ?? 0), 0) + seatsAlreadyHeld;
 
       if (available < nextGuestCount) {
         return { ok: false, reason: "DATE_FULL", remainingSeats: available };

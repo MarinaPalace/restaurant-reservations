@@ -110,6 +110,7 @@ export const ro: PartialDictionary = {
     previousMonth: "Luna anterioară",
     nextMonth: "Luna următoare",
     chooseAvailable: "Vă rugăm să alegeți o dată disponibilă.",
+    holdingSeats: "Vă rezervăm locurile…",
     noDates: "Nu există încă date deschise pentru rezervare. Vă rugăm să contactați recepția.",
     alreadyBooked:
       "Aveți deja o rezervare în această seară. Pentru a o modifica, {link} — continuați doar dacă rezervați o a doua masă, pentru altă cameră.",
@@ -119,6 +120,8 @@ export const ro: PartialDictionary = {
     notOpen: "Această dată nu este deschisă pentru rezervări.",
     closed: "Restaurantul este închis în această zi.",
     full: "Ocupat complet — vă rugăm să alegeți altă seară.",
+    beingBooked: "Ultimele locuri sunt rezervate chiar acum de un alt oaspete. S-ar putea să se elibereze — vă rugăm să încercați din nou peste câteva minute.",
+    heldByOthers: "{count} loc(uri) sunt rezervate chiar acum de alți oaspeți, așa că acest număr se poate schimba.",
     notEnoughSeats: "Au mai rămas doar {count} locuri, iar dumneavoastră aveți nevoie de {guests}.",
     seatsRemaining: "Au mai rămas {count} locuri.",
     selectToContinue: "Alegeți o dată pentru a continua.",
@@ -129,6 +132,9 @@ export const ro: PartialDictionary = {
       closedHint: "Închis",
       full: "ocupat complet",
       fullHint: "Ocupat",
+      beingBooked: "ultimele locuri sunt rezervate chiar acum",
+      beingBookedHint: "În curs",
+      notEnoughWhileHeld: "au mai rămas doar {count} locuri pentru {guests} oaspeți, iar {held} sunt rezervate chiar acum",
       leftHint: "{count} libere",
       notEnough: "au mai rămas doar {count} locuri, insuficiente pentru {guests} persoane",
       afterStay: "după încheierea sejurului",
@@ -165,6 +171,15 @@ export const ro: PartialDictionary = {
     guestsFinished: "{done} din {total} invitați au terminat de ales.",
   },
 
+  seatHold: {
+    holding: "Locurile dumneavoastră sunt rezervate încă {clock}.",
+    endingSoon: "Au mai rămas doar {clock} pentru locurile dumneavoastră — vă rugăm să finalizați rezervarea.",
+    expired:
+      "Locurile dumneavoastră au fost rezervate pentru scurt timp, iar acest timp a trecut, așa că au revenit restaurantului. Nimic altceva nu s-a pierdut — vă rugăm să alegeți din nou data.",
+    chooseAgain: "Alegeți din nou data",
+    couldNotHold: "Nu am putut rezerva locuri pentru această seară. Vă rugăm să alegeți alta.",
+  },
+
   summary: {
     eyebrow: "Masa dumneavoastră",
     title: "Verificați rezervarea",
@@ -177,6 +192,8 @@ export const ro: PartialDictionary = {
     joinHint: "Cereți-le numărul de pe confirmarea lor, de ex. VDM-3E94B8.",
     joinPlaceholder: "de ex. VDM-3E94B8",
     confirm: "Confirmați rezervarea",
+    chooseAnotherDate: "Alegeți altă dată",
+    chooseAnotherTable: "Alegeți altă masă",
     confirming: "Se confirmă…",
     failed: "A apărut o problemă la crearea rezervării. Vă rugăm să încercați din nou.",
   },
@@ -336,6 +353,22 @@ export const ro: PartialDictionary = {
     },
   },
 
+  /**
+   * The card a guest shows at the door.
+   *
+   * The footnote is the only line staff will ever read off it, so it says
+   * the two ways the card can be used rather than describing itself.
+   */
+  card: {
+    title: "Cardul dumneavoastră de rezervare",
+    footnote: "Arătați acest card la restaurant. Personalul poate scana codul sau citi numărul.",
+    qrAlt: "Cod pentru numărul rezervării dumneavoastră",
+    noCode: "Cod indisponibil — citiți numărul în schimb.",
+    saveImage: "Salvați cardul ca imagine",
+    saving: "Se pregătește…",
+    saveFailed: "Nu am putut salva cardul. Vă rugăm să faceți o captură de ecran.",
+  },
+
   errors: {
     rateLimited: "Prea multe încercări. Așteptați un moment și încercați din nou.",
     passKeyInvalid: "Această cheie de acces nu este validă. Verificați-o și încercați din nou.",
@@ -345,6 +378,8 @@ export const ro: PartialDictionary = {
     passKeyAfterStay: "Această seară este după încheierea sejurului dumneavoastră. Alegeți o dată mai devreme.",
     passKeyTooManyGuests: "Rezervarea dumneavoastră la noi este pentru mai puține persoane. Adresați-vă recepției.",
     dateUnavailable: "Din păcate, această dată nu mai este disponibilă. Vă rugăm să alegeți alta.",
+    holdExpired:
+      "Locurile dumneavoastră au fost rezervate doar pentru scurt timp, iar acest timp a trecut. Vă rugăm să alegeți din nou data — seara respectivă poate avea încă locuri.",
     dateFull: "Din păcate, această dată este ocupată complet. Vă rugăm să alegeți altă seară.",
     bookingClosed:
       "Rezervările pentru acea seară s-au închis. Vă rugăm să formați 9 din cameră, iar recepția se va ocupa.",

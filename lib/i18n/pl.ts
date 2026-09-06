@@ -115,6 +115,7 @@ export const pl: PartialDictionary = {
     previousMonth: "Poprzedni miesiąc",
     nextMonth: "Następny miesiąc",
     chooseAvailable: "Proszę wybrać dostępny termin.",
+    holdingSeats: "Rezerwujemy Twoje miejsca…",
     noDates: "Nie otwarto jeszcze żadnych terminów rezerwacji. Prosimy o kontakt z recepcją.",
     alreadyBooked:
       "Mają już Państwo rezerwację na ten wieczór. Aby ją zmienić, {link} — proszę kontynuować tylko wtedy, gdy rezerwują Państwo drugi stolik, dla innego pokoju.",
@@ -124,6 +125,8 @@ export const pl: PartialDictionary = {
     notOpen: "Ten termin nie jest otwarty do rezerwacji.",
     closed: "Restauracja jest tego dnia zamknięta.",
     full: "Brak wolnych miejsc — prosimy wybrać inny wieczór.",
+    beingBooked: "Ostatnie miejsca są właśnie rezerwowane przez innego gościa. Mogą się zwolnić — prosimy spróbować ponownie za kilka minut.",
+    heldByOthers: "{count} miejsc(a) jest właśnie rezerwowanych przez innych gości, więc ta liczba może się zmienić.",
     notEnoughSeats: "Zostało tylko {count} miejsc, a potrzebują Państwo {guests}.",
     seatsRemaining: "Pozostało {count} miejsc.",
     selectToContinue: "Proszę wybrać termin, aby kontynuować.",
@@ -134,6 +137,9 @@ export const pl: PartialDictionary = {
       closedHint: "Zamknięte",
       full: "brak miejsc",
       fullHint: "Komplet",
+      beingBooked: "ostatnie miejsca są właśnie rezerwowane",
+      beingBookedHint: "W trakcie",
+      notEnoughWhileHeld: "zostało tylko {count} miejsc dla {guests} gości, a {held} jest właśnie rezerwowanych",
       leftHint: "wolne: {count}",
       notEnough: "zostało tylko {count} miejsc, za mało dla {guests} osób",
       afterStay: "po zakończeniu Państwa pobytu",
@@ -170,6 +176,15 @@ export const pl: PartialDictionary = {
     guestsFinished: "{done} z {total} gości zakończyło wybór.",
   },
 
+  seatHold: {
+    holding: "Twoje miejsca są zarezerwowane jeszcze przez {clock}.",
+    endingSoon: "Zostało tylko {clock} na Twoje miejsca — prosimy dokończyć rezerwację.",
+    expired:
+      "Twoje miejsca były zarezerwowane tylko przez chwilę i ten czas minął, więc wróciły do restauracji. Nic więcej nie zostało utracone — prosimy wybrać datę ponownie.",
+    chooseAgain: "Wybierz datę ponownie",
+    couldNotHold: "Nie udało się zarezerwować miejsc na ten wieczór. Prosimy wybrać inny.",
+  },
+
   summary: {
     eyebrow: "Państwa stolik",
     title: "Proszę sprawdzić rezerwację",
@@ -182,6 +197,8 @@ export const pl: PartialDictionary = {
     joinHint: "Prosimy poprosić o numer z ich potwierdzenia, np. VDM-3E94B8.",
     joinPlaceholder: "np. VDM-3E94B8",
     confirm: "Potwierdź rezerwację",
+    chooseAnotherDate: "Wybierz inną datę",
+    chooseAnotherTable: "Wybierz inny stolik",
     confirming: "Potwierdzanie…",
     failed: "Coś poszło nie tak podczas tworzenia rezerwacji. Prosimy spróbować ponownie.",
   },
@@ -342,6 +359,22 @@ export const pl: PartialDictionary = {
     },
   },
 
+  /**
+   * The card a guest shows at the door.
+   *
+   * The footnote is the only line staff will ever read off it, so it says
+   * the two ways the card can be used rather than describing itself.
+   */
+  card: {
+    title: "Twoja karta rezerwacji",
+    footnote: "Pokaż to w restauracji. Obsługa może zeskanować kod lub odczytać numer.",
+    qrAlt: "Kod Twojego numeru rezerwacji",
+    noCode: "Kod niedostępny — prosimy podać numer.",
+    saveImage: "Zapisz kartę jako obraz",
+    saving: "Przygotowujemy…",
+    saveFailed: "Nie udało się zapisać karty. Prosimy zrobić zrzut ekranu.",
+  },
+
   errors: {
     rateLimited: "Zbyt wiele prób. Prosimy chwilę odczekać i spróbować ponownie.",
     passKeyInvalid: "Ten klucz dostępu jest nieprawidłowy. Prosimy go sprawdzić i spróbować ponownie.",
@@ -351,6 +384,8 @@ export const pl: PartialDictionary = {
     passKeyAfterStay: "Ten wieczór wypada po zakończeniu Państwa pobytu. Prosimy wybrać wcześniejszy termin.",
     passKeyTooManyGuests: "Państwa rezerwacja u nas obejmuje mniej osób. Prosimy o kontakt z recepcją.",
     dateUnavailable: "Niestety ten termin nie jest już dostępny. Prosimy wybrać inny.",
+    holdExpired:
+      "Twoje miejsca były zarezerwowane tylko przez chwilę i ten czas już minął. Prosimy wybrać datę ponownie — tego wieczoru może jeszcze być miejsce.",
     dateFull: "Niestety na ten termin nie ma już miejsc. Prosimy wybrać inny wieczór.",
     bookingClosed:
       "Rezerwacje na ten wieczór zostały zamknięte. Prosimy wybrać 9 z pokoju, a recepcja to zorganizuje.",

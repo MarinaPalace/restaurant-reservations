@@ -4,6 +4,7 @@ import { connectToDatabase, isMongoConfigured } from "@/lib/db/connect";
 import { MenuCourseModel } from "@/lib/models/menu-course";
 import { MenuOptionModel } from "@/lib/models/menu-option";
 import { RestaurantDateModel } from "@/lib/models/restaurant-date";
+import { sweepExpiredHoldsThrottled } from "@/lib/services/seat-holds";
 import { localizeMenuCatalog } from "@/lib/menu-localization";
 import { decodeStoredImage, isStoredImage, storedImageIdFrom, toPublicImageUrl } from "@/lib/menu-images";
 import { discountedPrice, toCents } from "@/lib/money";
@@ -18,7 +19,26 @@ import {
   type RestaurantDateAvailability,
 } from "@/types/booking";
 
+/**
+ * Every evening, with what is left of it.
+ *
+ * Sweeps expired seat holds first, so the calendar a guest is looking at counts
+ * only seats somebody is actually still choosing. It is the one read that must
+ * do this: the calendar is where a guest decides, and an evening greyed out by
+ * three abandoned tabs is the same lie as an evening offered with no room in it.
+ *
+ * Throttled, because this list is read on every page of the flow and by every
+ * screen in the dashboard. Seconds of staleness cannot change an answer when a
+ * hold lasts fifteen minutes, and the paths that take seats sweep for real.
+ *
+ * The sweep is deliberately not in `getRestaurantDate`. That one is called on
+ * nearly every request in the app, most of them nowhere near a guest choosing a
+ * date, and a stale held seat there costs nothing that the next read of this
+ * list does not immediately correct.
+ */
 export async function getRestaurantDates(): Promise<RestaurantDateAvailability[]> {
+  await sweepExpiredHoldsThrottled();
+
   if (!isMongoConfigured()) {
     return getLocalDates();
   }
@@ -36,6 +56,25 @@ export async function getRestaurantDates(): Promise<RestaurantDateAvailability[]
       serviceEndTime: date.serviceEndTime ? String(date.serviceEndTime) : undefined,
       premium: Boolean(date.premium),
       bookingCutoffHours: Number(date.bookingCutoffHours ?? 0),
+      /**
+       * Seats a guest is part-way through taking. Carried, because
+       * `withRemainingSeats` subtracts it — leaving it out here does not make
+       * the calendar generous, it makes it **wrong**, offering seats somebody
+       * is in the middle of booking.
+       *
+       * This is the trap `readStoredConfirmation` already carries a note about:
+       * a reader that whitelists fields silently drops anything added later,
+       * and the drop looks exactly like the field not existing.
+       */
+      heldSeats: Number(date.heldSeats ?? 0),
+      /**
+       * Dropped here since it was added, on `master` too — the same trap, one
+       * field along. Two consequences, both silent: `canGuestChooseTable` saw 0
+       * and never closed table selection, and because the admin calendar is
+       * seeded from this list and sends every field back on save, the next edit
+       * of any field on an evening wrote the cutoff back to 0.
+       */
+      tableCutoffHours: Number(date.tableCutoffHours ?? 0),
       // Absent stays absent: it is "follow the restaurant", not "off".
       features: toEveningOverrides(date.features),
     }),
@@ -62,6 +101,12 @@ export async function getRestaurantDate(date: string): Promise<RestaurantDateAva
     serviceEndTime: record.serviceEndTime ? String(record.serviceEndTime) : undefined,
     premium: Boolean(record.premium),
     bookingCutoffHours: Number(record.bookingCutoffHours ?? 0),
+    // Carried for the same reason as above: `remainingSeats` is derived from
+    // it, and the booking route judges availability on that.
+    heldSeats: Number(record.heldSeats ?? 0),
+    // And this one, which had been dropped since it was added — see the list
+    // reader above for what that cost.
+    tableCutoffHours: Number(record.tableCutoffHours ?? 0),
     features: toEveningOverrides(record.features),
   });
 }

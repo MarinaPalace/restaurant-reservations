@@ -9,7 +9,10 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Alert } from "@/components/ui/feedback";
 import { useBookingGuard, writeBookingSession } from "@/hooks/use-booking-session";
+import { takeSeatHold } from "@/hooks/use-seat-hold";
+import { isSeatHoldLive } from "@/lib/seat-hold";
 import { useI18n } from "@/components/i18n-provider";
+import { translateApiError } from "@/lib/i18n/errors";
 import { format, localeOf, plural } from "@/lib/i18n";
 import { formatLongDate, isPastDateKey, startOfMonth } from "@/lib/date";
 import { canGuestBookDate } from "@/lib/reservation-policy";
@@ -28,11 +31,48 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
   const [month, setMonth] = useState(() => startOfMonth(new Date()));
   const [choice, setChoice] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [holding, setHolding] = useState(false);
 
   const guestCount = Math.max(session.guestCount, 1);
   const selectedDate = choice ?? (session.date || null);
 
   const findDate = useCallback((dateKey: string) => dates.find((entry) => entry.date === dateKey) ?? null, [dates]);
+
+  /**
+   * Seats this guest is already holding, on the evening they are holding them.
+   *
+   * The server counts held seats as gone, which is right for everybody except
+   * the person holding them. Without this, a party of four who took the last
+   * four seats on Friday and then came back to the calendar would find Friday
+   * marked full — by their own hold — with no way to go forward again. Adding
+   * them back here is what makes going back and forth free.
+   */
+  const heldHere = useCallback(
+    (dateKey: string) =>
+      /**
+       * Live, and only live. Nothing clears these keys when a hold lapses, so a
+       * guest who left the tab for twenty minutes and came back would otherwise
+       * have their dead hold added to a genuinely full evening — "4 left", in
+       * positive green, on a night with nothing on it. Being shown seats that
+       * were never there is the failure this whole feature exists to delete.
+       */
+      session.holdDate === dateKey && isSeatHoldLive(session.holdExpiresAt)
+        ? session.holdGuests
+        : 0,
+    [session.holdDate, session.holdExpiresAt, session.holdGuests],
+  );
+
+  /**
+   * Seats somebody *else* is in the middle of taking, on an evening.
+   *
+   * The guest's own hold is not one of these: it is theirs, and adding it back
+   * is what lets them go forward again. What is left is the number that
+   * explains an evening reading fuller than it did a minute ago.
+   */
+  const heldByOthers = useCallback(
+    (entry: RestaurantDateAvailability) => Math.max(0, (entry.heldSeats ?? 0) - heldHere(entry.date)),
+    [heldHere],
+  );
 
   const getDayState = useCallback(
     (dateKey: string): DayState => {
@@ -68,15 +108,34 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
         };
       }
 
-      if (entry.remainingSeats <= 0) {
-        return { disabled: true, hint: t.dateStep.day.fullHint, status: t.dateStep.day.full };
+      const remaining = entry.remainingSeats + heldHere(dateKey);
+      const held = heldByOthers(entry);
+
+      /**
+       * Full, or full *for now*.
+       *
+       * An evening whose last seats are being chosen by somebody else is not
+       * the same as one that is booked out, and saying "Full" for both is the
+       * thing that had a guest give up on a table that came back four minutes
+       * later. The day says which it is, and the panel below says how long.
+       */
+      if (remaining <= 0) {
+        return held > 0
+          ? { disabled: true, hint: t.dateStep.day.beingBookedHint, status: t.dateStep.day.beingBooked }
+          : { disabled: true, hint: t.dateStep.day.fullHint, status: t.dateStep.day.full };
       }
 
-      if (entry.remainingSeats < guestCount) {
+      if (remaining < guestCount) {
         return {
           disabled: true,
-          hint: format(t.dateStep.day.leftHint, { count: entry.remainingSeats }),
-          status: format(t.dateStep.day.notEnough, { count: entry.remainingSeats, guests: guestCount }),
+          hint: format(t.dateStep.day.leftHint, { count: remaining }),
+          status: held > 0
+            ? format(t.dateStep.day.notEnoughWhileHeld, {
+                count: remaining,
+                guests: guestCount,
+                held,
+              })
+            : format(t.dateStep.day.notEnough, { count: remaining, guests: guestCount }),
         };
       }
 
@@ -91,15 +150,32 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
       }
 
       return {
-        hint: format(t.dateStep.day.leftHint, { count: entry.remainingSeats }),
-        status: format(t.dateStep.day.available, { count: entry.remainingSeats }),
+        hint: format(t.dateStep.day.leftHint, { count: remaining }),
+        status: format(t.dateStep.day.available, { count: remaining }),
         tone: "positive",
       };
     },
-    [findDate, guestCount, session.passKeyExpiresOn, t],
+    [findDate, guestCount, heldByOthers, heldHere, session.passKeyExpiresOn, t],
   );
 
-  const handleContinue = () => {
+  /**
+   * Chooses the evening, and takes the seats for it.
+   *
+   * This is where the seats stop being a promise. Everything after it — the
+   * table, six courses for four people, the contact details — is spent on seats
+   * that are already out of the room, which is the difference between finishing
+   * a booking and finding out at the end that somebody else finished first.
+   *
+   * A refusal is shown **here**, on the calendar, with the reason. That is the
+   * point of asking now: the evening filling up is heard by a guest who has
+   * chosen nothing yet, in the one place where choosing again is the obvious
+   * next thing to do.
+   */
+  const handleContinue = async () => {
+    if (holding) {
+      return;
+    }
+
     if (!selectedDate || getDayState(selectedDate).disabled) {
       setError(t.dateStep.chooseAvailable);
       return;
@@ -110,8 +186,42 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
      * one cannot come along. Cleared here rather than on the table step,
      * because going *back* and changing the date is exactly when it would
      * otherwise survive unnoticed into the booking.
+     *
+     * Written before the seats are asked for, so that the hold and the session
+     * agree about which evening they are for whichever way the request goes.
      */
     writeBookingSession({ date: selectedDate, tableId: "" });
+
+    setHolding(true);
+    setError("");
+
+    const held = await takeSeatHold({
+      passKey: session.passKey,
+      date: selectedDate,
+      guestCount,
+      roomNumber: session.roomNumber,
+      // Moves the hold rather than taking a second one, so a guest who tries
+      // three evenings does not end up holding all three.
+      previousHoldId: session.holdId,
+    });
+
+    if (!held.ok) {
+      setHolding(false);
+      setError(
+        held.code === "CONNECTION"
+          ? t.common.connectionProblem
+          : (translateApiError(t, held) ?? t.seatHold.couldNotHold),
+      );
+
+      /**
+       * The calendar is drawn on the server, so the numbers on it are as old as
+       * the page. Redrawing turns "we could not hold seats for that evening"
+       * into an evening the guest can see is full, which is the explanation and
+       * the way forward in one.
+       */
+      router.refresh();
+      return;
+    }
 
     /**
      * Straight past the table step unless this evening offers the choice. The
@@ -202,19 +312,37 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
               </p>
             ) : null}
             <p className="mt-1">
-              {!selectedEntry
-                ? t.dateStep.notOpen
-                : !selectedEntry.isOpen
-                  ? t.dateStep.closed
-                  : selectedEntry.remainingSeats <= 0
-                    ? t.dateStep.full
-                    : selectedEntry.remainingSeats < guestCount
-                      ? format(t.dateStep.notEnoughSeats, {
-                          count: selectedEntry.remainingSeats,
-                          guests: guestCount,
-                        })
-                      : format(t.dateStep.seatsRemaining, { count: selectedEntry.remainingSeats })}
+              {(() => {
+                if (!selectedEntry) return t.dateStep.notOpen;
+                if (!selectedEntry.isOpen) return t.dateStep.closed;
+
+                // The guest's own held seats count for them here too, or the
+                // evening they are holding would read as full underneath the
+                // day they have just tapped.
+                const remaining = selectedEntry.remainingSeats + heldHere(selectedEntry.date);
+
+                if (remaining <= 0) {
+                  // Being chosen rather than gone: worth waiting a few minutes
+                  // for, which "fully booked" would never tell them.
+                  return heldByOthers(selectedEntry) > 0 ? t.dateStep.beingBooked : t.dateStep.full;
+                }
+                if (remaining < guestCount) {
+                  return format(t.dateStep.notEnoughSeats, { count: remaining, guests: guestCount });
+                }
+                return format(t.dateStep.seatsRemaining, { count: remaining });
+              })()}
             </p>
+
+            {/*
+              Why the number may move while they are looking at it. Only when
+              somebody else is actually holding seats, so it is news rather than
+              furniture.
+            */}
+            {selectedEntry && heldByOthers(selectedEntry) > 0 ? (
+              <p className="mt-1 text-accent-ink">
+                {format(t.dateStep.heldByOthers, { count: heldByOthers(selectedEntry) })}
+              </p>
+            ) : null}
           </>
         ) : (
           <p>{t.dateStep.selectToContinue}</p>
@@ -236,6 +364,8 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
           className="flex-1"
           onClick={handleContinue}
           disabled={!selectedDate || Boolean(getDayState(selectedDate).disabled)}
+          loading={holding}
+          loadingLabel={t.dateStep.holdingSeats}
         >
           {t.common.continue}
         </Button>

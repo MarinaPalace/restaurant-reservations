@@ -8,6 +8,7 @@ import { Alert, Badge, EmptyState } from "@/components/ui/feedback";
 import { Field, Input, Select } from "@/components/ui/field";
 import { InfoTip } from "@/components/ui/tooltip";
 import { cx } from "@/components/ui/utils";
+import { UnfinishedBookings } from "@/app/admin/unfinished-bookings";
 import { KitchenReport } from "@/app/admin/kitchen-report";
 import { formatLongDate, isPastDateKey, isValidDateKey, startOfMonth } from "@/lib/date";
 import {
@@ -253,6 +254,28 @@ export function AdminDateManager({
           `${entry.remainingSeats} of ${entry.capacity} seats free, guest bookings closed — ` +
           "reception only" + (entry.premium ? ", invitation only" : ""),
         tone: "default",
+        premium: entry.premium,
+      };
+    }
+
+    /**
+     * Seats a guest is part-way through booking.
+     *
+     * They are out of the room and in no reservation, so without this the
+     * calendar and the sheet disagree and nothing on either explains it: an
+     * evening reads "0 free" with a booking missing, and the obvious conclusion
+     * — that something is broken — is wrong. Named on the day, so the person
+     * scanning the month sees it before they go looking.
+     */
+    const held = entry.heldSeats ?? 0;
+
+    if (held > 0) {
+      return {
+        hint: `${entry.remainingSeats} · ${held} held`,
+        status:
+          `${entry.remainingSeats} of ${entry.capacity} seats free, ` +
+          `${held} being booked right now${entry.premium ? ", invitation only" : ""}`,
+        tone: entry.remainingSeats > 0 ? "positive" : "default",
         premium: entry.premium,
       };
     }
@@ -820,6 +843,14 @@ export function AdminDateManager({
                     <Badge tone={selectedEntry.isOpen ? "success" : "info"}>
                       {selectedEntry.isOpen ? `${selectedEntry.remainingSeats} free` : "Closed"}
                     </Badge>
+                    {/*
+                      Seats held by guests mid-booking. The panel below names
+                      them; this is so the difference between the seat count and
+                      the bookings is visible without scrolling to find out.
+                    */}
+                    {selectedEntry.heldSeats ? (
+                      <Badge tone="warning">{selectedEntry.heldSeats} being booked</Badge>
+                    ) : null}
                     {hasOverrides(selectedEntry.features) ? <Badge tone="warning">Own settings</Badge> : null}
                   </div>
 
@@ -848,6 +879,15 @@ export function AdminDateManager({
           </div>
         </div>
       </Card>
+
+      {/*
+        Who is part-way through booking this evening, and who started one and
+        never finished. Directly under the calendar, because it answers the
+        question the calendar raises: an evening reading as full with fewer
+        reservations than seats, and a guest at the desk certain they booked
+        when there is no booking.
+      */}
+      <UnfinishedBookings date={selectedDate} />
 
       <KitchenReport
         date={selectedDate}

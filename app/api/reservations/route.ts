@@ -9,6 +9,8 @@ import { getMenuCatalog, getRestaurantDate } from "@/lib/services/restaurant";
 import { getEveningFeatures, getFloorPlan } from "@/lib/services/settings";
 import { findPlanCombination } from "@/lib/floor-plan-availability";
 import { TableClaimError, listTableClaims } from "@/lib/services/table-claims";
+import { getSeatHold, sweepExpiredHolds } from "@/lib/services/seat-holds";
+import { isSeatHoldLive } from "@/lib/seat-hold";
 import { canGuestBookDate, canGuestChooseTable } from "@/lib/reservation-policy";
 import { BOOKING_MESSAGES, validateReservationRequest } from "@/lib/services/booking-rules";
 import {
@@ -30,6 +32,14 @@ import { checkRateLimit, clientKeyFrom } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
 
 const GENERIC_ERROR = "Something went wrong while creating your reservation. Please try again.";
+
+/**
+ * Said when the fifteen minutes ran out. Deliberately not phrased as a refusal:
+ * the seats were let go rather than taken away, and going back to the calendar
+ * will usually find them still there.
+ */
+const SEAT_HOLD_EXPIRED =
+  "Your seats were only held for a short while and that time has now passed. Please choose your date again — the evening may still have room.";
 
 /**
  * A guest booking.
@@ -79,6 +89,13 @@ export async function POST(request: Request) {
   let claimedReservationNumber: string | null = null;
 
   try {
+    /**
+     * Expired holds go back to the room before the evening is read, or this
+     * booking could be refused seats that three abandoned tabs are still
+     * nominally sitting in. Cheap, and scoped to the one evening being booked.
+     */
+    await sweepExpiredHolds(parsed.data.date);
+
     const [menu, restaurantDate, passKey] = await Promise.all([
       getMenuCatalog(),
       getRestaurantDate(parsed.data.date),
@@ -145,6 +162,38 @@ export async function POST(request: Request) {
       );
     }
 
+    /**
+     * The seats this guest is holding, if they took a hold at the start.
+     *
+     * Read rather than trusted: the id proves nothing on its own, so the hold
+     * has to be this key's, this evening's, big enough for this party, and
+     * still live. Anything else and it counts for nothing — the booking then
+     * takes its chances on the open seats, exactly as one made without a hold
+     * does, and is refused with a message if there are none.
+     *
+     * A hold that has run out is its own answer, and a distinct one: the guest
+     * did nothing wrong and the seats may well still be there, so telling them
+     * "your seats were released" is both true and actionable, where "this date
+     * is unavailable" would be neither.
+     */
+    const hold = parsed.data.holdId ? await getSeatHold(parsed.data.holdId) : null;
+
+    const heldForThisBooking =
+      hold &&
+      hold.passKeyId === passKey.id &&
+      hold.date === parsed.data.date &&
+      hold.guests >= parsed.data.guestCount &&
+      isSeatHoldLive(hold.expiresAt)
+        ? hold.guests
+        : 0;
+
+    if (parsed.data.holdId && !heldForThisBooking) {
+      return NextResponse.json(
+        { error: SEAT_HOLD_EXPIRED, code: "HOLD_EXPIRED" },
+        { status: 409 },
+      );
+    }
+
     const validation = validateReservationRequest({
       roomNumber: parsed.data.roomNumber,
       guestCount: parsed.data.guestCount,
@@ -152,6 +201,9 @@ export async function POST(request: Request) {
       selections: parsed.data.selections,
       restaurantDate,
       menu,
+      // Seats this guest is already holding are not seats standing between
+      // them and their own booking.
+      heldForThisBooking,
     });
 
     const contactProblem = describeContactProblem(parsed.data.contact);
@@ -229,6 +281,12 @@ export async function POST(request: Request) {
       notes: parsed.data.notes,
       joinReservationNumber: parsed.data.joinReservationNumber,
       passKeyId: spent.id,
+      /**
+       * Spending the hold is what claims the seats — they move from held to
+       * booked in one update, so nobody can take them between here and the
+       * write. Without one, the seats are claimed the old way.
+       */
+      seatHold: heldForThisBooking ? { holdId: parsed.data.holdId!, passKeyId: passKey.id } : undefined,
     });
 
     await recordAuditEntry({
@@ -279,6 +337,16 @@ export async function POST(request: Request) {
     // The party being joined may have gone away between choosing it and here.
     if (error instanceof TableJoinError) {
       return NextResponse.json({ error: error.message, code: "TABLE_JOIN_FAILED" }, { status: 409 });
+    }
+
+    /**
+     * The hold ran out in the seconds between it being read above and being
+     * spent. Its own code, because it is its own thing: the guest is not at
+     * fault, the evening may well still have room, and "start again" is a
+     * different instruction from "choose another date".
+     */
+    if (error instanceof BookingError && error.code === "HOLD_EXPIRED") {
+      return NextResponse.json({ error: SEAT_HOLD_EXPIRED, code: "HOLD_EXPIRED" }, { status: 409 });
     }
 
     // The date may have filled up between the check above and the write.

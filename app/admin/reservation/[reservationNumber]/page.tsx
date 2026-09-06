@@ -51,6 +51,7 @@ const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
   "menu:save": "Menu saved",
   "settings:save": "Settings saved",
   "date:update": "Evening changed",
+  "booking:abandoned": "Booking not finished",
 };
 
 export default async function ReservationDetailPage({

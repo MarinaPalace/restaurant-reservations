@@ -155,6 +155,21 @@ export async function getLocalPassKeyByCode(code: string): Promise<PassKeyRecord
   return key ? withCounts(key) : null;
 }
 
+/**
+ * Every key issued against one hotel booking.
+ *
+ * Usually one. More when a stay was extended or a card was reissued, and
+ * reception needs to see all of them rather than whichever came back first —
+ * the guest at the desk is holding one of them and does not know which.
+ */
+export async function findLocalPassKeysByReservationRef(ref: string): Promise<PassKeyRecord[]> {
+  const keys = await readPassKeys();
+
+  return keys
+    .filter((entry) => (entry.reservationRef ?? "").trim().toUpperCase() === ref)
+    .map(withCounts);
+}
+
 export async function getLocalPassKey(id: string): Promise<PassKeyRecord | null> {
   const key = (await readPassKeys()).find((entry) => entry.id === id);
   return key ? withCounts(key) : null;

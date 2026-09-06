@@ -390,6 +390,135 @@ bookable at midnight, hours after everyone had eaten.
 presentation). The staff routes deliberately do not consult it: reception takes bookings for tables
 standing at the desk.
 
+### 2.22 Seats are held from the calendar onwards, and no refusal is silent
+
+Seats used to be claimed by the **last** request of the booking. Everything before it was a guess,
+and on a nearly full evening the guess was sometimes wrong: two guests were both shown four seats,
+both walked the whole flow, and the second was refused at the very end. Worse, the summary said
+nothing — it pushed them back to `/booking/date` with no message, so a guest who had done everything
+right could not tell whether they had lost the seats, mistyped something, or broken the app.
+
+**A guest takes a hold as soon as they have said the two things that decide how many seats they
+need** — the party size and the evening. `POST /api/booking/hold`, on Continue at the date step. The
+seats come out of the room for `SEAT_HOLD_MINUTES` (15) and are given back if the booking is not
+finished. The second guest now meets a full evening *on the calendar*, before choosing anything.
+
+`heldSeats` on the date is a second counter beside `reservedSeats`, and it is **not** covered by
+rule 2.7's "must always match live bookings" — that is still true of `reservedSeats` alone. What
+holds here is the arithmetic: `remainingSeats = capacity − reservedSeats − heldSeats`, and **every**
+claim path subtracts both — booking, restoring a cancellation (2.12), moving a booking to another
+date. A path that forgot would let staff sell a seat a guest is mid-way through taking, and the
+count would go over capacity the moment that guest pressed Confirm.
+
+The properties are rule 2.7's, applied to a third exhaustible thing (`lib/services/seat-holds.ts`):
+
+- **The claim is one conditional update.** `$inc` on `heldSeats` with an `$expr` guard. Two requests
+  for the last four seats both run it; the second's filter no longer matches.
+- **Release is idempotent by filter.** `findOneAndDelete` decides who owns the release, and only the
+  winner decrements — so a release racing an expiry sweep cannot give the same seats back twice.
+- **Conversion never lets go.** Spending a hold deletes the receipt (one winner, so a double-tapped
+  Confirm cannot book twice) and then moves the seats `heldSeats → reservedSeats` in a single
+  update. There is no instant when they are in neither.
+- **Expiry is swept, never TTL'd.** A TTL index would delete the receipt and leave the counter
+  holding seats for nobody. `sweepExpiredHolds` deletes and decrements together, and runs whenever
+  seats are taken. Reads that only *display* availability use the throttled form — the calendar is
+  read on every page and paying for a sweep each time was measurable.
+- **`heldSeatsTouchedAt` is the net under a crash.** Stamped as a hold takes its seats, before the
+  receipt is written. Held seats with no live hold and nothing taken for longer than a hold can last
+  are stranded rather than busy, and only then are they put back.
+
+**And nothing refuses in silence.** Every failure answers with a `code` the screen turns into a
+sentence (`lib/i18n/errors.ts`), and the summary page **never navigates on a refusal**: it shows the
+reason and offers the step that fixes it as a button. `HOLD_EXPIRED` is its own code deliberately —
+the guest is not at fault, the evening may well still have room, and "start again" is a different
+instruction from "choose another date".
+
+The hold does **not** spend the pass-key. That is the booking's job, once (rule 2.11): a hold that
+runs out must leave the guest exactly as they were.
+
+**Held seats are visible on both calendars, and the difference has a name.** An evening whose last
+seats are being chosen is not the same as one that is booked out, and showing "Full" for both had a
+guest give up on a table that came back four minutes later. The guest calendar says *the last seats
+are being booked right now*; the staff calendar shows `N held` on the day and a badge on the
+evening. A number that moves with nothing on screen to explain it is the thing this replaced.
+
+### 2.23 A booking attempt is closed, never deleted
+
+A hold used to be removed when it was spent or expired, which was tidy and threw away the only
+evidence that anything had happened. Guests come to the desk regularly, certain they booked, when
+they got as far as the menu and stopped — and there was no way to be fair to anybody: "there is no
+reservation" sounds like an accusation, and staff genuinely could not tell whether the guest had got
+halfway or never opened the page.
+
+So a hold carries a `status` — `live`, `booked`, `released`, `abandoned` — and every transition is a
+conditional update requiring `status: "live"`. **That is also the atomic gate**: of two requests
+racing to spend or release the same hold exactly one matches, and only that one moves `heldSeats`.
+It is the same "one winner" property deleting had, without the forgetting. Only `live` holds count
+against the room.
+
+Each attempt records the room, the party, when it started and **how far it got** (`step`, advanced
+by `PATCH /api/booking/hold` and never allowed to walk backwards, so tapping Back does not shrink
+the footprint, and changing the date carries it across). An expired hold writes a
+`booking:abandoned` line into the audit log — the only action there with no reservation number,
+because the absence of a reservation is the thing it is recording — and the evening's attempts are
+listed under the dashboard calendar by `app/admin/unfinished-bookings.tsx`.
+
+The JSON store prunes closed attempts after `SEAT_HOLD_HISTORY_MS` because it reads its file whole
+on every request. Mongo keeps them.
+
+### 2.24 A reader that whitelists fields will silently drop the next one added
+
+`getRestaurantDates` and `getRestaurantDate` build their result field by field, and when `heldSeats`
+was added they did not carry it. Nothing failed. `remainingSeats` is derived from it, so under Mongo
+the calendar quietly went back to offering seats a guest was in the middle of booking — and the drop
+is indistinguishable from the field not existing, so there was nothing to notice.
+
+`readStoredConfirmation` already carries a note about this exact trap, from when the arrival time
+went missing the same way. **If a reader lists its fields, adding a field to the model is not
+finished until the reader lists it too**, and a test should assert the value survives the round trip
+(`lib/services/seat-holds.mongo.test.ts`, "what the calendar is told").
+
+### 2.25 The confirmation card carries the reservation number, never the pass-key
+
+The card on the confirmation screen exists to be *shown*: held up at a door, saved to a phone,
+photographed, left face-up on a table. Its QR therefore encodes the **reservation number** and
+nothing else. That number authorises nothing on its own — guest self-service deliberately refuses to
+identify a booking by it, because guests read it aloud to other rooms to be seated together — and
+staff resolve it behind a login. Encoding the pass-key would turn a photograph of the card into the
+power to cancel that guest’s dinner.
+
+**The code is drawn on the server, the card is drawn in the browser**, and both directions matter.
+`lib/qr.ts` records three failures from drawing codes client-side, the worst printing a blank square
+silently; so the code comes from `POST /api/booking/card`, authorised by the pass-key in the body.
+Rasterising the *card* server-side was the first plan and was wrong for the mirror-image reason: a
+serverless runtime has almost no fonts, and the failure is silent and lands on the guest’s phone.
+The browser has the fonts and `lib/reservation-card-image.ts` paints to a canvas — no screenshot
+library, no DOM cloning.
+
+`lib/reservation-card.ts` describes what is on the card; the screen and the saved image both render
+from it, so the two cannot drift. The saved image is deliberately always the light palette: a photo
+gallery has no theme, and a dark card prints as a block of ink.
+
+### 2.26 The desk lookup accepts anything a guest can produce, and is staff-only
+
+`/admin/guests` takes one string and tries every reading of it (`lib/guest-lookup.ts`): a scanned
+pass-key card, whose QR is a booking *link* rather than a bare code; a scanned confirmation card,
+whose QR is the reservation number; a pass-key typed by hand; and the hotel’s own booking
+reference. It returns every candidate rather than classifying, and the service tries them all — a
+search that finds the guest beats a classifier that is certain and wrong.
+
+**It resolves a reservation number back to its pass-key** and returns everything on that key, because
+what reception is asked is about the guest and not the one dinner that happened to be scanned. The
+unfinished attempts (rule 2.23) come with it.
+
+Two things must not change. It is **staff-only**, and must never share a lookup path with the guest
+flow, for the reason in rule 2.5 and above: the reservation number is not a secret. And the query
+travels in the **body**, never the URL, because it may be a pass-key.
+
+Scanning is never the only way in. `components/qr-scanner.tsx` uses `BarcodeDetector` where it
+exists and `jsQR` where it does not — an iPad at reception has neither Chrome nor that API — and
+every screen using it keeps a text box beside it, because cameras get refused and break.
+
 ## 3. Configuration
 
 | Variable | Required | Purpose |
@@ -431,11 +560,17 @@ components/
   ui/                 Design-system primitives (Button, Card, Field, Alert…).
   brand.tsx           House mark + wordmark.  month-calendar.tsx  Shared ARIA grid.
 hooks/                useBookingSession — sessionStorage via useSyncExternalStore.
+                      useSeatHold — the countdown, and taking/releasing a hold.
 lib/
   auth/               Credentials, signed sessions, permissions, route guard.
   db/                 Mongo connection, JSON store, seed data, store-lock.
   services/           booking-rules, reservations, restaurant/menu,
-                      pass-keys, staff-users, audit-log.
+                      pass-keys, seat-holds, staff-users, audit-log.
+  seat-hold.ts        How long seats are held, and the countdown arithmetic.
+  reservation-card.ts What is on the card a guest shows at the door; the
+                      screen and the saved image both render from it.
+  guest-lookup.ts     What reception was handed: a scanned card, a code, or
+                      the hotel's booking reference.
   pass-key.ts         Code generation, normalisation, formatting.
   i18n/               The guest interface in seven languages: en.ts is the
                       master, the rest are partials merged over it.

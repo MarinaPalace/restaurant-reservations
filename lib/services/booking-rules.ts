@@ -14,6 +14,16 @@ export type ReservationValidationInput = {
   restaurantDate: RestaurantDateAvailability | null;
   menu: MenuCourse[];
   now?: Date;
+  /**
+   * Seats this booking is already holding, and must not be judged against.
+   *
+   * `remainingSeats` counts held seats as gone, which is what everybody else
+   * should see. The guest who is holding them is the one exception: without
+   * this, a party of four holding the evening's last four seats would be told
+   * the evening was full by their own hold — the exact refusal the hold exists
+   * to prevent, arriving from the other direction.
+   */
+  heldForThisBooking?: number;
 };
 
 export type ReservationValidationResult =
@@ -33,11 +43,19 @@ export const BOOKING_MESSAGES = {
   repeatedRoom: "Each room may only be listed once on a booking.",
 } as const;
 
-export function getRemainingSeats(date: RestaurantDateAvailability | null) {
+/**
+ * Seats this evening still has, from the point of view of whoever is asking.
+ *
+ * `held` is what the asker already holds, added back because seats a guest is
+ * holding are not seats standing between them and their own booking. Everybody
+ * else passes nothing and sees held seats as taken, which is the whole point of
+ * holding them.
+ */
+export function getRemainingSeats(date: RestaurantDateAvailability | null, held = 0) {
   if (!date) {
     return 0;
   }
-  return Math.max(date.capacity - date.reservedSeats, 0);
+  return Math.max(date.capacity - date.reservedSeats - (date.heldSeats ?? 0) + held, 0);
 }
 
 function invalid(error: string): ReservationValidationResult {
@@ -91,7 +109,7 @@ export function validateReservationRequest(input: ReservationValidationInput): R
     return invalid(BOOKING_MESSAGES.unavailable);
   }
 
-  if (getRemainingSeats(input.restaurantDate) < input.guestCount) {
+  if (getRemainingSeats(input.restaurantDate, input.heldForThisBooking ?? 0) < input.guestCount) {
     return invalid(BOOKING_MESSAGES.fullyBooked);
   }
 

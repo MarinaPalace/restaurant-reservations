@@ -198,6 +198,29 @@ export type StoredRestaurantDate = {
    * turning anything on for tonight.
    */
   features?: EveningOverrides;
+  /**
+   * Seats a guest is part-way through booking, held while they choose.
+   *
+   * Added after the fact, so absent reads as 0 — which is what every date
+   * written before holds existed meant (rule 2.2). It counts against capacity
+   * exactly as `reservedSeats` does, and the two are kept apart on purpose:
+   * `reservedSeats` is bookings that exist, this is bookings that might.
+   *
+   * A hold turns into a booking by moving its seats from here to there in one
+   * update, so there is never an instant where they are in neither.
+   */
+  heldSeats?: number;
+  /**
+   * When a hold was last taken on this evening.
+   *
+   * The safety net under `heldSeats`. A hold is released by deleting its
+   * document and decrementing the counter, and a crash between those two steps
+   * would strand seats nobody holds. Since every hold bumps this and no hold
+   * outlives `SEAT_HOLD_MINUTES`, a date with held seats, no live holds and
+   * nothing taken for longer than that is stranded rather than busy — and the
+   * sweep may safely put the seats back.
+   */
+  heldSeatsTouchedAt?: string;
 };
 
 export type RestaurantDateAvailability = StoredRestaurantDate & {
@@ -459,10 +482,21 @@ export type ReservationRecord = {
   updatedAt?: string;
 };
 
+/**
+ * Seats nobody has, counting the ones somebody is in the middle of taking.
+ *
+ * Held seats are subtracted alongside booked ones, so an evening whose last
+ * four seats are being chosen reads as full to everybody else. That is the
+ * whole point of holding them: the alternative is what this replaced, where two
+ * guests were both told the seats were there and only one of them was right.
+ *
+ * The guest who owns the hold is the one exception, and it is the caller's to
+ * make — the route adds their own held seats back before judging their booking.
+ */
 export function withRemainingSeats(date: StoredRestaurantDate): RestaurantDateAvailability {
   return {
     ...date,
-    remainingSeats: Math.max(date.capacity - date.reservedSeats, 0),
+    remainingSeats: Math.max(date.capacity - date.reservedSeats - (date.heldSeats ?? 0), 0),
   };
 }
 
@@ -770,7 +804,18 @@ export type AuditAction =
   | "menu:save"
   | "settings:save"
   | "reservation:attendance"
-  | "date:update";
+  | "date:update"
+  /**
+   * A guest held seats, walked through part of the booking, and never
+   * finished. Written when the hold runs out.
+   *
+   * The only action here that is not about something that exists: there is no
+   * reservation number, because there is no reservation — which is exactly the
+   * question it answers. Guests come to the desk certain they booked when they
+   * got as far as the menu and stopped, and until this there was nothing to
+   * check.
+   */
+  | "booking:abandoned";
 
 export type AuditEntry = {
   _id?: string;

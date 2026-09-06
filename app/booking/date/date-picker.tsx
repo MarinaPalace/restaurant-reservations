@@ -91,6 +91,22 @@ export function DatePicker({ dates }: { dates: RestaurantDateAvailability[] }) {
       }
 
       /**
+       * An invitation evening, held for guests with a premium key.
+       *
+       * The page above already leaves these out, so reaching here means a stale
+       * render or an evening switched to invitation-only while somebody had the
+       * calendar open. Disabled rather than trusted absent: every route refuses
+       * such an evening to a standard key, and a day drawn as available with
+       * seats on it — which is what happened while this check was missing — is a
+       * table offered and then taken back.
+       */
+      if (entry.premium) {
+        // The same face as an evening that is not on the calendar at all: from
+        // where the guest is standing, that is exactly what it is.
+        return { disabled: true, hint: "—", status: t.dateStep.day.notOpen };
+      }
+
+      /**
        * Bookings close a set number of hours before the sitting, chosen per
        * evening by staff. Shown here so the guest sees it on the calendar
        * rather than picking the date and being refused at the end — the route
